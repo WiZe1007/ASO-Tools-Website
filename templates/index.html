@@ -1,0 +1,2040 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GEO Rating Checker</title>
+  <link rel="icon" href="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" />
+
+  <style>
+    :root{
+      --glass: rgba(255,255,255,.14);
+      --border: rgba(255,255,255,.22);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.72);
+      --muted2: rgba(255,255,255,.58);
+      --shadow: 0 18px 60px rgba(0,0,0,.35);
+      --shadow2: 0 10px 30px rgba(0,0,0,.25);
+      --accent: rgba(255, 209, 102, .95);
+      --danger: rgba(255, 90, 95, .95);
+      --ok: rgba(110, 231, 183, .95);
+      --radius: 22px;
+
+      --navH: 74px;
+      --navGlass: rgba(10, 16, 28, .48);
+      --navBorder: rgba(255,255,255,.16);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      color: var(--text);
+      background:#0b1220;
+      overflow-x:hidden;
+    }
+
+    /* ---------- Background ---------- */
+    .bg{
+      position:fixed; inset:0; z-index:-2;
+      overflow:hidden;
+      background:
+        radial-gradient(1100px 760px at 12% -6%, rgba(56,112,214,.30), transparent 60%),
+        radial-gradient(1000px 720px at 94% 6%, rgba(255,150,70,.18), transparent 58%),
+        radial-gradient(1200px 820px at 50% 112%, rgba(56,205,168,.16), transparent 60%),
+        linear-gradient(180deg, #0a1020 0%, #0b1326 55%, #0a1322 100%);
+    }
+    .bg::after{
+      content:""; position:absolute; inset:0;
+      background:
+        radial-gradient(1200px 700px at 15% 15%, rgba(0,0,0,.18), transparent 60%),
+        radial-gradient(900px 600px at 85% 20%, rgba(0,0,0,.28), transparent 55%),
+        linear-gradient(180deg, rgba(6,10,18,.55), rgba(6,10,18,.70));
+    }
+
+    /* ---------- Top Nav (NEW) ---------- */
+    .topnav{
+      position:fixed;
+      top:14px; left:0; right:0;
+      z-index:1000;
+      padding:0 14px;
+      pointer-events:none;
+    }
+    .topnav-inner{
+      pointer-events:auto;
+      max-width:1180px;
+      margin:0 auto;
+      height: var(--navH);
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+      border:1px solid var(--navBorder);
+      box-shadow: 0 18px 60px rgba(0,0,0,.35);
+      backdrop-filter: blur(16px);
+      display:flex;
+      align-items:center;
+      gap:14px;
+      padding: 10px 14px;
+      overflow:hidden;
+      position:relative;
+    }
+    .topnav-inner::before{
+      content:"";
+      position:absolute; inset:-2px;
+      background:
+        radial-gradient(420px 180px at 12% 20%, rgba(255,209,102,.22), transparent 60%),
+        radial-gradient(420px 180px at 88% 40%, rgba(110,231,183,.18), transparent 60%);
+      opacity:.85;
+      pointer-events:none;
+      filter: blur(0px);
+      animation: navGlow 7s ease-in-out infinite alternate;
+    }
+    @keyframes navGlow{
+      0%{ transform: translate3d(0,0,0); opacity:.75; }
+      100%{ transform: translate3d(0,-2px,0); opacity:.95; }
+    }
+
+    .brand{
+      display:flex; align-items:center; gap:12px;
+      min-width: 220px;
+      position:relative;
+      z-index:1;
+    }
+    .brand .logo{
+      width:44px; height:44px; object-fit:contain;
+      border-radius:14px;
+      background: rgba(0,0,0,.22);
+      border:1px solid rgba(255,255,255,.18);
+      box-shadow: 0 10px 30px rgba(0,0,0,.25);
+      backdrop-filter: blur(8px);
+    }
+    .brand .txt{ line-height:1.05; }
+    .brand .name{
+      font-weight: 900;
+      letter-spacing: .2px;
+      font-size: 14px;
+      margin:0;
+      text-shadow:0 10px 30px rgba(0,0,0,.35);
+    }
+    .brand .tag{
+      margin:4px 0 0;
+      font-size:12px;
+      color: var(--muted);
+      opacity:.95;
+      white-space:nowrap;
+    }
+
+    .navlinks{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      flex:1;
+      justify-content:center;
+      position:relative;
+      z-index:1;
+    }
+
+    .navbtn{
+      --b: rgba(255,255,255,.14);
+      --bg: rgba(0,0,0,.18);
+
+      display:inline-flex;
+      align-items:center;
+      gap:10px;
+      padding: 10px 12px;
+      border-radius: 999px;
+      border:1px solid var(--b);
+      background: var(--bg);
+      color: rgba(255,255,255,.90);
+      text-decoration:none;
+      box-shadow: 0 10px 22px rgba(0,0,0,.18);
+      transition: transform .12s ease, background .15s ease, border-color .15s ease;
+      user-select:none;
+      font-weight: 780;
+      font-size: 13px;
+      white-space: nowrap;
+      position:relative;
+      overflow:hidden;
+    }
+    .navbtn::after{
+      content:"";
+      position:absolute;
+      inset:-40px -60px;
+      background: linear-gradient(120deg, transparent 35%, rgba(255,255,255,.18), transparent 65%);
+      transform: translateX(-40%);
+      opacity:0;
+      transition: opacity .2s ease;
+    }
+    .navbtn:hover{
+      transform: translateY(-1px);
+      border-color: rgba(255,255,255,.28);
+      background: rgba(0,0,0,.22);
+    }
+    .navbtn:hover::after{
+      opacity:1;
+      animation: shine .9s ease forwards;
+    }
+    @keyframes shine{
+      0%{ transform: translateX(-45%); }
+      100%{ transform: translateX(35%); }
+    }
+    .navbtn:active{ transform: translateY(0px) scale(.99); }
+
+    .navbtn .dot{
+      width:10px; height:10px; border-radius:999px;
+      background: rgba(255,255,255,.32);
+      box-shadow: 0 0 0 3px rgba(255,255,255,.10);
+    }
+
+    /* active page highlight */
+    body[data-page="rating"] .navbtn[data-nav="rating"],
+    body[data-page="availability"] .navbtn[data-nav="availability"],
+    body[data-page="geolink"] .navbtn[data-nav="geolink"],
+    body[data-page="overview"] .navbtn[data-nav="overview"]{
+      background: linear-gradient(135deg, rgba(255,209,102,.95), rgba(255,141,81,.95));
+      color: rgba(20,20,20,.92);
+      border:0;
+      box-shadow: 0 18px 38px rgba(0,0,0,.28);
+    }
+    body[data-page="rating"] .navbtn[data-nav="rating"] .dot,
+    body[data-page="availability"] .navbtn[data-nav="availability"] .dot,
+    body[data-page="geolink"] .navbtn[data-nav="geolink"] .dot,
+    body[data-page="overview"] .navbtn[data-nav="overview"] .dot{
+      background: rgba(20,20,20,.55);
+      box-shadow: 0 0 0 3px rgba(20,20,20,.12);
+    }
+
+    /* right side mini status */
+    .navright{
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      gap:10px;
+      min-width: 220px;
+      position:relative;
+      z-index:1;
+    }
+    .chip{
+      display:inline-flex; align-items:center; gap:10px;
+      padding: 10px 12px;
+      border-radius: 999px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.18);
+      box-shadow: 0 10px 22px rgba(0,0,0,.16);
+      color: rgba(255,255,255,.84);
+      font-size: 12px;
+      white-space:nowrap;
+    }
+    .pulse{
+      width:10px; height:10px; border-radius:999px;
+      background: rgba(110,231,183,.95);
+      box-shadow: 0 0 0 0 rgba(110,231,183,.40);
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse{
+      0%{ box-shadow: 0 0 0 0 rgba(110,231,183,.35); }
+      70%{ box-shadow: 0 0 0 10px rgba(110,231,183,0); }
+      100%{ box-shadow: 0 0 0 0 rgba(110,231,183,0); }
+    }
+
+    /* mobile menu */
+    .hamb{
+      display:none;
+      width:44px; height:44px;
+      border-radius: 14px;
+      border:1px solid rgba(255,255,255,.16);
+      background: rgba(0,0,0,.18);
+      box-shadow: 0 10px 22px rgba(0,0,0,.16);
+      cursor:pointer;
+      position:relative;
+    }
+    .hamb span{
+      position:absolute; left:12px; right:12px;
+      height:2px; border-radius:10px;
+      background: rgba(255,255,255,.85);
+      transition: transform .18s ease, top .18s ease, opacity .18s ease;
+    }
+    .hamb span:nth-child(1){ top:15px; }
+    .hamb span:nth-child(2){ top:21px; }
+    .hamb span:nth-child(3){ top:27px; }
+
+    .drawer{
+      display:none;
+      position:fixed;
+      top: calc(14px + var(--navH) + 10px);
+      left:14px; right:14px;
+      z-index:1001;
+      max-width:1180px;
+      margin:0 auto;
+      border-radius: 22px;
+      border:1px solid rgba(255,255,255,.16);
+      background: rgba(10,16,28,.62);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 18px 60px rgba(0,0,0,.35);
+      padding: 12px;
+      transform-origin: top;
+      animation: pop .18s ease both;
+    }
+    @keyframes pop{
+      from{ opacity:0; transform: translateY(-6px) scale(.98); }
+      to{ opacity:1; transform: translateY(0) scale(1); }
+    }
+    .drawer .navbtn{ width:100%; justify-content:flex-start; padding: 12px 14px; border-radius: 16px; }
+    .drawer .grid{ display:grid; gap:10px; }
+
+    @media (max-width: 900px){
+      .navlinks{ display:none; }
+      .navright .chip{ display:none; }
+      .hamb{ display:inline-block; }
+      .brand{ min-width:auto; flex:1; }
+      .navright{ min-width:auto; }
+    }
+
+    /* ---------- Page Layout ---------- */
+    .wrap{
+      max-width:1180px;
+      margin:0 auto;
+      padding: calc(28px + var(--navH) + 18px) 18px 48px;
+    }
+
+    .header{
+      display:flex; gap:14px; flex-wrap:wrap;
+      align-items:flex-end; justify-content:space-between;
+      margin-bottom:18px;
+    }
+    .header-left{ display:flex; gap:14px; align-items:center; }
+
+    /* ✅ NEW: header logo style (same feel as other pages) */
+    .header-logo{
+      width:64px;
+      height:64px;
+      object-fit:contain;
+
+      border-radius:18px;
+      background: rgba(0,0,0,.25);
+      border:1px solid rgba(255,255,255,.18);
+
+      box-shadow:
+        0 12px 30px rgba(0,0,0,.35),
+        inset 0 0 0 1px rgba(255,255,255,.06);
+
+      backdrop-filter: blur(6px);
+      flex: 0 0 auto;
+    }
+
+    .title{
+      font-size: clamp(26px, 3.2vw, 38px);
+      font-weight:800; margin:0;
+      text-shadow:0 10px 30px rgba(0,0,0,.35);
+    }
+    .subtitle{ margin:6px 0 0; color:var(--muted); font-size:14px; max-width:680px; }
+
+    .card{
+      background: var(--glass);
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+      overflow:hidden;
+    }
+    .card-head{
+      padding:18px 18px 14px;
+      border-bottom:1px solid rgba(255,255,255,.12);
+      background: linear-gradient(180deg, rgba(255,255,255,.06), transparent);
+    }
+    .card-head .h{ margin:0; font-weight:700; }
+    .card-head .p{ margin:6px 0 0; color:var(--muted2); font-size:13px; }
+
+    .card-body{ padding:16px 18px 18px; }
+
+    .form{
+      display:grid;
+      grid-template-columns: 1fr 140px 300px 140px;
+      gap:12px; align-items:end;
+    }
+    @media (max-width: 980px){ .form{ grid-template-columns: 1fr 140px 1fr; } }
+    @media (max-width: 680px){ .form{ grid-template-columns: 1fr; } }
+
+    label{ display:flex; flex-direction:column; gap:7px; font-size:12px; color:var(--muted); }
+
+    .input, .btn{
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.22);
+      color: var(--text);
+      padding: 12px 12px;
+      outline:none;
+      box-shadow: 0 8px 20px rgba(0,0,0,.18);
+    }
+    .input:focus{ border-color: rgba(255,255,255,.35); background: rgba(0,0,0,.28); }
+
+    .btn{
+      cursor:pointer;
+      font-weight:750;
+      background: linear-gradient(135deg, rgba(255,209,102,.95), rgba(255,141,81,.95));
+      color: rgba(20,20,20,.92);
+      border:0;
+      box-shadow: 0 18px 40px rgba(0,0,0,.28);
+      transition: transform .08s ease;
+    }
+    .btn:hover{ transform: translateY(-1px); }
+    .btn:active{ transform: translateY(0px); }
+
+    .toggle{
+      display:flex; align-items:center; gap:10px;
+      padding:12px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.22);
+      box-shadow: 0 8px 20px rgba(0,0,0,.18);
+      height:46px;
+    }
+    .toggle input{ transform: scale(1.15); }
+    .toggle span{ color:var(--muted); font-size:13px; }
+
+    .mode-box{
+      display:flex; gap:10px; flex-wrap:wrap;
+      padding:10px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.22);
+      box-shadow: 0 8px 20px rgba(0,0,0,.18);
+      min-height:46px;
+      align-items:center;
+    }
+    .mode-item{
+      display:flex; gap:8px; align-items:center;
+      font-size:13px; color:var(--muted);
+      user-select:none;
+    }
+    .mode-item input{ transform: scale(1.15); }
+
+    .status{
+      margin-top:12px;
+      display:flex; align-items:center; gap:10px;
+      color:var(--muted); font-size:13px; min-height:18px;
+    }
+    .spinner{
+      width:14px; height:14px; border-radius:999px;
+      border:2px solid rgba(255,255,255,.25);
+      border-top-color: rgba(255,255,255,.75);
+      animation: spin .8s linear infinite;
+      display:none;
+    }
+    @keyframes spin{ to { transform: rotate(360deg);} }
+
+    .summary{ display:flex; flex-wrap:wrap; gap:10px; margin-top:14px; }
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:8px 12px; border-radius:999px;
+      background: rgba(0,0,0,.20);
+      border:1px solid rgba(255,255,255,.12);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 20px rgba(0,0,0,.16);
+      font-size:12px; color:var(--muted);
+    }
+    .pill b{ color: var(--text); }
+
+    /* ============ App Magic widget — liquid glass (matches site) ============ */
+    .appmagic-widget{
+      display:none;
+      margin-top:16px;
+      padding:0;
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.045));
+      color: var(--text);
+      box-shadow: var(--shadow);
+      border:1px solid var(--border);
+      backdrop-filter: blur(18px) saturate(1.25);
+      -webkit-backdrop-filter: blur(18px) saturate(1.25);
+      overflow:hidden;
+      position:relative;
+    }
+    .appmagic-widget::before{
+      content:"";
+      position:absolute; inset:-1px;
+      pointer-events:none;
+      background:
+        radial-gradient(640px 220px at 12% 0%, rgba(255,255,255,.18), transparent 60%),
+        radial-gradient(520px 220px at 92% 8%, rgba(255,209,102,.12), transparent 60%);
+      opacity:.9;
+    }
+    .am-shell{ position:relative; z-index:1; padding:26px 30px 28px; }
+
+    .am-header{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:20px;
+      flex-wrap:wrap;
+    }
+    .am-eyebrow{
+      display:inline-flex;
+      align-items:center;
+      gap:9px;
+      font-size:12px;
+      font-weight:800;
+      letter-spacing:.4px;
+      text-transform:uppercase;
+      color: var(--muted);
+    }
+    .am-mark{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width:26px; height:26px;
+      border-radius:9px;
+      font-size:11px;
+      font-weight:900;
+      letter-spacing:0;
+      color: rgba(20,20,20,.92);
+      background: linear-gradient(135deg, rgba(255,209,102,.98), rgba(255,141,81,.98));
+      box-shadow: 0 8px 18px rgba(255,160,60,.30), inset 0 1px 0 rgba(255,255,255,.45);
+    }
+    .am-title{
+      margin:12px 0 0;
+      font-size: clamp(24px, 3vw, 34px);
+      line-height:1.05;
+      font-weight:900;
+      letter-spacing:-.5px;
+      color: var(--muted);
+      text-shadow: 0 8px 26px rgba(0,0,0,.35);
+    }
+    .am-title .am-total{
+      color: var(--text);
+      margin-left:6px;
+    }
+    .am-periods{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      margin-top:14px;
+      padding:4px;
+      border-radius:999px;
+      background: rgba(0,0,0,.24);
+      border:1px solid rgba(255,255,255,.14);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+    }
+    .am-period{
+      appearance:none;
+      border:0;
+      background:transparent;
+      color: var(--muted);
+      font:inherit;
+      font-weight:800;
+      font-size:13px;
+      padding:8px 16px;
+      border-radius:999px;
+      cursor:pointer;
+      transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+    }
+    .am-period:hover{ color: var(--text); background: rgba(255,255,255,.08); }
+    .am-period.active{
+      color: rgba(20,20,20,.92);
+      background: linear-gradient(135deg, rgba(255,209,102,.95), rgba(255,141,81,.95));
+      box-shadow: 0 10px 22px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.4);
+      cursor:default;
+    }
+    .am-cta{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      border:0;
+      border-radius:14px;
+      background: linear-gradient(135deg, rgba(255,209,102,.95), rgba(255,141,81,.95));
+      color: rgba(20,20,20,.92);
+      font-weight:850;
+      font-size:15px;
+      padding:14px 20px;
+      white-space:nowrap;
+      text-decoration:none;
+      box-shadow: 0 18px 40px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.4);
+      transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+      cursor:pointer;
+    }
+    .am-cta:hover{
+      transform: translateY(-1px);
+      filter:saturate(1.06);
+      box-shadow: 0 22px 46px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.45);
+      border-bottom:0;
+    }
+    .am-cta:disabled{
+      cursor:wait;
+      opacity:.72;
+      transform:none;
+      filter:saturate(.78);
+    }
+    .am-auth-code .input{
+      width:100%;
+      min-height:46px;
+    }
+    .am-auth-row{
+      display:grid;
+      grid-template-columns:minmax(0, 1fr) auto;
+      gap:8px;
+      align-items:center;
+    }
+    .am-auth-alt{
+      color:rgba(229,236,247,.62);
+      font-size:12px;
+      font-weight:800;
+      margin-top:4px;
+    }
+    @media (max-width: 720px){
+      .am-auth-row{ grid-template-columns:1fr; }
+    }
+
+    .am-badges{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      align-items:center;
+      margin-top:18px;
+    }
+    .am-badge{
+      display:inline-flex;
+      align-items:center;
+      gap:7px;
+      padding:7px 12px;
+      border-radius:999px;
+      font-size:12px;
+      font-weight:800;
+      color: var(--muted);
+      background: rgba(0,0,0,.20);
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+    }
+    .am-badge.exact{ color:#a9f0cf; background: rgba(110,231,183,.14); border-color: rgba(110,231,183,.32); }
+    .am-badge.estimate{ color:#ffe6a8; background: rgba(255,209,102,.14); border-color: rgba(255,209,102,.34); }
+    .am-badge.degraded{ color:#ffd5d8; background: rgba(255,90,95,.16); border-color: rgba(255,90,95,.34); }
+    .am-badge.muted{ color: var(--muted2); background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.12); }
+
+    .am-bar{
+      display:flex;
+      width:100%;
+      height:26px;
+      overflow:hidden;
+      border-radius:999px;
+      margin-top:24px;
+      background: rgba(255,255,255,.12);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.10), inset 0 2px 6px rgba(0,0,0,.25);
+    }
+    .am-seg{
+      min-width:5px;
+      height:100%;
+      border:0;
+      border-right:2px solid rgba(8,12,22,.55);
+      cursor:pointer;
+      position:relative;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.22);
+      transition: filter .12s ease, transform .12s ease, opacity .12s ease;
+    }
+    .am-seg:last-child{ border-right:0; }
+    .am-seg:hover{ filter:saturate(1.25) brightness(1.08); }
+    .am-seg.active{ filter:saturate(1.25) brightness(1.10); }
+    .am-seg.active::after{
+      content:"";
+      position:absolute; inset:3px;
+      border-radius:999px;
+      box-shadow: inset 0 0 0 2px rgba(255,255,255,.92);
+      pointer-events:none;
+    }
+
+    .am-legend{
+      display:grid;
+      grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+      gap:10px;
+      margin-top:22px;
+    }
+    .am-geo{
+      min-width:0;
+      appearance:none;
+      text-align:left;
+      cursor:pointer;
+      color: var(--text);
+      background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.045));
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:16px;
+      padding:13px 15px;
+      display:grid;
+      grid-template-columns: auto 1fr auto;
+      grid-template-areas:
+        "flag name share"
+        "flag meta meta";
+      column-gap:12px;
+      row-gap:7px;
+      align-items:center;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 8px 22px rgba(0,0,0,.18);
+      transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease, background .12s ease;
+    }
+    .am-geo:hover{
+      transform: translateY(-2px);
+      background: linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,.07));
+      box-shadow: 0 16px 34px rgba(0,0,0,.30), inset 0 1px 0 rgba(255,255,255,.16);
+      border-color: rgba(255,255,255,.24);
+    }
+    .am-geo.active{
+      border-color: rgba(255,209,102,.55);
+      box-shadow: 0 16px 36px rgba(255,160,60,.20), inset 0 1px 0 rgba(255,255,255,.18);
+    }
+    .am-geo.bad{
+      border-color: rgba(255,90,95,.40);
+      background: linear-gradient(180deg, rgba(255,90,95,.14), rgba(255,90,95,.05));
+    }
+    .am-geo-flag{
+      grid-area:flag;
+      font-size:26px;
+      line-height:1;
+      width:34px;
+      text-align:center;
+    }
+    .am-geo-name{
+      grid-area:name;
+      display:flex;
+      align-items:center;
+      gap:8px;
+      min-width:0;
+      font-size:15.5px;
+      font-weight:850;
+      color: var(--text);
+    }
+    .am-geo-name .label{
+      min-width:0;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .am-geo-name .am-rank{
+      font-size:11px;
+      font-weight:800;
+      color: var(--muted);
+      background: rgba(255,255,255,.10);
+      border:1px solid rgba(255,255,255,.10);
+      border-radius:7px;
+      padding:2px 6px;
+      flex:0 0 auto;
+    }
+    .am-dot{
+      width:10px; height:10px;
+      border-radius:999px;
+      flex:0 0 auto;
+      box-shadow: 0 0 0 3px rgba(255,255,255,.08);
+    }
+    .am-geo-share{
+      grid-area:share;
+      font-size:19px;
+      font-weight:900;
+      line-height:1;
+      white-space:nowrap;
+      text-shadow: 0 2px 10px rgba(0,0,0,.30);
+    }
+    .am-geo-meta{
+      grid-area:meta;
+      display:flex;
+      align-items:center;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+    .am-installs{
+      color: var(--muted);
+      font-size:13px;
+      font-weight:750;
+    }
+    .am-rating-chip{
+      display:inline-flex;
+      align-items:center;
+      gap:5px;
+      min-height:22px;
+      padding:3px 9px;
+      border-radius:999px;
+      background: rgba(255,255,255,.10);
+      border:1px solid rgba(255,255,255,.12);
+      color: var(--muted);
+      font-size:12px;
+      font-weight:900;
+    }
+    .am-rating-chip.bad{ background: rgba(255,90,95,.18); border-color: rgba(255,90,95,.36); color:#ffd5d8; }
+    .am-rating-chip.ok{ background: rgba(110,231,183,.16); border-color: rgba(110,231,183,.32); color:#a9f0cf; }
+    .am-rating-chip .star{ font-size:11px; opacity:.9; }
+
+    /* below-threshold alert (integrated, glass) */
+    .am-alert{
+      margin-top:22px;
+      border-radius:18px;
+      padding:18px 18px 16px;
+      background: linear-gradient(180deg, rgba(255,90,95,.16), rgba(54,17,24,.55));
+      border:1px solid rgba(255,90,95,.34);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+      backdrop-filter: blur(10px);
+    }
+    .am-alert.ok{
+      background: linear-gradient(180deg, rgba(110,231,183,.16), rgba(9,42,36,.55));
+      border-color: rgba(110,231,183,.32);
+    }
+    .am-alert-head{
+      display:flex;
+      align-items:flex-start;
+      gap:12px;
+    }
+    .am-alert-icon{
+      flex:0 0 auto;
+      width:34px; height:34px;
+      border-radius:11px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      font-size:18px;
+      font-weight:900;
+      background: rgba(255,90,95,.24);
+      border:1px solid rgba(255,90,95,.40);
+      color:#ffd5d8;
+    }
+    .am-alert.ok .am-alert-icon{ background: rgba(110,231,183,.22); border-color: rgba(110,231,183,.40); color:#a9f0cf; }
+    .am-alert-title{
+      margin:0;
+      font-size:16px;
+      font-weight:900;
+      color:#ffe1e3;
+    }
+    .am-alert.ok .am-alert-title{ color:#bff3d8; }
+    .am-alert-sub{
+      margin:3px 0 0;
+      font-size:13px;
+      font-weight:650;
+      color: var(--muted);
+    }
+    .am-alert-chips{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin-top:14px;
+    }
+    .am-alert-chip{
+      display:inline-flex;
+      align-items:center;
+      gap:7px;
+      padding:8px 12px;
+      border-radius:999px;
+      background: rgba(255,255,255,.08);
+      border:1px solid rgba(255,90,95,.32);
+      color: var(--text);
+      font-size:12.5px;
+      font-weight:800;
+      text-decoration:none;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+      transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+    }
+    .am-alert-chip:hover{
+      transform: translateY(-1px);
+      background: rgba(255,255,255,.14);
+      box-shadow: 0 10px 22px rgba(0,0,0,.28);
+      border-bottom:1px solid rgba(255,90,95,.32);
+    }
+    .am-alert-chip b{ color:#ff9aa0; }
+    .am-alert-chip .flag{ font-size:15px; }
+
+    .am-note{
+      margin-top:16px;
+      color: var(--muted2);
+      font-size:12px;
+      line-height:1.45;
+    }
+    .below-title{
+      display:none;
+      margin-top:14px;
+      padding:16px 18px;
+      border-radius:20px;
+      background: rgba(7, 12, 21, .72);
+      border:1px solid rgba(255,255,255,.16);
+      box-shadow: var(--shadow2);
+      backdrop-filter: blur(14px);
+    }
+    .below-title.danger{ border-color: rgba(255,90,95,.34); background: rgba(54, 17, 24, .72); }
+    .below-title.ok{ border-color: rgba(110,231,183,.25); background: rgba(9, 42, 36, .68); }
+    .below-title.all{ border-color: rgba(255,214,0,.25); background: rgba(43, 35, 11, .66); }
+    .below-title .h{
+      margin:0;
+      font-weight:850;
+      font-size:15px;
+    }
+    .below-title .p{
+      margin:5px 0 0;
+      color:var(--muted);
+      font-size:13px;
+    }
+    .below-chips{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin-top:12px;
+    }
+    .below-chip{
+      display:inline-flex;
+      align-items:center;
+      gap:7px;
+      padding:8px 10px;
+      border-radius:999px;
+      background:rgba(255,255,255,.10);
+      border:1px solid rgba(255,255,255,.14);
+      color:rgba(255,255,255,.88);
+      font-size:12px;
+      font-weight:800;
+      white-space:nowrap;
+    }
+    .below-chip b{ color:#ffd5d8; }
+
+    .table-wrap{
+      margin-top:14px;
+      border-radius: var(--radius);
+      overflow:hidden;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.45);
+      box-shadow: var(--shadow2);
+      display:none;
+    }
+    table{ width:100%; border-collapse:collapse; min-width:980px; }
+    thead th{
+      position: sticky; top:0; z-index:1;
+      background: rgba(12, 18, 30, .72);
+      backdrop-filter: blur(12px);
+      border-bottom:1px solid rgba(255,255,255,.12);
+      padding:12px; text-align:left;
+      font-size:12px; color: rgba(255,255,255,.78);
+      user-select:none;
+      white-space:nowrap;
+    }
+    thead th.sortable{ cursor:pointer; }
+    thead th.sortable:hover{ color: rgba(255,255,255,.92); background: rgba(16,24,40,.78); }
+
+    tbody td{
+      padding:12px;
+      border-bottom: 1px solid rgba(255,255,255,.07);
+      font-size:13px;
+      color: rgba(255,255,255,.88);
+      vertical-align: top;
+    }
+    tbody tr:hover{ background: rgba(255,255,255,.04); }
+
+    .badge{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:6px 10px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.18);
+      font-size:12px;
+      color: rgba(255,255,255,.82);
+      white-space:nowrap;
+    }
+    .rating-bad{
+      background: rgba(255, 90, 95, .16);
+      border-color: rgba(255, 90, 95, .35);
+      font-weight:800;
+    }
+    .rating-ok{
+      background: rgba(110, 231, 183, .14);
+      border-color: rgba(110, 231, 183, .30);
+      font-weight:750;
+    }
+    .note-err{ color: rgba(255, 190, 190, .95); }
+    .note-muted{ color: rgba(255,255,255,.62); }
+
+    a{
+      color: rgba(255,255,255,.92);
+      text-decoration:none;
+      border-bottom:1px dashed rgba(255,255,255,.25);
+      padding-bottom:1px;
+    }
+    a:hover{ border-bottom-color: rgba(255,255,255,.60); }
+
+    .sort-ind{ margin-left:8px; font-size:11px; color: rgba(255,255,255,.55); }
+
+    @media (max-width: 680px){
+      .am-shell{ padding:18px 16px; }
+      .am-header{ flex-direction:column; }
+      .am-cta{ width:100%; justify-content:center; }
+      .am-legend{ grid-template-columns:1fr; }
+    }
+  </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260629c') }}" />
+  <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260623d') }}" defer></script>
+</head>
+
+<body data-page="rating">
+  <div class="bg"></div>
+
+  <!-- NEW TOP NAV -->
+  <div class="topnav">
+    <div class="topnav-inner">
+      <div class="brand">
+        <img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" alt="WWA" class="logo" />
+        <div class="txt">
+          <p class="name">WWA ASO Tools</p>
+          <p class="tag">Ready • Fast • GEO-driven</p>
+        </div>
+      </div>
+
+      <div class="navlinks" aria-label="Site navigation">
+        <a class="navbtn" data-nav="rating" href="/">
+          <span class="dot"></span> Rating
+        </a>
+        <a class="navbtn" data-nav="availability" href="/availability">
+          <span class="dot"></span> Availability
+        </a>
+        <a class="navbtn" data-nav="geolink" href="/geo-link">
+          <span class="dot"></span> Geo Link
+        </a>
+        <a class="navbtn" data-nav="overview" href="/app-overview">
+          <span class="dot"></span> Overview
+        </a>
+      </div>
+
+      <div class="navright">
+        <div class="chip" title="Service status">
+          <span class="pulse"></span>
+          Live tools
+        </div>
+        <button class="nav-utility" type="button" aria-label="Help">?</button>
+        <button class="nav-utility theme-toggle" type="button" aria-label="Switch to light theme" title="Theme">☼</button>
+
+        <button class="hamb" id="hamb" aria-label="Open menu" type="button">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile drawer -->
+  <div class="drawer" id="drawer" aria-label="Mobile navigation">
+    <div class="grid">
+      <a class="navbtn" data-nav="rating" href="/"><span class="dot"></span> Rating</a>
+      <a class="navbtn" data-nav="availability" href="/availability"><span class="dot"></span> Availability</a>
+      <a class="navbtn" data-nav="geolink" href="/geo-link"><span class="dot"></span> Geo Link</a>
+      <a class="navbtn" data-nav="overview" href="/app-overview"><span class="dot"></span> Overview</a>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="header">
+      <div class="header-left">
+        <div>
+          <h1 class="title">GEO (ASO) Checker</h1>
+          <p class="subtitle">
+            Вставте посилання на додаток з Google Play або App Store, оберіть поріг рейтингу та режим.
+            Система перевірить рейтинги по країнах і знайде ті, що нижче заданого порогу.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-body">
+        <div class="form2">
+          <div class="form-row1">
+            <label class="f-url">
+              <span class="f-label">URL додатку</span>
+              <div class="url-field">
+                <span class="url-ico" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 3.5v17a1 1 0 0 0 1.5.87l14.6-8.5a1 1 0 0 0 0-1.74L4.5 2.63A1 1 0 0 0 3 3.5Z" fill="url(#gpg)"/><defs><linearGradient id="gpg" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#00d4ff"/><stop offset=".5" stop-color="#52e36a"/><stop offset="1" stop-color="#ffd166"/></linearGradient></defs></svg>
+                </span>
+                <input id="url" class="input url-input" type="text"
+                  placeholder="https://play.google.com/store/apps/details?id=com.wwa.asotools" />
+                <button class="url-clear" id="urlClear" type="button" aria-label="Очистити">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+                </button>
+              </div>
+            </label>
+
+            <label class="f-thr">
+              <span class="f-label">Поріг (0..5)</span>
+              <input id="threshold" class="input" type="number" step="0.1" min="0" max="5" value="4.0" />
+            </label>
+
+            <div class="f-mode">
+              <span class="f-label">Режим</span>
+              <div class="mode-box" title="Вибери один режим">
+                <div class="mode-item">
+                  <input type="checkbox" id="modeToolbox" />
+                  <span class="mode-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5a3.8 3.8 0 0 0-5 5L3.5 16.5 7.5 20.5l6-6a3.8 3.8 0 0 0 5-5l-2.7 2.7-2.3-2.3z"/></svg></span>
+                  <span class="mode-txt">ASO Toolbox</span>
+                </div>
+                <div class="mode-item">
+                  <input type="checkbox" id="modeFull" />
+                  <span class="mode-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="20" x2="6" y2="13"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="18" y1="20" x2="18" y2="9"/></svg></span>
+                  <span class="mode-txt">Повне ASO</span>
+                </div>
+                <div class="mode-item">
+                  <input type="checkbox" id="modeAppMagic" checked />
+                  <span class="mode-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2.5l1.7 4.9 4.9 1.7-4.9 1.7L12 15.7l-1.7-4.9L5.4 9l4.9-1.7z"/><path d="M18.5 14l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></span>
+                  <span class="mode-txt">App Magic</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-row2">
+            <div class="f-toggle">
+              <label class="switch">
+                <input id="showAll" type="checkbox" checked />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+              <span class="switch-label">Показувати всі країни</span>
+            </div>
+
+            <button id="run" class="btn run-btn">
+              <span class="run-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12a8.5 8.5 0 1 1-2.4-5.9"/><polyline points="20.5 3.5 20.5 8 16 8"/></svg></span>
+              <span>Перевірити</span>
+            </button>
+          </div>
+
+          <div class="status">
+            <span class="spinner" id="spin"></span>
+            <span class="status-done" id="statusReady" hidden>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 10 18 20 6"/></svg> Готово
+            </span>
+            <span class="status-sep" id="statusSep" hidden>|</span>
+            <span id="statusText"></span>
+            <button class="export-btn" id="exportBtn" type="button" hidden>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M5 21h14"/></svg> Експорт
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="summary" class="summary"></div>
+
+    <div class="appmagic-widget" id="appmagicWidget"></div>
+
+    <div class="below-title" id="belowTitle"></div>
+
+    <div class="table-wrap" id="tableWrap">
+      <div style="overflow:auto;">
+        <table id="tbl">
+          <thead>
+            <tr>
+              <th>Store</th>
+              <th class="sortable" data-sort="country">Country <span class="sort-ind" id="sort-country"></span></th>
+              <th class="sortable" data-sort="rating">Rating <span class="sort-ind" id="sort-rating"></span></th>
+              <th class="sortable" data-sort="appmagic_rank">GEO / ≈ Installs <span class="sort-ind" id="sort-appmagic_rank"></span></th>
+              <th>Open</th>
+              <th>gl</th>
+              <th>hl</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const APPMAGIC_TOKEN_STORAGE_KEY = "wwa_appmagic_bearer_token";
+
+  function getStoredAppMagicToken(){
+    try{
+      return localStorage.getItem(APPMAGIC_TOKEN_STORAGE_KEY) || "";
+    } catch (_){
+      return "";
+    }
+  }
+
+  function saveStoredAppMagicToken(token){
+    try{
+      if (token) localStorage.setItem(APPMAGIC_TOKEN_STORAGE_KEY, token);
+    } catch (_){}
+  }
+
+  function clearStoredAppMagicToken(){
+    try{
+      localStorage.removeItem(APPMAGIC_TOKEN_STORAGE_KEY);
+    } catch (_){}
+  }
+
+  // Clean monochrome SVG icon set (consistent across platforms)
+  const svg = (inner, opts = "") => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${opts}>${inner}</svg>`;
+  const ICONS = {
+    play: `<svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 3.5v17a1 1 0 0 0 1.5.87l14-8.5a1 1 0 0 0 0-1.74l-14-8.5A1 1 0 0 0 4 3.5Z" fill="url(#gpg2)"/><defs><linearGradient id="gpg2" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#00d4ff"/><stop offset=".5" stop-color="#52e36a"/><stop offset="1" stop-color="#ffd166"/></linearGradient></defs></svg>`,
+    sparkle: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2.5l1.7 4.9 4.9 1.7-4.9 1.7L12 15.7l-1.7-4.9L5.4 9l4.9-1.7z"/><path d="M18.5 14l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg>`,
+    globe: svg(`<circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/>`),
+    code: svg(`<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>`),
+    target: svg(`<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/>`),
+    warn: svg(`<path d="M12 3.2 21.5 20H2.5z"/><line x1="12" y1="9.5" x2="12" y2="14"/><circle cx="12" cy="17" r=".7" fill="currentColor" stroke="none"/>`),
+    check: svg(`<polyline points="4 12 10 18 20 6"/>`, `stroke-width="2.6"`),
+    calendar: svg(`<rect x="3" y="5" width="18" height="16" rx="2"/><line x1="3" y1="9.5" x2="21" y2="9.5"/><line x1="8" y1="3" x2="8" y2="6.5"/><line x1="16" y1="3" x2="16" y2="6.5"/>`),
+    trend: svg(`<polyline points="3 17 9 11 13 15 21 6"/><polyline points="15 6 21 6 21 12"/>`),
+    download: svg(`<path d="M12 3v11"/><polyline points="7 10 12 15 17 10"/><path d="M4 20h16"/>`),
+    open: svg(`<line x1="7" y1="17" x2="16.5" y2="7.5"/><polyline points="8.5 7 17 7 17 15.5"/>`),
+  };
+
+  // Mobile menu
+  (function(){
+    const hamb = $("hamb");
+    const drawer = $("drawer");
+    if (!hamb || !drawer) return;
+
+    const close = () => { drawer.style.display = "none"; };
+    const open = () => { drawer.style.display = "block"; };
+
+    hamb.addEventListener("click", () => {
+      const isOpen = drawer.style.display === "block";
+      if (isOpen) close();
+      else open();
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!drawer.contains(e.target) && !hamb.contains(e.target)) close();
+    });
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") close();
+    });
+  })();
+
+  // URL clear button
+  (function(){
+    const clearBtn = $("urlClear");
+    const urlInput = $("url");
+    if (!clearBtn || !urlInput) return;
+    const sync = () => { clearBtn.style.visibility = urlInput.value ? "visible" : "hidden"; };
+    clearBtn.addEventListener("click", () => { urlInput.value = ""; urlInput.dispatchEvent(new Event("input")); urlInput.focus(); sync(); });
+    urlInput.addEventListener("input", sync);
+    sync();
+  })();
+
+  let currentRows = [];
+  let currentSort = { key: null, dir: 1 };
+  let appMagicState = { period: "last30days", selectedIndex: 0 };
+  let lastResult = null;
+
+  function escapeHtml(str) {
+    return String(str ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function setLoading(isLoading, text){
+    $("spin").style.display = isLoading ? "inline-block" : "none";
+    $("statusText").textContent = text || "";
+  }
+
+  function clearSortIndicators(){
+    $("sort-country").textContent = "";
+    $("sort-rating").textContent = "";
+    $("sort-appmagic_rank").textContent = "";
+  }
+
+  function formatNumber(value){
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "—";
+    return Math.round(n).toLocaleString("en-US").replaceAll(",", " ");
+  }
+
+  function getMode(){
+    if ($("modeAppMagic").checked) return "appmagic";
+    return $("modeFull").checked ? "full" : "toolbox";
+  }
+
+  function syncModeCheckboxes(changed){
+    if (changed === "toolbox"){
+      $("modeToolbox").checked = true;
+      $("modeFull").checked = false;
+      $("modeAppMagic").checked = false;
+    } else if (changed === "full") {
+      $("modeToolbox").checked = false;
+      $("modeFull").checked = true;
+      $("modeAppMagic").checked = false;
+    } else {
+      $("modeToolbox").checked = false;
+      $("modeFull").checked = false;
+      $("modeAppMagic").checked = true;
+    }
+  }
+  $("modeToolbox").addEventListener("change", () => syncModeCheckboxes("toolbox"));
+  $("modeFull").addEventListener("change", () => syncModeCheckboxes("full"));
+  $("modeAppMagic").addEventListener("change", () => syncModeCheckboxes("appmagic"));
+  $("exportBtn").hidden = true;
+
+  function renderSummary(data){
+    const storeLabel = (data.store === "google_play") ? "Google Play"
+                    : (data.store === "apple_app_store") ? "App Store"
+                    : (data.store || "—");
+
+    const belowCount = (data.below || []).length;
+    const allCount = (data.all || []).length;
+    const countriesCount = Number(data.countries_count ?? allCount) || allCount;
+    const modeLabel = (data.mode === "appmagic") ? "App Magic"
+                    : (data.mode === "full") ? "Повне ASO"
+                    : "ASO Toolbox";
+    const belowPct = countriesCount ? ((belowCount / countriesCount) * 100).toFixed(1) : "0.0";
+    const appmagic = data.appmagic || {};
+    const appInstallsLabel = data.app_total_installs_label || appmagic.app_total_installs_label || "";
+    const appInstallsSource = data.app_total_installs_source_label || appmagic.app_total_installs_source_label || "";
+    const last30Period = data.mode === "appmagic" ? getAppMagicPeriod(data, "last30days") : null;
+    const lifetimePeriod = data.mode === "appmagic" ? getAppMagicPeriod(data, "lifetime") : null;
+    const last30Label = last30Period?.downloads_label || "";
+    const lifetimeLabel = lifetimePeriod?.downloads_label || "";
+
+    const card = (ico, key, val, cls = "", title = "") => `
+      <div class="metric ${cls}">
+        <div class="metric-ico">${ico}</div>
+        <div class="metric-body">
+          <div class="metric-k">${escapeHtml(key)}</div>
+          <div class="metric-v" title="${escapeHtml(title)}">${val}</div>
+        </div>
+      </div>`;
+
+    $("summary").innerHTML = `
+      ${card(ICONS.play, "Store", escapeHtml(storeLabel))}
+      ${card(ICONS.sparkle, "Mode", escapeHtml(modeLabel))}
+      ${card(ICONS.globe, "Countries", escapeHtml(countriesCount))}
+      ${card(ICONS.code, "App ID", `<span class="metric-mono metric-appid-text">${escapeHtml(data.app_id)}</span>`, "metric-app-id", data.app_id)}
+      ${appInstallsLabel && appInstallsLabel !== "—" ? card(ICONS.download, "Total Installs", `<span class="metric-mono">${escapeHtml(appInstallsLabel)}</span>`, "metric-installs", appInstallsSource ? `Source: ${appInstallsSource}` : "") : ""}
+      ${last30Label && last30Label !== "—" ? card(ICONS.calendar, "30 Days", `<span class="metric-mono">${escapeHtml(last30Label)}</span>`, "metric-period", "App Magic period total used for the 30 days country split") : ""}
+      ${lifetimeLabel && lifetimeLabel !== "—" ? card(ICONS.trend, "Lifetime", `<span class="metric-mono">${escapeHtml(lifetimeLabel)}</span>`, "metric-period", "App Magic period total used for the lifetime country split") : ""}
+      ${card(ICONS.target, "Threshold", escapeHtml(Number(data.threshold).toFixed(1)))}
+      ${card(ICONS.warn, "Below", `${escapeHtml(belowCount)} <span class="metric-pct">(${belowPct}%)</span>`, "metric-danger")}
+    `;
+  }
+
+  const appMagicColors = [
+    "#2f80ed", "#27ae60", "#e8821e", "#9b59e6", "#13b3c4",
+    "#00b8d4", "#72c903", "#c51162", "#f56a00", "#a300f5",
+    "#47699b", "#7d0932", "#00bfa5", "#ffab00", "#5d4037"
+  ];
+
+  function getAppMagicPeriod(data, period){
+    const appmagic = data.appmagic || {};
+    const periods = appmagic.downloads_periods || {};
+    return periods[period] || {
+      label: period === "lifetime" ? "Lifetime" : "Last 30 days",
+      downloads_label: appmagic.downloads_label || "—",
+      downloads_total: appmagic.downloads_total ?? null,
+      downloads_distribution: appmagic.downloads_distribution || []
+    };
+  }
+
+  function compactAppMagicDistribution(distribution){
+    return (distribution || []).map((geo, idx) => ({...geo, source_index: idx}));
+  }
+
+  function appMagicBarIndexFromPointer(bar, event){
+    const segments = Array.from(bar.querySelectorAll(".am-seg"));
+    if (!segments.length) return null;
+
+    let nearestIndex = null;
+    let nearestDistance = Infinity;
+    for (const segment of segments){
+      const rect = segment.getBoundingClientRect();
+      const index = Number(segment.dataset.appmagicIndex);
+      if (!Number.isFinite(index)) continue;
+
+      if (event.clientX >= rect.left && event.clientX <= rect.right){
+        return index;
+      }
+
+      const center = rect.left + rect.width / 2;
+      const distance = Math.abs(event.clientX - center);
+      if (distance < nearestDistance){
+        nearestDistance = distance;
+        nearestIndex = index;
+      }
+    }
+
+    return nearestIndex;
+  }
+
+  function selectAppMagicIndex(index, data){
+    if (!Number.isFinite(index)) return;
+    appMagicState.selectedIndex = index;
+    renderAppMagicWidget(data);
+  }
+
+  function appMagicShareLabel(geo){
+    const share = Number(geo?.share ?? 0);
+    const exact = Number(geo?.share_exact ?? share);
+    if (share <= 0 && exact > 0) return "<1%";
+    return `${Number.isFinite(share) ? share : 0}%`;
+  }
+
+  function flagEmoji(iso2){
+    const cc = String(iso2 || "").trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(cc)) return "🌍";
+    const A = 0x1F1E6;
+    return String.fromCodePoint(A + cc.charCodeAt(0) - 65, A + cc.charCodeAt(1) - 65);
+  }
+
+  function appMagicSourceCopy(data){
+    const source = data.appmagic?.downloads_estimate_source || "";
+    if (source === "appmagic_auth_required"){
+      const reason = data.appmagic?.appmagic_exact_required_reason || "APPMAGIC_DATA_COUNTRIES_AUTH_REQUIRED";
+      return {
+        badge: "Потрібна авторизація App Magic",
+        kind: "degraded",
+        note: `Для 1:1 з App Magic потрібен доступ до data-countries. Поточна причина: ${reason}.`
+      };
+    }
+    if (source === "appmagic_no_rating_data"){
+      return {
+        badge: "У App Magic немає рейтингів",
+        kind: "degraded",
+        note: "App Magic знає цей додаток, але не має GEO-розбивки країн для перевірки рейтингів. Авторизація або новий token це не виправлять."
+      };
+    }
+    if (source === "appmagic_data_countries"){
+      return {
+        badge: "Точні дані App Magic",
+        kind: "exact",
+        note: "Повна розбивка по країнах узята напряму з App Magic (data-countries) — у тому ж порядку і з тими ж частками, без групування в Other."
+      };
+    }
+    if (source === "appmagic_data_countries_total_share"){
+      return {
+        badge: "Інстали: App Magic total × country share",
+        kind: "estimate",
+        note: "App Magic дав нормальний total installs і частки, але частину абсолютних installs по країнах повернув як 1 або грубо округлив. Тому ≈ Installs перераховані від total App Magic data-countries за їхніми ж частками."
+      };
+    }
+    if (source === "appmagic_share_app_info_total"){
+      return {
+        badge: "Інстали: App Magic total × country share",
+        kind: "estimate",
+        note: "App Magic повернув абсолютні installs як 1, тому ≈ Installs перераховані від App Magic app-info total за частками data-countries. Частки і порядок країн лишаються з App Magic; абсолютні значення — оцінка."
+      };
+    }
+    if (source === "appmagic_share_google_play_total"){
+      return {
+        badge: "Інстали: Google Play total × App Magic share",
+        kind: "estimate",
+        note: "App Magic не дав нормальний total installs, тому ≈ Installs — нижня оцінка від публічного Google Play installs, розподілена за частками App Magic. Для Last 30 days це орієнтир, не точна цифра."
+      };
+    }
+    if (source === "appmagic_country_values"){
+      return {
+        badge: "Дані App Magic по країнах",
+        kind: "estimate",
+        note: "Країни і частки побудовані з публічних оцінок завантажень App Magic по кожній країні (відсортовано за реальними інсталами). Це оцінка App Magic, дуже близька до їхнього сайту."
+      };
+    }
+    if (source === "appmagic_unavailable_fallback"){
+      const reason = data.appmagic?.appmagic_fallback_reason || "temporary unavailable";
+      return {
+        badge: "App Magic тимчасово недоступний",
+        kind: "degraded",
+        note: `App Magic зараз повертає ${reason}. Показано резервний GEO набір, щоб перевірка рейтингів не падала; частки є приблизною rank-based оцінкою, не даними App Magic.`
+      };
+    }
+    return {
+      badge: "Оцінка App Magic",
+      kind: "estimate",
+      note: "Порядок GEO взято з публічних даних App Magic, а частки — це оцінка. Для гарантованого 1:1 з платним інтерфейсом потрібен логін App Magic."
+    };
+  }
+
+  function appMagicAuthErrorMessage(error){
+    if (error === "APPMAGIC_DASHLY_TOKEN_UNSUPPORTED"){
+      return "Це dashly_data/auth_token від чат-віджета Dashly, він не підходить. Візьми Authorization: Bearer ... у DevTools → Network → data-countries → Headers.";
+    }
+    if (error === "APPMAGIC_TOKEN_EMPTY"){
+      return "Встав Authorization: Bearer ... з Network або повний login URL з листа App Magic.";
+    }
+    if (error === "APPMAGIC_BROWSER_TOKEN_NOT_FOUND"){
+      return "Не знайшов App Magic token у локальних профілях браузера. Відкрий App Magic у Chrome/Brave/Edge, онови сторінку App Magic і натисни автоімпорт ще раз.";
+    }
+    if (error === "APPMAGIC_AUTO_IMPORT_LOCAL_ONLY"){
+      return "Автоімпорт token працює тільки при локальному запуску на твоєму компʼютері. На хостингу встав Authorization: Bearer ... вручну.";
+    }
+    if (error === "APPMAGIC_LOGIN_LINK_LOCAL_ONLY"){
+      return "Login link можна використовувати тільки локально. На хостингу встав Authorization: Bearer ... вручну, token збережеться у твоєму браузері.";
+    }
+    return error || "Не вдалося авторизувати App Magic.";
+  }
+
+  function buildRowsByGl(rows){
+    const map = new Map();
+    for (const row of rows || []){
+      if (row.gl) map.set(String(row.gl).toUpperCase(), row);
+    }
+    return map;
+  }
+
+  function wireAppMagicLoginLink(){
+    const input = $("appmagicLoginLink");
+    const button = $("appmagicSaveLogin");
+    const tokenInput = $("appmagicToken");
+    const tokenButton = $("appmagicSaveToken");
+    const autoButton = $("appmagicAutoToken");
+    const status = $("appmagicAuthStatus");
+    if (!input || !button || !status) return;
+
+    const saveAppMagicAuth = async (endpoint, body, buttonEl, successText) => {
+      buttonEl.disabled = true;
+      status.textContent = "Зберігаю App Magic сесію...";
+
+      try{
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify(body)
+        });
+        const payload = await res.json();
+        if (!res.ok || !payload.ok){
+          throw new Error(appMagicAuthErrorMessage(payload.error));
+        }
+
+        if (body.token){
+          saveStoredAppMagicToken(body.token);
+        }
+        status.textContent = successText;
+        setTimeout(() => $("run").click(), 450);
+      } catch (err){
+        status.textContent = "App Magic сесію не збережено: " + (err.message || err);
+      } finally {
+        buttonEl.disabled = false;
+      }
+    };
+
+    button.addEventListener("click", async () => {
+      const loginUrl = input.value.trim();
+      if (!loginUrl){
+        status.textContent = "Встав повний login URL з листа App Magic.";
+        return;
+      }
+
+      await saveAppMagicAuth(
+        "/appmagic/auth/exchange",
+        { url: loginUrl },
+        button,
+        "App Magic login link збережено. Повторюю перевірку..."
+      );
+      input.value = "";
+    });
+
+    if (tokenInput && tokenButton){
+      tokenButton.addEventListener("click", async () => {
+        const token = tokenInput.value.trim();
+        if (!token){
+          status.textContent = "Встав Authorization: Bearer ... з Network, не dashly_data/auth_token.";
+          return;
+        }
+
+        await saveAppMagicAuth(
+          "/appmagic/auth/token",
+          { token },
+          tokenButton,
+          "App Magic token збережено. Повторюю перевірку..."
+        );
+        tokenInput.value = "";
+      });
+    }
+
+    if (autoButton){
+      autoButton.addEventListener("click", async () => {
+        autoButton.disabled = true;
+        status.textContent = "Шукаю App Magic token у локальних профілях браузера...";
+
+        try{
+          const res = await fetch("/appmagic/auth/auto-import", {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: "{}"
+          });
+          const payload = await res.json();
+          if (!res.ok || !payload.ok){
+            throw new Error(appMagicAuthErrorMessage(payload.error));
+          }
+
+          const browser = payload.auth?.browser ? ` (${payload.auth.browser}${payload.auth.profile ? ", " + payload.auth.profile : ""})` : "";
+          if (payload.auth?.token) saveStoredAppMagicToken(payload.auth.token);
+          status.textContent = "App Magic token знайдено і збережено" + browser + ". Повторюю перевірку...";
+          setTimeout(() => $("run").click(), 450);
+        } catch (err){
+          status.textContent = "Автоімпорт не спрацював: " + (err.message || err);
+        } finally {
+          autoButton.disabled = false;
+        }
+      });
+    }
+  }
+
+  function renderAppMagicWidget(data){
+    const box = $("appmagicWidget");
+    if (data.mode !== "appmagic" || !data.appmagic){
+      box.style.display = "none";
+      box.innerHTML = "";
+      return;
+    }
+
+    const period = appMagicState.period || data.appmagic.downloads_period_active || "last30days";
+    const periodData = getAppMagicPeriod(data, period);
+    const rawDist = periodData.downloads_distribution || [];
+    if (appMagicState.selectedIndex < 0 || appMagicState.selectedIndex >= rawDist.length){
+      appMagicState.selectedIndex = 0;
+    }
+    const dist = compactAppMagicDistribution(rawDist);
+
+    const totalLabel = periodData.downloads_label || "—";
+    const periodLabel = periodData.label || (period === "lifetime" ? "Lifetime" : "Last 30 days");
+    const periodTotalLabel = `${periodLabel} total: ${totalLabel}`;
+    const last30Period = getAppMagicPeriod(data, "last30days");
+    const lifetimePeriod = getAppMagicPeriod(data, "lifetime");
+    const periodTotalsHtml = `
+      <div class="dl-totals" aria-label="App Magic period totals">
+        <button class="dl-total-chip ${period === "last30days" ? "active" : ""}" type="button" data-appmagic-period="last30days">
+          <span>30 days</span>
+          <b>${escapeHtml(last30Period.downloads_label || "—")}</b>
+        </button>
+        <button class="dl-total-chip ${period === "lifetime" ? "active" : ""}" type="button" data-appmagic-period="lifetime">
+          <span>Lifetime</span>
+          <b>${escapeHtml(lifetimePeriod.downloads_label || "—")}</b>
+        </button>
+      </div>
+    `;
+    const appMagicUrl = data.appmagic.appmagic_url || "";
+    const appName = data.appmagic.appmagic_app_name || "";
+    const sourceCopy = appMagicSourceCopy(data);
+    const rowsByGl = buildRowsByGl(data.all || []);
+    const threshold = Number(data.threshold ?? $("threshold").value ?? 4);
+    if (data.appmagic?.appmagic_no_rating_data){
+      const appMagicLink = appMagicUrl
+        ? `<a class="am-cta" href="${escapeHtml(appMagicUrl)}" target="_blank" rel="noopener noreferrer">Відкрити App Magic ↗</a>`
+        : "";
+      const reason = data.appmagic.appmagic_no_rating_data_reason || "APPMAGIC_EXACT_DATA_UNAVAILABLE";
+      box.innerHTML = `
+        <div class="am-shell">
+          <div class="am-auth-card am-empty-card">
+            <div class="am-auth-icon">${ICONS.warn}</div>
+            <div class="am-auth-body">
+              <div class="am-auth-title">У App Magic немає рейтингових даних для цього додатку</div>
+              <p>App Magic знайшов додаток, але не віддає країни/частки для <code>data-countries</code>, тому немає GEO-списку, по якому можна перевірити рейтинг. Це не проблема token або авторизації.</p>
+              <p>Якщо зверху показується <b>Total Installs</b>, це окрема загальна оцінка App Magic/Google Play; вона не означає, що в App Magic є рейтингова розбивка по країнах.</p>
+              <p class="am-auth-note">Причина від App Magic: <b>${escapeHtml(reason)}</b>.</p>
+              <div class="am-badges">
+                <span class="am-badge degraded">${escapeHtml(sourceCopy.badge)}</span>
+                ${appName ? `<span class="am-badge muted">${escapeHtml(appName)}</span>` : ""}
+                ${appMagicLink}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      box.style.display = "block";
+      return;
+    }
+
+    if (data.appmagic?.appmagic_auth_required){
+      const appMagicLink = appMagicUrl
+        ? `<a class="am-cta" href="${escapeHtml(appMagicUrl)}" target="_blank" rel="noopener noreferrer">Відкрити App Magic ↗</a>`
+        : "";
+      const authReason = data.appmagic.appmagic_exact_required_reason || "APPMAGIC_DATA_COUNTRIES_AUTH_REQUIRED";
+      box.innerHTML = `
+        <div class="am-shell">
+          <div class="am-auth-card">
+            <div class="am-auth-icon">${ICONS.warn}</div>
+            <div class="am-auth-body">
+              <div class="am-auth-title">Потрібна авторизація App Magic для точних даних</div>
+              <p>Щоб показувати країни, завантаження і частки <b>так само як на сайті App Magic</b>, потрібен доступ до їхнього <code>data-countries</code>. Якщо App Magic уже відкритий у цьому браузері, спробуй автоімпорт.</p>
+              <div class="am-auth-code">
+                <div class="am-auth-actions">
+                  <button class="am-cta" id="appmagicAutoToken" type="button">Авто знайти token у браузері</button>
+                  <span>Шукає локально в Chrome/Brave/Edge. Token не показується на екрані.</span>
+                </div>
+                <div class="am-auth-alt">Якщо автоімпорт не знайде token: відкрий лист від App Magic, скопіюй повний login URL і встав його тут.</div>
+                <div class="am-auth-row">
+                  <input class="input" id="appmagicLoginLink" type="text" placeholder="https://appmagic.rocks/login?code=...&email=..." />
+                  <button class="am-cta" id="appmagicSaveLogin" type="button">Зберегти login link</button>
+                </div>
+                <div class="am-auth-alt">Ручний запасний варіант: DevTools → Network → data-countries → Headers → скопіюй <code>Authorization: Bearer ...</code>. Не використовуй <code>dashly_data/auth_token</code>.</div>
+                <div class="am-auth-row">
+                  <input class="input" id="appmagicToken" type="password" autocomplete="off" placeholder="Authorization: Bearer ... з Network" />
+                  <button class="am-cta" id="appmagicSaveToken" type="button">Зберегти token</button>
+                </div>
+              </div>
+              <p class="am-auth-note" id="appmagicAuthStatus">Також підтримуються <code>APPMAGIC_COOKIE</code>, <code>APPMAGIC_BEARER_TOKEN</code> або <code>APPMAGIC_TOKEN</code>. Причина від App Magic: <b>${escapeHtml(authReason)}</b>.</p>
+              <div class="am-badges">
+                <span class="am-badge degraded">${escapeHtml(sourceCopy.badge)}</span>
+                ${appName ? `<span class="am-badge muted">${escapeHtml(appName)}</span>` : ""}
+                ${appMagicLink}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      box.style.display = "block";
+      wireAppMagicLoginLink();
+      return;
+    }
+
+    const segments = dist.map((geo, idx) => {
+      const color = geo.color || (geo.is_other ? "#53606c" : appMagicColors[idx % appMagicColors.length]);
+      const width = Math.max(Number(geo.share_exact ?? geo.share ?? 0), 0);
+      const sourceIndex = geo.source_index ?? idx;
+      const active = sourceIndex === appMagicState.selectedIndex ? " active" : "";
+      const showLabel = Number(geo.share || 0) >= 4;
+      const shareLabel = appMagicShareLabel(geo);
+      return `<button class="am-seg${active}" type="button" data-appmagic-index="${sourceIndex}" title="${escapeHtml(geo.country)} — ${escapeHtml(shareLabel)}" aria-label="${escapeHtml(geo.country)} ${escapeHtml(shareLabel)}" style="width:${width}%; background:${color};">${showLabel ? `<span class="am-seg-label">${escapeHtml(Math.round(Number(geo.share)))}%</span>` : ""}</button>`;
+    }).join("");
+
+    const geoCards = dist.map((geo, idx) => {
+      const color = geo.color || (geo.is_other ? "#53606c" : appMagicColors[idx % appMagicColors.length]);
+      const installsText = (geo.estimated_installs === null || geo.estimated_installs === undefined)
+        ? "—"
+        : formatNumber(geo.estimated_installs);
+      const sourceIndex = geo.source_index ?? idx;
+      const active = sourceIndex === appMagicState.selectedIndex ? " active" : "";
+      const shareLabel = appMagicShareLabel(geo);
+
+      if (geo.is_other){
+        return `
+          <button class="geo-card${active}" type="button" data-appmagic-index="${sourceIndex}">
+            <div class="geo-card-top">
+              <span class="gc-flag gc-flag-other" style="--c:${color};">${ICONS.globe}</span>
+              <span class="gc-name">${escapeHtml(geo.country || "Other")}</span>
+            </div>
+            <div class="gc-row"><span class="gc-k">Share</span><b class="gc-v" style="color:${color};">${escapeHtml(shareLabel)}</b></div>
+            <div class="gc-row"><span class="gc-k">≈ Installs</span><b class="gc-v">${escapeHtml(installsText)}</b></div>
+            <div class="gc-row"><span class="gc-k">Rating</span><span class="gc-rating">${otherAvgRating(geo, rowsByGl)}</span></div>
+          </button>`;
+      }
+
+      const row = geo.gl ? rowsByGl.get(String(geo.gl).toUpperCase()) : null;
+      const rowRating = (row?.rating === null || row?.rating === undefined) ? null : Number(row.rating);
+      const rowHasRating = Number.isFinite(rowRating);
+      const rowBad = rowHasRating && rowRating < threshold;
+      const ratingClass = rowBad ? "below" : (rowHasRating ? "ok" : "na");
+      const ratingTxt = rowHasRating ? `${rowRating.toFixed(1)} ★` : "—";
+
+      return `
+        <button class="geo-card${active}${rowBad ? " bad" : ""}" type="button" data-appmagic-index="${sourceIndex}">
+          <div class="geo-card-top">
+            <span class="gc-flag" style="--c:${color};">${flagEmoji(geo.gl)}</span>
+            <span class="gc-name">${escapeHtml(geo.country)}</span>
+          </div>
+          <div class="gc-row"><span class="gc-k">Share</span><b class="gc-v" style="color:${color};">${escapeHtml(shareLabel)}</b></div>
+          <div class="gc-row"><span class="gc-k">≈ Installs</span><b class="gc-v">${escapeHtml(installsText)}</b></div>
+          <div class="gc-row"><span class="gc-k">Rating</span><span class="gc-rating ${ratingClass}">${ratingTxt}</span></div>
+        </button>`;
+    }).join("");
+
+    const below = data.below || [];
+    let bannerHtml = "";
+    if (below.length){
+      const n = below.length;
+      const word = (n % 10 === 1 && n % 100 !== 11) ? "країна" : ((n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) ? "країни" : "країн");
+      bannerHtml = `
+        <div class="below-banner danger">
+          <span class="bb-ico">${ICONS.warn}</span>
+          <span class="bb-text"><b>${escapeHtml(n)} ${word}</b> мають рейтинг нижче порогу <b>${escapeHtml(Number(threshold).toFixed(1))}</b></span>
+          <button class="bb-btn" id="showBelowBtn" type="button"></button>
+        </div>`;
+    } else {
+      bannerHtml = `
+        <div class="below-banner ok">
+          <span class="bb-ico">${ICONS.check}</span>
+          <span class="bb-text">Усі країни App Magic мають рейтинг <b>≥ ${escapeHtml(Number(threshold).toFixed(1))}</b></span>
+        </div>`;
+    }
+
+    const cta = appMagicUrl
+      ? `<a class="am-cta" href="${escapeHtml(appMagicUrl)}" target="_blank" rel="noopener noreferrer">Відкрити в App Magic ↗</a>`
+      : "";
+
+    box.innerHTML = `
+      <div class="am-shell">
+        <div class="dl-top">
+          <div class="dl-left">
+            <div class="dl-title">Downloads <span class="dl-info" title="Завантаження і частки країн з App Magic data-countries">&#9432;</span></div>
+            <div class="am-periods" aria-label="Downloads period">
+              <button class="am-period ${period === "last30days" ? "active" : ""}" type="button" data-appmagic-period="last30days"><span class="ap-ico">${ICONS.calendar}</span> Last 30 days</button>
+              <button class="am-period ${period === "lifetime" ? "active" : ""}" type="button" data-appmagic-period="lifetime"><span class="ap-ico">${ICONS.trend}</span> Lifetime</button>
+            </div>
+            ${periodTotalsHtml}
+            <div class="dl-total">${escapeHtml(periodTotalLabel)}</div>
+          </div>
+          <div class="dl-right">
+            <div class="dl-caption">Усі країни App Magic (частка завантажень) · ${escapeHtml(periodTotalLabel)}</div>
+            <div class="am-bar">${segments}</div>
+            <div class="am-badges">
+              <span class="am-badge ${escapeHtml(sourceCopy.kind)}">${escapeHtml(sourceCopy.badge)}</span>
+              ${appName ? `<span class="am-badge muted">${escapeHtml(appName)}</span>` : ""}
+              ${cta}
+            </div>
+          </div>
+        </div>
+        <div class="geo-cards">${geoCards}</div>
+        ${bannerHtml}
+        <div class="am-note">${escapeHtml(sourceCopy.note)}</div>
+      </div>
+    `;
+    box.style.display = "block";
+
+    const belowBtn = box.querySelector("#showBelowBtn");
+    if (belowBtn){
+      const sync = () => {
+        belowBtn.textContent = $("showAll").checked ? "Показати тільки нижче порогу" : "Показати всі країни";
+      };
+      sync();
+      belowBtn.addEventListener("click", () => {
+        $("showAll").checked = !$("showAll").checked;
+        $("showAll").dispatchEvent(new Event("change"));
+        sync();
+      });
+    }
+
+    box.querySelectorAll("[data-appmagic-period]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        appMagicState.period = btn.dataset.appmagicPeriod;
+        appMagicState.selectedIndex = 0;
+        renderAppMagicWidget(data);
+        renderTable(currentRows);
+      });
+    });
+    const bar = box.querySelector(".am-bar");
+    if (bar){
+      bar.addEventListener("pointerdown", event => {
+        const index = appMagicBarIndexFromPointer(bar, event);
+        if (index === null) return;
+        event.preventDefault();
+        selectAppMagicIndex(index, data);
+      });
+    }
+    box.querySelectorAll(".am-seg[data-appmagic-index]").forEach(btn => {
+      btn.addEventListener("keydown", event => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        selectAppMagicIndex(Number(btn.dataset.appmagicIndex), data);
+      });
+    });
+    box.querySelectorAll(".geo-card[data-appmagic-index]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        selectAppMagicIndex(Number(btn.dataset.appmagicIndex), data);
+      });
+    });
+  }
+
+  function otherAvgRating(geo, rowsByGl){
+    // Average rating across grouped "Other" countries when available.
+    const ratings = [];
+    rowsByGl.forEach(row => {
+      const r = (row.rating === null || row.rating === undefined) ? null : Number(row.rating);
+      if (Number.isFinite(r)) ratings.push(r);
+    });
+    if (!ratings.length) return "—";
+    const avg = ratings.reduce((a,b)=>a+b,0)/ratings.length;
+    return `${avg.toFixed(1)} ★`;
+  }
+
+  function renderBelowTitle(data, rows, showAll){
+    // The "rating below threshold" summary is now rendered inside the App Magic
+    // widget itself (see renderAppMagicWidget). Keep this legacy panel hidden.
+    const box = $("belowTitle");
+    box.style.display = "none";
+    box.innerHTML = "";
+  }
+
+  function renderTable(rows){
+    const tbody = $("tbl").querySelector("tbody");
+    tbody.innerHTML = "";
+
+    const threshold = Number($("threshold").value || "4.0");
+
+    if (!rows.length){
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td colspan="8" class="note-muted">Немає країн з рейтингом нижче порогу.</td>`;
+      tbody.appendChild(tr);
+      return;
+    }
+
+    const isAppMagic = lastResult && lastResult.mode === "appmagic";
+
+    for (const r of rows){
+      const rating = (r.rating === null || r.rating === undefined) ? null : Number(r.rating);
+      const hasRating = Number.isFinite(rating);
+      const isBad = hasRating && rating < threshold;
+      const ratingClass = !hasRating ? "na" : (isBad ? "below" : "ok");
+      const ratingText = hasRating ? `${rating.toFixed(1)} ★` : "—";
+      const periodStats = r.appmagic_periods?.[appMagicState.period] || null;
+      const appmagicInstalls = periodStats?.estimated_installs ?? r.appmagic_estimated_installs;
+
+      let geoCell = "—";
+      if (isAppMagic){
+        const parts = [`<span class="tg-cat">Top Free › Tools</span>`];
+        if (r.appmagic_rank) parts.push(`<b class="tg-rank">#${escapeHtml(r.appmagic_rank)}</b>`);
+        if (appmagicInstalls !== null && appmagicInstalls !== undefined){
+          parts.push(`<span class="tg-inst">/ ≈ ${escapeHtml(formatNumber(appmagicInstalls))}</span>`);
+        }
+        geoCell = `<span class="tg-cell">${parts.join(" ")}</span>`;
+      }
+
+      const isApple = String(r.store || "").toLowerCase().includes("apple") || String(r.store || "").toLowerCase().includes("app store");
+      const storeIco = isApple
+        ? `<span class="store-ico ap" title="App Store"></span>`
+        : `<span class="store-ico gp" title="Google Play"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 3.5v17a1 1 0 0 0 1.5.87l14.6-8.5a1 1 0 0 0 0-1.74L4.5 2.63A1 1 0 0 0 3 3.5Z" fill="url(#tg)"/><defs><linearGradient id="tg" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#00d4ff"/><stop offset=".5" stop-color="#52e36a"/><stop offset="1" stop-color="#ffd166"/></linearGradient></defs></svg></span>`;
+
+      const errText = r.error ? `<span class="note-err">${escapeHtml(r.error)}</span>` : "";
+      const noteCell = !hasRating
+        ? (errText || `<span class="note-muted">—</span>`)
+        : (isBad ? `<span class="note-below">Below threshold</span>` : `<span class="note-ok">OK</span>`) + (errText ? ` ${errText}` : "");
+
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${storeIco}</td>
+        <td><span class="tbl-flag">${flagEmoji(r.gl)}</span><span class="tbl-country">${escapeHtml(r.country)}</span></td>
+        <td><span class="star-chip ${ratingClass}">${escapeHtml(ratingText)}</span></td>
+        <td>${geoCell}</td>
+        <td><a class="open-ico" href="${escapeHtml(r.play_url)}" target="_blank" rel="noopener noreferrer" title="Відкрити в Google Play">${ICONS.open}</a></td>
+        <td><span class="cell-mono">${escapeHtml(r.gl)}</span></td>
+        <td><span class="cell-mono">${escapeHtml(r.hl)}</span></td>
+        <td>${noteCell}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function sortRows(key){
+    if (currentSort.key === key) currentSort.dir *= -1;
+    else { currentSort.key = key; currentSort.dir = 1; }
+
+    clearSortIndicators();
+    $("sort-" + key).textContent = (currentSort.dir === 1) ? "▲" : "▼";
+
+    currentRows.sort((a,b) => {
+      let av = a[key];
+      let bv = b[key];
+      if (key === "rating" || key === "appmagic_rank"){
+        av = (av === null || av === undefined) ? -1 : Number(av);
+        bv = (bv === null || bv === undefined) ? -1 : Number(bv);
+      } else {
+        av = String(av ?? "").toLowerCase();
+        bv = String(bv ?? "").toLowerCase();
+      }
+      if (av < bv) return -1 * currentSort.dir;
+      if (av > bv) return  1 * currentSort.dir;
+      return 0;
+    });
+
+    renderTable(currentRows);
+  }
+
+  document.querySelectorAll("th.sortable").forEach(th => {
+    th.addEventListener("click", () => sortRows(th.dataset.sort));
+  });
+
+  $("showAll").addEventListener("change", () => {
+    if (!lastResult) return;
+    const showAll = $("showAll").checked;
+    const below = lastResult.below || [];
+    const all = lastResult.all || [];
+    currentRows = showAll ? all : (below.length ? below : all);
+    renderBelowTitle(lastResult, currentRows, showAll);
+    renderTable(currentRows);
+  });
+
+  $("run").addEventListener("click", async () => {
+    const url = $("url").value.trim();
+    const threshold = parseFloat($("threshold").value || "4.0");
+    const showAll = $("showAll").checked;
+    const mode = getMode();
+
+    $("summary").innerHTML = "";
+    $("appmagicWidget").innerHTML = "";
+    $("appmagicWidget").style.display = "none";
+    $("belowTitle").innerHTML = "";
+    $("belowTitle").style.display = "none";
+    $("tableWrap").style.display = "none";
+    $("tbl").querySelector("tbody").innerHTML = "";
+    clearSortIndicators();
+    currentSort = { key: null, dir: 1 };
+    appMagicState = { period: "last30days", selectedIndex: 0 };
+    lastResult = null;
+    $("statusReady").hidden = true;
+    $("statusSep").hidden = true;
+    $("exportBtn").hidden = true;
+
+    if (!url){
+      setLoading(false, "");
+      alert("Встав URL додатку.");
+      return;
+    }
+    if (threshold < 0 || threshold > 5){
+      alert("Поріг рейтингу має бути між 0 і 5.");
+      return;
+    }
+
+    setLoading(true, mode === "appmagic" ? "Шукаю країни в App Magic і перевіряю рейтинг…" : "Працюю…");
+
+    try{
+      const checkBody = { url, threshold, mode };
+      const storedAppMagicToken = mode === "appmagic" ? getStoredAppMagicToken() : "";
+      if (storedAppMagicToken){
+        checkBody.appmagic_token = storedAppMagicToken;
+      }
+
+      const res = await fetch("/check", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(checkBody)
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Помилка");
+      lastResult = data;
+
+      renderSummary(data);
+      renderAppMagicWidget(data);
+
+      if (data.appmagic?.appmagic_auth_required){
+        currentRows = [];
+        $("tableWrap").style.display = "none";
+        $("exportBtn").hidden = true;
+        setLoading(false, "Потрібна авторизація App Magic для точних даних.");
+        return;
+      }
+
+      if (data.appmagic?.appmagic_no_rating_data){
+        currentRows = [];
+        $("tableWrap").style.display = "none";
+        $("exportBtn").hidden = true;
+        setLoading(false, "У App Magic немає рейтингових даних для цього додатку.");
+        return;
+      }
+
+      const below = data.below || [];
+      const all = data.all || [];
+      currentRows = showAll ? all : (below.length ? below : all);
+      renderBelowTitle(data, currentRows, showAll);
+
+      $("tableWrap").style.display = "block";
+      $("exportBtn").hidden = false;
+      renderTable(currentRows);
+
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, "0");
+      const mm = String(now.getMinutes()).padStart(2, "0");
+      const ss = String(now.getSeconds()).padStart(2, "0");
+      $("statusReady").hidden = false;
+      $("statusSep").hidden = false;
+      setLoading(false, `Перевірено: ${hh}:${mm}:${ss}`);
+
+      if (data.mode === "appmagic"){
+        currentSort = { key: "appmagic_rank", dir: 1 };
+        clearSortIndicators();
+        $("sort-appmagic_rank").textContent = "▲";
+      } else {
+        sortRows("rating"); // asc
+        sortRows("rating"); // desc
+      }
+
+    } catch(e){
+      setLoading(false, "");
+      alert("❌ " + e.message);
+    }
+  });
+</script>
+</body>
+</html>

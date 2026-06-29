@@ -1,0 +1,688 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Google Play GEO Link Generator</title>
+  <link rel="icon" href="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" />
+
+  <style>
+    :root{
+      --glass: rgba(255,255,255,.14);
+      --border: rgba(255,255,255,.22);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.72);
+      --muted2: rgba(255,255,255,.58);
+      --shadow: 0 18px 60px rgba(0,0,0,.35);
+      --shadow2: 0 10px 30px rgba(0,0,0,.25);
+      --accent: rgba(255, 209, 102, .95);
+      --danger: rgba(255, 90, 95, .95);
+      --ok: rgba(110, 231, 183, .95);
+      --radius: 22px;
+
+      --navH: 74px;
+      --navBorder: rgba(255,255,255,.16);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      color: var(--text);
+      background:#0b1220;
+      overflow-x:hidden;
+    }
+
+    .bg{
+      position:fixed; inset:0; z-index:-2;
+      overflow:hidden;
+      background:
+        radial-gradient(1100px 760px at 12% -6%, rgba(56,112,214,.30), transparent 60%),
+        radial-gradient(1000px 720px at 94% 6%, rgba(255,150,70,.18), transparent 58%),
+        radial-gradient(1200px 820px at 50% 112%, rgba(56,205,168,.16), transparent 60%),
+        linear-gradient(180deg, #0a1020 0%, #0b1326 55%, #0a1322 100%);
+    }
+    .bg::after{
+      content:""; position:absolute; inset:0;
+      background:
+        radial-gradient(1200px 700px at 15% 15%, rgba(0,0,0,.18), transparent 60%),
+        radial-gradient(900px 600px at 85% 20%, rgba(0,0,0,.28), transparent 55%),
+        linear-gradient(180deg, rgba(6,10,18,.55), rgba(6,10,18,.70));
+    }
+
+    /* ---------- Top Nav (NEW) ---------- */
+    .topnav{
+      position:fixed;
+      top:14px; left:0; right:0;
+      z-index:1000;
+      padding:0 14px;
+      pointer-events:none;
+    }
+    .topnav-inner{
+      pointer-events:auto;
+      max-width:1180px;
+      margin:0 auto;
+      height: var(--navH);
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.04));
+      border:1px solid var(--navBorder);
+      box-shadow: 0 18px 60px rgba(0,0,0,.35);
+      backdrop-filter: blur(16px);
+      display:flex;
+      align-items:center;
+      gap:14px;
+      padding: 10px 14px;
+      overflow:hidden;
+      position:relative;
+    }
+    .topnav-inner::before{
+      content:"";
+      position:absolute; inset:-2px;
+      background:
+        radial-gradient(420px 180px at 12% 20%, rgba(255,209,102,.22), transparent 60%),
+        radial-gradient(420px 180px at 88% 40%, rgba(110,231,183,.18), transparent 60%);
+      opacity:.85;
+      pointer-events:none;
+      animation: navGlow 7s ease-in-out infinite alternate;
+    }
+    @keyframes navGlow{
+      0%{ transform: translate3d(0,0,0); opacity:.75; }
+      100%{ transform: translate3d(0,-2px,0); opacity:.95; }
+    }
+
+    .brand{
+      display:flex; align-items:center; gap:12px;
+      min-width: 220px;
+      position:relative;
+      z-index:1;
+    }
+    .brand .logo{
+      width:44px; height:44px; object-fit:contain;
+      border-radius:14px;
+      background: rgba(0,0,0,.22);
+      border:1px solid rgba(255,255,255,.18);
+      box-shadow: 0 10px 30px rgba(0,0,0,.25);
+      backdrop-filter: blur(8px);
+    }
+    .brand .txt{ line-height:1.05; }
+    .brand .name{
+      font-weight: 900;
+      letter-spacing: .2px;
+      font-size: 14px;
+      margin:0;
+      text-shadow:0 10px 30px rgba(0,0,0,.35);
+    }
+    .brand .tag{
+      margin:4px 0 0;
+      font-size:12px;
+      color: var(--muted);
+      opacity:.95;
+      white-space:nowrap;
+    }
+
+    .navlinks{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      flex:1;
+      justify-content:center;
+      position:relative;
+      z-index:1;
+    }
+
+    .navbtn{
+      --b: rgba(255,255,255,.14);
+      --bg: rgba(0,0,0,.18);
+
+      display:inline-flex;
+      align-items:center;
+      gap:10px;
+      padding: 10px 12px;
+      border-radius: 999px;
+      border:1px solid var(--b);
+      background: var(--bg);
+      color: rgba(255,255,255,.90);
+      text-decoration:none;
+      box-shadow: 0 10px 22px rgba(0,0,0,.18);
+      transition: transform .12s ease, background .15s ease, border-color .15s ease;
+      user-select:none;
+      font-weight: 780;
+      font-size: 13px;
+      white-space: nowrap;
+      position:relative;
+      overflow:hidden;
+    }
+    .navbtn::after{
+      content:"";
+      position:absolute;
+      inset:-40px -60px;
+      background: linear-gradient(120deg, transparent 35%, rgba(255,255,255,.18), transparent 65%);
+      transform: translateX(-40%);
+      opacity:0;
+      transition: opacity .2s ease;
+    }
+    .navbtn:hover{
+      transform: translateY(-1px);
+      border-color: rgba(255,255,255,.28);
+      background: rgba(0,0,0,.22);
+    }
+    .navbtn:hover::after{
+      opacity:1;
+      animation: shine .9s ease forwards;
+    }
+    @keyframes shine{
+      0%{ transform: translateX(-45%); }
+      100%{ transform: translateX(35%); }
+    }
+    .navbtn:active{ transform: translateY(0px) scale(.99); }
+
+    .navbtn .dot{
+      width:10px; height:10px; border-radius:999px;
+      background: rgba(255,255,255,.32);
+      box-shadow: 0 0 0 3px rgba(255,255,255,.10);
+    }
+
+    body[data-page="rating"] .navbtn[data-nav="rating"],
+    body[data-page="availability"] .navbtn[data-nav="availability"],
+    body[data-page="geolink"] .navbtn[data-nav="geolink"],
+    body[data-page="overview"] .navbtn[data-nav="overview"]{
+      background: linear-gradient(135deg, rgba(255,209,102,.95), rgba(255,141,81,.95));
+      color: rgba(20,20,20,.92);
+      border:0;
+      box-shadow: 0 18px 38px rgba(0,0,0,.28);
+    }
+    body[data-page="rating"] .navbtn[data-nav="rating"] .dot,
+    body[data-page="availability"] .navbtn[data-nav="availability"] .dot,
+    body[data-page="geolink"] .navbtn[data-nav="geolink"] .dot,
+    body[data-page="overview"] .navbtn[data-nav="overview"] .dot{
+      background: rgba(20,20,20,.55);
+      box-shadow: 0 0 0 3px rgba(20,20,20,.12);
+    }
+
+    .navright{
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      gap:10px;
+      min-width: 220px;
+      position:relative;
+      z-index:1;
+    }
+    .chip{
+      display:inline-flex; align-items:center; gap:10px;
+      padding: 10px 12px;
+      border-radius: 999px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.18);
+      box-shadow: 0 10px 22px rgba(0,0,0,.16);
+      color: rgba(255,255,255,.84);
+      font-size: 12px;
+      white-space:nowrap;
+    }
+    .pulse{
+      width:10px; height:10px; border-radius:999px;
+      background: rgba(110,231,183,.95);
+      box-shadow: 0 0 0 0 rgba(110,231,183,.40);
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse{
+      0%{ box-shadow: 0 0 0 0 rgba(110,231,183,.35); }
+      70%{ box-shadow: 0 0 0 10px rgba(110,231,183,0); }
+      100%{ box-shadow: 0 0 0 0 rgba(110,231,183,0); }
+    }
+
+    .hamb{
+      display:none;
+      width:44px; height:44px;
+      border-radius: 14px;
+      border:1px solid rgba(255,255,255,.16);
+      background: rgba(0,0,0,.18);
+      box-shadow: 0 10px 22px rgba(0,0,0,.16);
+      cursor:pointer;
+      position:relative;
+    }
+    .hamb span{
+      position:absolute; left:12px; right:12px;
+      height:2px; border-radius:10px;
+      background: rgba(255,255,255,.85);
+    }
+    .hamb span:nth-child(1){ top:15px; }
+    .hamb span:nth-child(2){ top:21px; }
+    .hamb span:nth-child(3){ top:27px; }
+
+    .drawer{
+      display:none;
+      position:fixed;
+      top: calc(14px + var(--navH) + 10px);
+      left:14px; right:14px;
+      z-index:1001;
+      max-width:1180px;
+      margin:0 auto;
+      border-radius: 22px;
+      border:1px solid rgba(255,255,255,.16);
+      background: rgba(10,16,28,.62);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 18px 60px rgba(0,0,0,.35);
+      padding: 12px;
+      transform-origin: top;
+      animation: pop .18s ease both;
+    }
+    @keyframes pop{
+      from{ opacity:0; transform: translateY(-6px) scale(.98); }
+      to{ opacity:1; transform: translateY(0) scale(1); }
+    }
+    .drawer .navbtn{ width:100%; justify-content:flex-start; padding: 12px 14px; border-radius: 16px; }
+    .drawer .grid{ display:grid; gap:10px; }
+
+    @media (max-width: 900px){
+      .navlinks{ display:none; }
+      .navright .chip{ display:none; }
+      .hamb{ display:inline-block; }
+      .brand{ min-width:auto; flex:1; }
+      .navright{ min-width:auto; }
+    }
+
+    /* ---------- Page Layout ---------- */
+    .wrap{ max-width:1180px; margin:0 auto; padding: calc(28px + var(--navH) + 18px) 18px 48px; }
+
+    .header{
+      display:flex; gap:14px; flex-wrap:wrap;
+      align-items:flex-end; justify-content:space-between;
+      margin-bottom:18px;
+    }
+    .header-left{ display:flex; gap:14px; align-items:center; }
+    .logo2{
+      width:54px; height:54px; object-fit:contain;
+      border-radius:14px;
+      background: rgba(0,0,0,.25);
+      border:1px solid rgba(255,255,255,.18);
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      backdrop-filter: blur(6px);
+    }
+    .title{
+      font-size: clamp(26px, 3.2vw, 38px);
+      font-weight:800; margin:0;
+      text-shadow:0 10px 30px rgba(0,0,0,.35);
+    }
+    .subtitle{ margin:6px 0 0; color:var(--muted); font-size:14px; max-width:720px; }
+
+    .card{
+      background: var(--glass);
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+      overflow:hidden;
+    }
+    .card-head{
+      padding:18px 18px 14px;
+      border-bottom:1px solid rgba(255,255,255,.12);
+      background: linear-gradient(180deg, rgba(255,255,255,.06), transparent);
+    }
+    .card-head .h{ margin:0; font-weight:700; }
+    .card-head .p{ margin:6px 0 0; color:var(--muted2); font-size:13px; }
+
+    .card-body{ padding:16px 18px 18px; }
+
+    .form{
+      display:grid;
+      grid-template-columns: 1fr 280px 160px;
+      gap:12px; align-items:end;
+    }
+    @media (max-width: 980px){ .form{ grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 680px){ .form{ grid-template-columns: 1fr; } }
+
+    label{ display:flex; flex-direction:column; gap:7px; font-size:12px; color:var(--muted); }
+
+    .input, .btn{
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.22);
+      color: var(--text);
+      padding: 12px 12px;
+      outline:none;
+      box-shadow: 0 8px 20px rgba(0,0,0,.18);
+    }
+    .input:focus{ border-color: rgba(255,255,255,.35); background: rgba(0,0,0,.28); }
+
+    .btn{
+      cursor:pointer;
+      font-weight:750;
+      background: linear-gradient(135deg, rgba(255,209,102,.95), rgba(255,141,81,.95));
+      color: rgba(20,20,20,.92);
+      border:0;
+      box-shadow: 0 18px 40px rgba(0,0,0,.28);
+      transition: transform .08s ease;
+      height:46px;
+      text-decoration:none;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      user-select:none;
+    }
+    .btn:hover{ transform: translateY(-1px); }
+    .btn:active{ transform: translateY(0px); }
+
+    .status{
+      margin-top:12px;
+      display:flex; align-items:center; gap:10px;
+      color:var(--muted); font-size:13px; min-height:18px;
+    }
+    .spinner{
+      width:14px; height:14px; border-radius:999px;
+      border:2px solid rgba(255,255,255,.25);
+      border-top-color: rgba(255,255,255,.75);
+      animation: spin .8s linear infinite;
+      display:none;
+    }
+    @keyframes spin{ to { transform: rotate(360deg);} }
+
+    .result{
+      margin-top:14px;
+      padding:14px;
+      border-radius: 18px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.35);
+      box-shadow: var(--shadow2);
+      display:none;
+    }
+    .row{
+      display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+    }
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:8px 12px; border-radius:999px;
+      background: rgba(0,0,0,.20);
+      border:1px solid rgba(255,255,255,.12);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 20px rgba(0,0,0,.16);
+      font-size:12px; color:var(--muted);
+    }
+    .pill b{ color: var(--text); }
+
+    .outlink{
+      margin-top:10px;
+      display:block;
+      padding:12px 12px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(0,0,0,.22);
+      color: rgba(255,255,255,.92);
+      text-decoration:none;
+      word-break: break-all;
+    }
+    .outlink:hover{ border-color: rgba(255,255,255,.35); background: rgba(0,0,0,.28); }
+
+    .copy{
+      margin-left:auto;
+      background: rgba(255,255,255,.14);
+      border:1px solid rgba(255,255,255,.18);
+      color: rgba(255,255,255,.88);
+      height:40px;
+      padding:0 14px;
+      border-radius: 999px;
+      cursor:pointer;
+      font-weight:750;
+      box-shadow: 0 8px 20px rgba(0,0,0,.18);
+    }
+    .copy:hover{ background: rgba(255,255,255,.18); }
+    .hint{ margin-top:10px; color: var(--muted2); font-size:12px; }
+  </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260629c') }}" />
+  <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260623d') }}" defer></script>
+</head>
+
+<body data-page="geolink">
+  <div class="bg"></div>
+
+  <!-- NEW TOP NAV -->
+  <div class="topnav">
+    <div class="topnav-inner">
+      <div class="brand">
+        <img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" alt="WWA" class="logo" />
+        <div class="txt">
+          <p class="name">WWA ASO Tools</p>
+          <p class="tag">Google Play GEO link builder</p>
+        </div>
+      </div>
+
+      <div class="navlinks" aria-label="Site navigation">
+        <a class="navbtn" data-nav="rating" href="/"><span class="dot"></span> Rating</a>
+        <a class="navbtn" data-nav="availability" href="/availability"><span class="dot"></span> Availability</a>
+        <a class="navbtn" data-nav="geolink" href="/geo-link"><span class="dot"></span> Geo Link</a>
+        <a class="navbtn" data-nav="overview" href="/app-overview"><span class="dot"></span> Overview</a>
+      </div>
+
+      <div class="navright">
+        <div class="chip" title="Service status">
+          <span class="pulse"></span>
+          Live tools
+        </div>
+        <button class="nav-utility" type="button" aria-label="Help">?</button>
+        <button class="nav-utility theme-toggle" type="button" aria-label="Switch to light theme" title="Theme">☼</button>
+
+        <button class="hamb" id="hamb" aria-label="Open menu" type="button">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mobile drawer -->
+  <div class="drawer" id="drawer" aria-label="Mobile navigation">
+    <div class="grid">
+      <a class="navbtn" data-nav="rating" href="/"><span class="dot"></span> Rating</a>
+      <a class="navbtn" data-nav="availability" href="/availability"><span class="dot"></span> Availability</a>
+      <a class="navbtn" data-nav="geolink" href="/geo-link"><span class="dot"></span> Geo Link</a>
+      <a class="navbtn" data-nav="overview" href="/app-overview"><span class="dot"></span> Overview</a>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="header">
+      <div class="header-left">
+        <img src="{{ url_for('static', filename='img/Google_Play_GEO_Link.png') }}" alt="WWA" class="logo2" />
+        <div>
+          <h1 class="title">Google Play GEO Link Creator</h1>
+          <p class="subtitle">
+            Встав Google Play URL і введи країну (назва або ISO2). Сервіс згенерує посилання з <b>gl</b> та <b>hl</b>.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <p class="h">Генератор посилання по країні</p>
+        <p class="p">
+          Підтримка введення: <b>UA / US / DE</b> або назви типу <b>Ukraine</b>, а також популярні UA/RU варіанти (наприклад “україна”, “сша”).
+        </p>
+      </div>
+
+      <div class="card-body">
+        <div class="form2">
+          <div class="form-row1 form-row1-geolink">
+            <label class="f-url">
+              <span class="f-label">Google Play URL</span>
+              <div class="url-field">
+                <span class="url-ico" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 3.5v17a1 1 0 0 0 1.5.87l14.6-8.5a1 1 0 0 0 0-1.74L4.5 2.63A1 1 0 0 0 3 3.5Z" fill="url(#gpg)"/><defs><linearGradient id="gpg" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#00d4ff"/><stop offset=".5" stop-color="#52e36a"/><stop offset="1" stop-color="#ffd166"/></linearGradient></defs></svg>
+                </span>
+                <input id="url" class="input url-input" type="text"
+                  placeholder="https://play.google.com/store/apps/details?id=com.example.app" />
+                <button class="url-clear" id="urlClear" type="button" aria-label="Очистити">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
+                </button>
+              </div>
+            </label>
+
+            <label class="f-country">
+              <span class="f-label">Країна (ISO2 або назва)</span>
+              <input id="country" class="input" type="text" placeholder="UA / Ukraine / United States / DE ..." list="countriesList" />
+              <datalist id="countriesList"></datalist>
+            </label>
+          </div>
+
+          <div class="form-row2">
+            <span class="form-spacer"></span>
+            <button id="run" class="btn run-btn">
+              <span class="run-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg></span>
+              <span>Згенерувати</span>
+            </button>
+          </div>
+
+          <div class="status">
+            <span class="spinner" id="spin"></span>
+            <span class="status-done" id="statusReady" hidden>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 10 18 20 6"/></svg> Готово
+            </span>
+            <span id="statusText"></span>
+          </div>
+        </div>
+
+        <div class="gl-result" id="result">
+          <div class="gl-chips" id="meta"></div>
+          <div class="gl-link-row">
+            <a class="gl-link" id="outlink" href="#" target="_blank" rel="noopener noreferrer">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l6-6"/><path d="M11 7l1-1a4 4 0 0 1 6 6l-1 1"/><path d="M13 17l-1 1a4 4 0 0 1-6-6l1-1"/></svg>
+              <span id="outlinkText"></span>
+            </a>
+            <button class="copy" id="copyBtn" type="button">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+              Копіювати
+            </button>
+            <span class="gl-copyhint" id="copyHint"></span>
+          </div>
+        </div>
+
+        <div class="gl-hint">
+          Порада: якщо хочеш лише іншу країну без зміни мови — просто вводь ISO2 (наприклад <b>JP</b>, <b>BR</b>). Для більшості країн автоматично підставляється відповідний <b>hl</b>.
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  // Mobile menu
+  (function(){
+    const hamb = $("hamb");
+    const drawer = $("drawer");
+    if (!hamb || !drawer) return;
+
+    const close = () => { drawer.style.display = "none"; };
+    const open = () => { drawer.style.display = "block"; };
+
+    hamb.addEventListener("click", () => {
+      const isOpen = drawer.style.display === "block";
+      if (isOpen) close();
+      else open();
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!drawer.contains(e.target) && !hamb.contains(e.target)) close();
+    });
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") close();
+    });
+  })();
+
+  // URL clear button
+  (function(){
+    const clearBtn = $("urlClear");
+    const urlInput = $("url");
+    if (!clearBtn || !urlInput) return;
+    const sync = () => { clearBtn.style.visibility = urlInput.value ? "visible" : "hidden"; };
+    clearBtn.addEventListener("click", () => { urlInput.value = ""; urlInput.dispatchEvent(new Event("input")); urlInput.focus(); sync(); });
+    urlInput.addEventListener("input", sync);
+    sync();
+  })();
+
+  let lastUrl = "";
+
+  const countries = JSON.parse({{ countries_json | tojson }});
+
+  // fill datalist
+  const dl = $("countriesList");
+  Object.keys(countries).sort().forEach(name => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    dl.appendChild(opt);
+  });
+
+  function setLoading(isLoading, text){
+    $("spin").style.display = isLoading ? "inline-block" : "none";
+    $("statusText").textContent = text || "";
+  }
+  function escapeHtml(str) {
+    return String(str ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  $("run").addEventListener("click", async () => {
+    const url = $("url").value.trim();
+    const country = $("country").value.trim();
+
+    $("result").style.display = "none";
+    $("meta").innerHTML = "";
+    $("outlinkText").textContent = "";
+    $("outlink").href = "#";
+    $("copyHint").textContent = "";
+    $("statusReady").hidden = true;
+
+    if (!url) return alert("Встав Google Play URL.");
+    if (!country) return alert("Введи країну (ISO2 або назва).");
+
+    setLoading(true, "Генерую посилання…");
+
+    try{
+      const res = await fetch("/api/geo-link", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ url, country })
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Error");
+
+      $("meta").innerHTML = `
+        <div class="gl-chip">App ID <b>${escapeHtml(data.app_id)}</b></div>
+        <div class="gl-chip">gl <b>${escapeHtml(data.gl)}</b></div>
+        <div class="gl-chip">hl <b>${escapeHtml(data.hl)}</b></div>
+      `;
+
+      lastUrl = data.url;
+      $("outlinkText").textContent = data.url;
+      $("outlink").href = data.url;
+
+      $("result").style.display = "block";
+      $("statusReady").hidden = false;
+      setLoading(false, "");
+
+    } catch(e){
+      setLoading(false, "");
+      alert("❌ " + e.message);
+    }
+  });
+
+  $("copyBtn").addEventListener("click", async () => {
+    const link = (lastUrl || $("outlinkText").textContent).trim();
+    if (!link) return;
+
+    try{
+      await navigator.clipboard.writeText(link);
+      $("copyHint").textContent = "Скопійовано ✓";
+      setTimeout(() => $("copyHint").textContent = "", 1400);
+    } catch(e){
+      $("copyHint").textContent = "Не вдалося (браузер заблокував)";
+      setTimeout(() => $("copyHint").textContent = "", 1800);
+    }
+  });
+</script>
+</body>
+</html>
