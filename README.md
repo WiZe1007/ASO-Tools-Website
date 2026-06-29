@@ -40,8 +40,19 @@ The same command is also stored in `Procfile`.
 
 These are optional. Do not commit real values.
 
-- `APPMAGIC_TOKEN`
-- `APPMAGIC_BEARER_TOKEN`
-- `APPMAGIC_COOKIE`
+- `APPMAGIC_BEARER_TOKEN` - required for fully automatic App Magic mode on Render. Add the App Magic `Authorization: Bearer ...` token here once, and users will not need to paste anything in the website.
+- `APPMAGIC_TOKEN` - alternative name for the same Bearer token.
+- `APPMAGIC_COOKIE` - fallback if you need cookie-based App Magic access.
 
-Without App Magic auth, the app still works, but exact App Magic country/download data may be unavailable for some apps.
+Without App Magic auth, the app still works, but exact App Magic country/download data may be unavailable for some apps. On hosting, browser auto-import is intentionally local-only, so use `APPMAGIC_BEARER_TOKEN` for the shared employee site.
+
+For Render automatic App Magic mode:
+
+1. Open Render dashboard.
+2. Go to the web service.
+3. Open `Environment`.
+4. Add `APPMAGIC_BEARER_TOKEN`.
+5. Paste the App Magic Network `Authorization: Bearer ...` value.
+6. Redeploy the service.
+
+After redeploy, App Magic mode is automatic for everyone who opens the hosted site.

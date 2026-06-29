@@ -956,7 +956,7 @@
       .am-legend{ grid-template-columns:1fr; }
     }
   </style>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260629c') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260629d') }}" />
   <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260623d') }}" defer></script>
 </head>
 
@@ -1152,6 +1152,11 @@
     try{
       localStorage.removeItem(APPMAGIC_TOKEN_STORAGE_KEY);
     } catch (_){}
+  }
+
+  function isLocalHost(){
+    const host = String(location.hostname || "").toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
   }
 
   // Clean monochrome SVG icon set (consistent across platforms)
@@ -1447,10 +1452,10 @@
       return "Не знайшов App Magic token у локальних профілях браузера. Відкрий App Magic у Chrome/Brave/Edge, онови сторінку App Magic і натисни автоімпорт ще раз.";
     }
     if (error === "APPMAGIC_AUTO_IMPORT_LOCAL_ONLY"){
-      return "Автоімпорт token працює тільки при локальному запуску на твоєму компʼютері. На хостингу встав Authorization: Bearer ... вручну.";
+      return "Автоімпорт token працює тільки при локальному запуску. На хостингу додай APPMAGIC_BEARER_TOKEN у Render Environment, і сайт працюватиме автоматично для всіх.";
     }
     if (error === "APPMAGIC_LOGIN_LINK_LOCAL_ONLY"){
-      return "Login link можна використовувати тільки локально. На хостингу встав Authorization: Bearer ... вручну, token збережеться у твоєму браузері.";
+      return "Login link можна використовувати тільки локально. На хостингу додай APPMAGIC_BEARER_TOKEN у Render Environment.";
     }
     return error || "Не вдалося авторизувати App Magic.";
   }
@@ -1632,30 +1637,41 @@
         ? `<a class="am-cta" href="${escapeHtml(appMagicUrl)}" target="_blank" rel="noopener noreferrer">Відкрити App Magic ↗</a>`
         : "";
       const authReason = data.appmagic.appmagic_exact_required_reason || "APPMAGIC_DATA_COUNTRIES_AUTH_REQUIRED";
+      const hosted = !isLocalHost();
+      const authControlsHtml = hosted
+        ? `
+              <div class="am-hosted-note">
+                <div class="am-hosted-title">App Magic автоматично не налаштовано</div>
+                <p>Щоб співробітникам нічого не потрібно було вводити, додай у Render → Environment одну змінну:</p>
+                <code>APPMAGIC_BEARER_TOKEN</code>
+                <p>Значення: token з App Magic Network header <code>Authorization: Bearer ...</code> без слова <code>Bearer</code> або разом із ним. Після redeploy цей блок зникне, а App Magic режим буде працювати автоматично для всіх користувачів сайту.</p>
+              </div>`
+        : `
+              <div class="am-auth-actions">
+                <button class="am-cta" id="appmagicAutoToken" type="button">Авто знайти token у браузері</button>
+                <span>Шукає локально в Chrome/Brave/Edge. Token не показується на екрані.</span>
+              </div>
+              <div class="am-auth-alt">Якщо автоімпорт не знайде token: відкрий лист від App Magic, скопіюй повний login URL і встав його тут.</div>
+              <div class="am-auth-row">
+                <input class="input" id="appmagicLoginLink" type="text" placeholder="https://appmagic.rocks/login?code=...&email=..." />
+                <button class="am-cta" id="appmagicSaveLogin" type="button">Зберегти login link</button>
+              </div>
+              <div class="am-auth-alt">Ручний запасний варіант: DevTools → Network → data-countries → Headers → скопіюй <code>Authorization: Bearer ...</code>. Не використовуй <code>dashly_data/auth_token</code>.</div>
+              <div class="am-auth-row">
+                <input class="input" id="appmagicToken" type="password" autocomplete="off" placeholder="Authorization: Bearer ... з Network" />
+                <button class="am-cta" id="appmagicSaveToken" type="button">Зберегти token</button>
+              </div>`;
       box.innerHTML = `
         <div class="am-shell">
           <div class="am-auth-card">
             <div class="am-auth-icon">${ICONS.warn}</div>
             <div class="am-auth-body">
               <div class="am-auth-title">Потрібна авторизація App Magic для точних даних</div>
-              <p>Щоб показувати країни, завантаження і частки <b>так само як на сайті App Magic</b>, потрібен доступ до їхнього <code>data-countries</code>. Якщо App Magic уже відкритий у цьому браузері, спробуй автоімпорт.</p>
+              <p>Щоб показувати країни, завантаження і частки <b>так само як на сайті App Magic</b>, потрібен доступ до їхнього <code>data-countries</code>. ${hosted ? "На хостингу це має бути налаштовано один раз через Render Environment." : "Якщо App Magic уже відкритий у цьому браузері, спробуй автоімпорт."}</p>
               <div class="am-auth-code">
-                <div class="am-auth-actions">
-                  <button class="am-cta" id="appmagicAutoToken" type="button">Авто знайти token у браузері</button>
-                  <span>Шукає локально в Chrome/Brave/Edge. Token не показується на екрані.</span>
-                </div>
-                <div class="am-auth-alt">Якщо автоімпорт не знайде token: відкрий лист від App Magic, скопіюй повний login URL і встав його тут.</div>
-                <div class="am-auth-row">
-                  <input class="input" id="appmagicLoginLink" type="text" placeholder="https://appmagic.rocks/login?code=...&email=..." />
-                  <button class="am-cta" id="appmagicSaveLogin" type="button">Зберегти login link</button>
-                </div>
-                <div class="am-auth-alt">Ручний запасний варіант: DevTools → Network → data-countries → Headers → скопіюй <code>Authorization: Bearer ...</code>. Не використовуй <code>dashly_data/auth_token</code>.</div>
-                <div class="am-auth-row">
-                  <input class="input" id="appmagicToken" type="password" autocomplete="off" placeholder="Authorization: Bearer ... з Network" />
-                  <button class="am-cta" id="appmagicSaveToken" type="button">Зберегти token</button>
-                </div>
+                ${authControlsHtml}
               </div>
-              <p class="am-auth-note" id="appmagicAuthStatus">Також підтримуються <code>APPMAGIC_COOKIE</code>, <code>APPMAGIC_BEARER_TOKEN</code> або <code>APPMAGIC_TOKEN</code>. Причина від App Magic: <b>${escapeHtml(authReason)}</b>.</p>
+              <p class="am-auth-note" id="appmagicAuthStatus">${hosted ? "Для автоматичного режиму на Render використовуй" : "Також підтримуються"} <code>APPMAGIC_BEARER_TOKEN</code>${hosted ? "." : ", <code>APPMAGIC_COOKIE</code> або <code>APPMAGIC_TOKEN</code>."} Причина від App Magic: <b>${escapeHtml(authReason)}</b>.</p>
               <div class="am-badges">
                 <span class="am-badge degraded">${escapeHtml(sourceCopy.badge)}</span>
                 ${appName ? `<span class="am-badge muted">${escapeHtml(appName)}</span>` : ""}

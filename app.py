@@ -1018,10 +1018,14 @@ def exit_app():
 @app.get("/appmagic/auth/status")
 def appmagic_auth_status():
     cached = _load_appmagic_cached_auth() or {}
+    source = get_appmagic_auth_source()
     return jsonify({
         "authenticated": appmagic_auth_available(),
-        "source": get_appmagic_auth_source(),
-        "email": cached.get("email") if get_appmagic_auth_source() == "saved_login" else None,
+        "source": source,
+        "email": cached.get("email") if source == "saved_login" else None,
+        "is_local": is_local_request(),
+        "hosted_env_configured": source in {"env_cookie", "env_token"},
+        "can_auto_import": is_local_request(),
     })
 
 
