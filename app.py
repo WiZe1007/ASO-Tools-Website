@@ -8,29 +8,47 @@ import os
 import sys
 import socket
 import atexit
+import copy
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
+from requests.adapters import HTTPAdapter
 from bs4 import BeautifulSoup
 from flask import Flask, g, render_template, request, jsonify
 
 # ---------------- CONFIG ----------------
 
+def env_int(name: str, default: int, min_value: int = 1, max_value: int = 256) -> int:
+    try:
+        value = int(os.environ.get(name, default))
+    except Exception:
+        value = default
+    return max(min_value, min(max_value, value))
+
+
 DEFAULT_THRESHOLD = 4.0
 HOST = "127.0.0.1"
 PORT = 5000  # preferred port if free
 
-MAX_WORKERS_GOOGLE = 8
-MAX_WORKERS_APPLE = 25
-MAX_WORKERS_APPMAGIC = 12
+MAX_WORKERS_GOOGLE = env_int("WWA_MAX_WORKERS_GOOGLE", 10, 4, 24)
+MAX_WORKERS_APPLE = env_int("WWA_MAX_WORKERS_APPLE", 25, 8, 48)
+MAX_WORKERS_APPMAGIC = env_int("WWA_MAX_WORKERS_APPMAGIC", 14, 6, 32)
 
 # Availability checks
-MAX_WORKERS_AVAIL_GOOGLE = 8
-MAX_WORKERS_AVAIL_APPLE = 25
+MAX_WORKERS_AVAIL_GOOGLE = env_int("WWA_MAX_WORKERS_AVAIL_GOOGLE", 12, 6, 28)
+MAX_WORKERS_AVAIL_APPLE = env_int("WWA_MAX_WORKERS_AVAIL_APPLE", 25, 8, 48)
 OVERVIEW_AVAILABILITY_CACHE_TTL = 15 * 60
+CACHE_TTL_RATINGS = env_int("WWA_CACHE_TTL_RATINGS", 6 * 60 * 60, 60, 24 * 60 * 60)
+CACHE_TTL_INSTALL_RANGE = env_int("WWA_CACHE_TTL_INSTALL_RANGE", 12 * 60 * 60, 60, 24 * 60 * 60)
+CACHE_TTL_AVAILABILITY = env_int("WWA_CACHE_TTL_AVAILABILITY", 6 * 60 * 60, 60, 24 * 60 * 60)
+CACHE_TTL_APPMAGIC = env_int("WWA_CACHE_TTL_APPMAGIC", 20 * 60, 60, 6 * 60 * 60)
+CACHE_TTL_SENSOR_TOWER = env_int("WWA_CACHE_TTL_SENSOR_TOWER", 30 * 60, 60, 6 * 60 * 60)
+CACHE_TTL_APP_OVERVIEW = env_int("WWA_CACHE_TTL_APP_OVERVIEW", 15 * 60, 60, 6 * 60 * 60)
+CACHE_MAX_ITEMS = env_int("WWA_CACHE_MAX_ITEMS", 1200, 100, 10000)
+HTTP_POOL_SIZE = env_int("WWA_HTTP_POOL_SIZE", 64, 16, 256)
 
 GOOGLE_JITTER_MIN = 0.08
 GOOGLE_JITTER_MAX = 0.35
@@ -94,6 +112,62 @@ APPMAGIC_AUTH_FILE = os.path.expanduser("~/.wwa_aso_checker_appmagic_auth.json")
 APPMAGIC_TOKEN_PATTERN = re.compile(r"\b(?:Bearer\s+)?([A-Za-z0-9._~+/\-=]{20,})\b", re.I)
 OVERVIEW_AVAILABILITY_CACHE: dict[str, dict] = {}
 OVERVIEW_AVAILABILITY_CACHE_LOCK = threading.Lock()
+CACHE_MISS = object()
+
+
+class TTLCache:
+    def __init__(self, ttl_seconds: int, max_items: int = CACHE_MAX_ITEMS):
+        self.ttl_seconds = ttl_seconds
+        self.max_items = max_items
+        self._items: dict[tuple, tuple[float, object]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple):
+        now = time.time()
+        with self._lock:
+            item = self._items.get(key)
+            if not item:
+                return CACHE_MISS
+            created_at, value = item
+            if now - created_at > self.ttl_seconds:
+                self._items.pop(key, None)
+                return CACHE_MISS
+            return copy.deepcopy(value)
+
+    def set(self, key: tuple, value):
+        now = time.time()
+        with self._lock:
+            if len(self._items) >= self.max_items:
+                expired_keys = [
+                    cache_key
+                    for cache_key, (created_at, _value) in self._items.items()
+                    if now - created_at > self.ttl_seconds
+                ]
+                for cache_key in expired_keys[: max(1, len(expired_keys))]:
+                    self._items.pop(cache_key, None)
+                if len(self._items) >= self.max_items:
+                    oldest_keys = sorted(
+                        self._items,
+                        key=lambda cache_key: self._items[cache_key][0],
+                    )[: max(1, self.max_items // 10)]
+                    for cache_key in oldest_keys:
+                        self._items.pop(cache_key, None)
+            self._items[key] = (now, copy.deepcopy(value))
+
+
+GOOGLE_RATING_CACHE = TTLCache(CACHE_TTL_RATINGS)
+APPLE_RATING_CACHE = TTLCache(CACHE_TTL_RATINGS)
+GOOGLE_INSTALL_RANGE_CACHE = TTLCache(CACHE_TTL_INSTALL_RANGE)
+GOOGLE_AVAILABILITY_CACHE = TTLCache(CACHE_TTL_AVAILABILITY)
+APPLE_AVAILABILITY_CACHE = TTLCache(CACHE_TTL_AVAILABILITY)
+APPMAGIC_SEARCH_CACHE = TTLCache(CACHE_TTL_APPMAGIC)
+APPMAGIC_INFO_CACHE = TTLCache(CACHE_TTL_APPMAGIC)
+APPMAGIC_DATA_COUNTRIES_CACHE = TTLCache(CACHE_TTL_APPMAGIC)
+SENSOR_TOWER_APP_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
+SENSOR_TOWER_PUBLISHER_METADATA_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
+SENSOR_TOWER_PUBLISHER_APPS_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
+APP_OVERVIEW_PAYLOAD_CACHE = TTLCache(CACHE_TTL_APP_OVERVIEW)
+PUBLISHER_PAYLOAD_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
 
 # ---------------- COUNTRY LISTS ----------------
 
@@ -972,7 +1046,11 @@ app = Flask(
     template_folder=resource_path("templates"),
     static_folder=resource_path("static"),
 )
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 60 * 60 * 24 * 30
 session = requests.Session()
+http_adapter = HTTPAdapter(pool_connections=HTTP_POOL_SIZE, pool_maxsize=HTTP_POOL_SIZE, max_retries=0)
+session.mount("https://", http_adapter)
+session.mount("http://", http_adapter)
 
 _runtime_port = None
 
@@ -1244,6 +1322,11 @@ def build_apple_store_url(app_id: str, country_iso2: str, l: str | None) -> str:
 # ---------------- FETCHERS (RATINGS) ----------------
 
 def fetch_google_play_rating(app_id: str, gl: str, hl: str):
+    cache_key = ("google_rating", app_id.lower(), gl.upper(), hl)
+    cached = GOOGLE_RATING_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
     time.sleep(random.uniform(GOOGLE_JITTER_MIN, GOOGLE_JITTER_MAX))
 
     url = build_google_play_url(app_id, gl, hl)
@@ -1281,11 +1364,15 @@ def fetch_google_play_rating(app_id: str, gl: str, hl: str):
             ar = obj.get("aggregateRating")
             if isinstance(ar, dict) and "ratingValue" in ar:
                 try:
-                    return float(str(ar["ratingValue"]).replace(",", ".")), None
+                    result = (float(str(ar["ratingValue"]).replace(",", ".")), None)
+                    GOOGLE_RATING_CACHE.set(cache_key, result)
+                    return result
                 except Exception:
                     pass
 
-    return None, "RATING_NOT_FOUND"
+    result = (None, "RATING_NOT_FOUND")
+    GOOGLE_RATING_CACHE.set(cache_key, result)
+    return result
 
 
 def format_exact_downloads_label(total_downloads) -> str:
@@ -1296,6 +1383,11 @@ def format_exact_downloads_label(total_downloads) -> str:
 
 
 def fetch_google_play_install_range(app_id: str) -> dict | None:
+    cache_key = ("google_install_range", app_id.lower())
+    cached = GOOGLE_INSTALL_RANGE_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
     url = build_google_play_url(
         app_id,
         GOOGLE_PLAY_DEFAULT_INSTALL_COUNTRY,
@@ -1334,10 +1426,17 @@ def fetch_google_play_install_range(app_id: str) -> dict | None:
             "min_installs": lower_bound,
         })
 
-    return matches[0] if matches else None
+    result = matches[0] if matches else None
+    GOOGLE_INSTALL_RANGE_CACHE.set(cache_key, result)
+    return result
 
 
 def fetch_apple_store_rating(app_id: str, country_iso2: str):
+    cache_key = ("apple_rating", str(app_id), country_iso2.upper())
+    cached = APPLE_RATING_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
     cc = country_iso2.lower()
     url = "https://itunes.apple.com/lookup"
     params = {"id": app_id, "country": cc}
@@ -1358,7 +1457,9 @@ def fetch_apple_store_rating(app_id: str, country_iso2: str):
 
     results = data.get("results") or []
     if not results:
-        return None, "NOT_AVAILABLE"
+        result = (None, "NOT_AVAILABLE")
+        APPLE_RATING_CACHE.set(cache_key, result)
+        return result
 
     obj = results[0]
     for key in ("averageUserRating", "averageUserRatingForCurrentVersion", "userRatingValue"):
@@ -1370,15 +1471,26 @@ def fetch_apple_store_rating(app_id: str, country_iso2: str):
         except Exception:
             continue
         if val <= 0:
-            return None, "NO_RATINGS_YET"
-        return val, None
+            result = (None, "NO_RATINGS_YET")
+            APPLE_RATING_CACHE.set(cache_key, result)
+            return result
+        result = (val, None)
+        APPLE_RATING_CACHE.set(cache_key, result)
+        return result
 
-    return None, "NO_RATINGS_YET"
+    result = (None, "NO_RATINGS_YET")
+    APPLE_RATING_CACHE.set(cache_key, result)
+    return result
 
 
 # ---------------- FETCHERS (APP MAGIC) ----------------
 
 def fetch_appmagic_united_app(app_id: str):
+    cache_key = ("appmagic_search", app_id.lower())
+    cached = APPMAGIC_SEARCH_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
     payload = {"ids": [{"store": 1, "store_application_id": app_id}]}
     headers = build_appmagic_headers(build_appmagic_app_url(app_id), json_body=True)
 
@@ -1408,13 +1520,20 @@ def fetch_appmagic_united_app(app_id: str):
     store_id = f"1_{app_id}"
     for item in apps:
         if store_id in (item.get("store_ids") or []):
-            return item, None
+            result = (item, None)
+            APPMAGIC_SEARCH_CACHE.set(cache_key, result)
+            return result
 
     return None, "APPMAGIC_APP_NOT_FOUND"
 
 
 def fetch_appmagic_app_info(app_id: str, country_iso2: str):
     iso2 = (country_iso2 or "").upper()
+    cache_key = ("appmagic_info", app_id.lower(), iso2)
+    cached = APPMAGIC_INFO_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
     payload = {"store": 1, "storeApplicationID": app_id, "country": iso2}
     headers = build_appmagic_headers(build_appmagic_app_url(app_id), json_body=True)
 
@@ -1443,12 +1562,19 @@ def fetch_appmagic_app_info(app_id: str, country_iso2: str):
     if data.get("message"):
         return None, f"APPMAGIC_INFO_{data.get('message')}"
 
-    return data.get("data"), None
+    result = (data.get("data"), None)
+    APPMAGIC_INFO_CACHE.set(cache_key, result)
+    return result
 
 
 def fetch_appmagic_data_countries(united_application_id, app_id: str, app_name: str):
     if not appmagic_auth_available():
         return None, "APPMAGIC_DATA_COUNTRIES_AUTH_REQUIRED"
+
+    cache_key = ("appmagic_data_countries", str(united_application_id), app_id.lower())
+    cached = APPMAGIC_DATA_COUNTRIES_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
 
     params = {"united_application_id": united_application_id}
     referer = build_appmagic_app_url(app_id, app_name)
@@ -1506,7 +1632,9 @@ def fetch_appmagic_data_countries(united_application_id, app_id: str, app_name: 
     if not isinstance(rows, list):
         return None, "APPMAGIC_DATA_COUNTRIES_BAD_DATA"
 
-    return rows, None
+    result = (rows, None)
+    APPMAGIC_DATA_COUNTRIES_CACHE.set(cache_key, result)
+    return result
 
 
 def get_appmagic_row_country(row: dict) -> str:
@@ -2603,6 +2731,11 @@ def sensor_tower_release_status_label(status: str | None) -> str:
 
 def fetch_sensor_tower_app_overview(app_id: str, country: str) -> tuple[dict | None, str | None]:
     country = normalize_sensor_tower_country(country)
+    cache_key = ("sensor_tower_app", app_id.lower(), country)
+    cached = SENSOR_TOWER_APP_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
     api_url = build_sensor_tower_app_api_url(app_id, country)
     headers = sensor_tower_headers(build_sensor_tower_overview_url(app_id, country))
 
@@ -2622,12 +2755,19 @@ def fetch_sensor_tower_app_overview(app_id: str, country: str) -> tuple[dict | N
     if not isinstance(data, dict) or data.get("error"):
         return None, data.get("error") if isinstance(data, dict) else "SENSOR_TOWER_BAD_JSON"
 
-    return data, None
+    result = (data, None)
+    SENSOR_TOWER_APP_CACHE.set(cache_key, result)
+    return result
 
 
 def fetch_sensor_tower_publisher_metadata(os_name: str, publisher_id: str) -> tuple[dict | None, str | None]:
     os_name = normalize_sensor_tower_os(os_name)
     publisher_id = normalize_sensor_tower_publisher_id(publisher_id)
+    cache_key = ("sensor_tower_publisher_metadata", os_name, publisher_id)
+    cached = SENSOR_TOWER_PUBLISHER_METADATA_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
     url = SENSOR_TOWER_PUBLISHER_METADATA_API_URL.format(os=os_name, publisher_id=publisher_id)
 
     try:
@@ -2650,7 +2790,9 @@ def fetch_sensor_tower_publisher_metadata(os_name: str, publisher_id: str) -> tu
     if not isinstance(data, dict) or data.get("error"):
         return None, data.get("error") if isinstance(data, dict) else "SENSOR_TOWER_PUBLISHER_METADATA_BAD_JSON"
 
-    return data, None
+    result = (data, None)
+    SENSOR_TOWER_PUBLISHER_METADATA_CACHE.set(cache_key, result)
+    return result
 
 
 def fetch_sensor_tower_publisher_apps(
@@ -2663,6 +2805,11 @@ def fetch_sensor_tower_publisher_apps(
     os_name = normalize_sensor_tower_os(os_name)
     publisher_id = normalize_sensor_tower_publisher_id(publisher_id)
     sort_by = sort_by if sort_by in {"downloads", "revenue"} else "downloads"
+    cache_key = ("sensor_tower_publisher_apps", os_name, publisher_id, int(limit), int(offset), sort_by)
+    cached = SENSOR_TOWER_PUBLISHER_APPS_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
     url = SENSOR_TOWER_PUBLISHER_APPS_API_URL.format(os=os_name, publisher_id=publisher_id)
     params = {"limit": limit, "offset": offset, "sort_by": sort_by}
 
@@ -2687,7 +2834,9 @@ def fetch_sensor_tower_publisher_apps(
     if not isinstance(data, dict) or data.get("error"):
         return None, data.get("error") if isinstance(data, dict) else "SENSOR_TOWER_PUBLISHER_APPS_BAD_JSON"
 
-    return data, None
+    result = (data, None)
+    SENSOR_TOWER_PUBLISHER_APPS_CACHE.set(cache_key, result)
+    return result
 
 
 def build_sensor_tower_publisher_payload(
@@ -2704,11 +2853,21 @@ def build_sensor_tower_publisher_payload(
     if not publisher_id:
         return None, "SENSOR_TOWER_PUBLISHER_ID_REQUIRED"
 
-    metadata, metadata_error = fetch_sensor_tower_publisher_metadata(os_name, publisher_id)
+    sort_by = sort_by if sort_by in {"downloads", "revenue"} else "downloads"
+    cache_key = ("publisher_payload", publisher_id, country, os_name, int(limit), int(offset), sort_by)
+    cached = PUBLISHER_PAYLOAD_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        metadata_future = executor.submit(fetch_sensor_tower_publisher_metadata, os_name, publisher_id)
+        apps_future = executor.submit(fetch_sensor_tower_publisher_apps, os_name, publisher_id, limit, offset, sort_by)
+        metadata, metadata_error = metadata_future.result()
+        apps_response, apps_error = apps_future.result()
+
     if metadata_error:
         return None, metadata_error
 
-    apps_response, apps_error = fetch_sensor_tower_publisher_apps(os_name, publisher_id, limit, offset, sort_by)
     apps_rows = (apps_response or {}).get("data") if isinstance(apps_response, dict) else []
     apps = [
         formatted
@@ -2758,7 +2917,16 @@ def build_sensor_tower_publisher_payload(
             "source": "Sensor Tower public publisher endpoints",
         },
     }
-    return payload, None
+    result = (payload, None)
+    PUBLISHER_PAYLOAD_CACHE.set(cache_key, result)
+    return result
+
+
+def future_result(future, default=None):
+    try:
+        return future.result()
+    except Exception:
+        return default
 
 
 def build_google_play_overview_availability(app_id: str, sensor_tower_data: dict | None = None) -> dict:
@@ -2817,10 +2985,25 @@ def build_google_play_overview_availability(app_id: str, sensor_tower_data: dict
 
 
 def build_app_overview_payload(app_id: str, country: str) -> tuple[dict | None, str | None]:
+    app_id = normalize_android_package_input(app_id) or (app_id or "").strip()
     country = normalize_sensor_tower_country(country)
+    cache_key = ("app_overview_payload", app_id.lower(), country)
+    cached = APP_OVERVIEW_PAYLOAD_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
     data, error = fetch_sensor_tower_app_overview(app_id, country)
     if error:
         return None, error
+
+    app_id = data.get("app_id") or app_id
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        description_future = executor.submit(fetch_sensor_tower_english_description, app_id, country, data)
+        availability_future = executor.submit(build_google_play_overview_availability, app_id, data)
+        install_range_future = (
+            None if data.get("installs")
+            else executor.submit(fetch_google_play_install_range, app_id)
+        )
 
     screenshots = data.get("screenshots") or {}
     android_screenshots = screenshots.get("android") if isinstance(screenshots, dict) else []
@@ -2828,8 +3011,6 @@ def build_app_overview_payload(app_id: str, country: str) -> tuple[dict | None, 
     android_trailers = trailers.get("android") if isinstance(trailers, dict) else []
 
     downloads_last_month = format_sensor_tower_metric(data.get("worldwide_last_month_downloads"))
-    app_id = data.get("app_id") or app_id
-    description_payload = fetch_sensor_tower_english_description(app_id, country, data)
     google_play_url = build_google_play_url(app_id, country, GOOGLE_PLAY_DEFAULT_INSTALL_LANG)
     sensor_tower_url = build_sensor_tower_overview_url(app_id, country)
 
@@ -2839,7 +3020,12 @@ def build_app_overview_payload(app_id: str, country: str) -> tuple[dict | None, 
         if isinstance(item, dict) and (item.get("name") or item.get("id"))
     ]
 
-    availability_payload = build_google_play_overview_availability(app_id, data)
+    description_payload = future_result(
+        description_future,
+        {"short": "", "full": "", "source_country": country},
+    )
+    availability_payload = future_result(availability_future, {})
+    install_range_payload = future_result(install_range_future) if install_range_future else None
 
     payload = {
         "app_id": app_id,
@@ -2860,7 +3046,7 @@ def build_app_overview_payload(app_id: str, country: str) -> tuple[dict | None, 
         "website_url": data.get("website_url") or "",
         "categories": categories,
         "price": format_sensor_tower_price(data.get("price")),
-        "install_range": data.get("installs") or format_google_play_install_bucket_label(fetch_google_play_install_range(app_id)),
+        "install_range": data.get("installs") or format_google_play_install_bucket_label(install_range_payload),
         "downloads_last_month": downloads_last_month,
         "content_rating": data.get("content_rating") or "—",
         "rating": data.get("rating"),
@@ -2893,7 +3079,9 @@ def build_app_overview_payload(app_id: str, country: str) -> tuple[dict | None, 
         },
     }
 
-    return payload, None
+    result = (payload, None)
+    APP_OVERVIEW_PAYLOAD_CACHE.set(cache_key, result)
+    return result
 
 
 def round_percentages_to_100(shares: list[float]) -> list[int]:
@@ -3078,6 +3266,11 @@ def enrich_appmagic_download_estimates(
 # ---------------- FETCHERS (INSTALL AVAILABILITY) ----------------
 
 def fetch_google_play_availability(app_id: str, gl: str, hl: str = "en"):
+    cache_key = ("google_availability", app_id.lower(), gl.upper(), hl)
+    cached = GOOGLE_AVAILABILITY_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
     time.sleep(random.uniform(GOOGLE_JITTER_MIN, GOOGLE_JITTER_MAX))
 
     url = build_google_play_url(app_id, gl, hl)
@@ -3103,7 +3296,9 @@ def fetch_google_play_availability(app_id: str, gl: str, hl: str = "en"):
         return False, f"REQUEST_ERROR:{e}"
 
     if r.status_code == 404:
-        return False, "NOT_FOUND"
+        result = (False, "NOT_FOUND")
+        GOOGLE_AVAILABILITY_CACHE.set(cache_key, result)
+        return result
     if r.status_code in (429, 503):
         return False, f"BLOCKED_HTTP_{r.status_code}"
     if r.status_code != 200:
@@ -3127,7 +3322,9 @@ def fetch_google_play_availability(app_id: str, gl: str, hl: str = "en"):
         "this item is not available",
     )
     if any(p in low for p in geo_block_patterns):
-        return False, "GEO_BLOCKED_TEXT"
+        result = (False, "GEO_BLOCKED_TEXT")
+        GOOGLE_AVAILABILITY_CACHE.set(cache_key, result)
+        return result
 
     # A) schema.org Offer block referencing this app
     offer_hit = False
@@ -3140,7 +3337,9 @@ def fetch_google_play_availability(app_id: str, gl: str, hl: str = "en"):
         if re.search(pattern, low):
             offer_hit = True
     if offer_hit:
-        return True, "SCHEMA_OFFERS"
+        result = (True, "SCHEMA_OFFERS")
+        GOOGLE_AVAILABILITY_CACHE.set(cache_key, result)
+        return result
 
     # B) aria-label install variants
     install_aria_variants = (
@@ -3156,7 +3355,9 @@ def fetch_google_play_availability(app_id: str, gl: str, hl: str = "en"):
         'aria-label="インストール"',
     )
     if any(v in low for v in install_aria_variants):
-        return True, "ARIA_INSTALL"
+        result = (True, "ARIA_INSTALL")
+        GOOGLE_AVAILABILITY_CACHE.set(cache_key, result)
+        return result
 
     # C) button contains Install text (even if disabled)
     try:
@@ -3165,24 +3366,39 @@ def fetch_google_play_availability(app_id: str, gl: str, hl: str = "en"):
             blk_low = blk.lower()
             if ("vfppkd" in blk_low) or ("aria-label" in blk_low) or ("jsaction" in blk_low):
                 if ">install<" in blk_low or 'aria-label="install"' in blk_low:
-                    return True, "BUTTON_INSTALL"
+                    result = (True, "BUTTON_INSTALL")
+                    GOOGLE_AVAILABILITY_CACHE.set(cache_key, result)
+                    return result
                 if ">установить<" in blk_low or 'aria-label="установить"' in blk_low:
-                    return True, "BUTTON_INSTALL_RU"
+                    result = (True, "BUTTON_INSTALL_RU")
+                    GOOGLE_AVAILABILITY_CACHE.set(cache_key, result)
+                    return result
     except Exception:
         pass
 
     if ('jscontroller="chfswc"' in low) and ('jsaction="jibuqc:' in low):
-        return True, "CONTROLLER_INSTALL"
+        result = (True, "CONTROLLER_INSTALL")
+        GOOGLE_AVAILABILITY_CACHE.set(cache_key, result)
+        return result
 
     pre_register_patterns = ("pre-register", "preregister", "pre register")
     if any(p in low for p in pre_register_patterns):
-        return False, "PRE_REGISTER"
+        result = (False, "PRE_REGISTER")
+        GOOGLE_AVAILABILITY_CACHE.set(cache_key, result)
+        return result
 
-    return False, "NO_INSTALL_SIGNALS"
+    result = (False, "NO_INSTALL_SIGNALS")
+    GOOGLE_AVAILABILITY_CACHE.set(cache_key, result)
+    return result
 
 
 def fetch_apple_store_availability(app_id: str, country_iso2: str):
     cc = country_iso2.lower()
+    cache_key = ("apple_availability", str(app_id), cc)
+    cached = APPLE_AVAILABILITY_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
     url = "https://itunes.apple.com/lookup"
     params = {"id": app_id, "country": cc}
     headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
@@ -3202,8 +3418,12 @@ def fetch_apple_store_availability(app_id: str, country_iso2: str):
 
     results = data.get("results") or []
     if not results:
-        return False, "NOT_AVAILABLE"
-    return True, None
+        result = (False, "NOT_AVAILABLE")
+        APPLE_AVAILABILITY_CACHE.set(cache_key, result)
+        return result
+    result = (True, None)
+    APPLE_AVAILABILITY_CACHE.set(cache_key, result)
+    return result
 
 
 # ---------------- PARALLEL CHECKERS ----------------
