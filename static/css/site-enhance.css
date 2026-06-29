@@ -4441,6 +4441,62 @@ html[data-theme="light"] body[data-page] .navright .chip{
   }
 }
 
+@media (max-width: 900px){
+  body[data-page] .navright{
+    min-width:40px !important;
+    flex:0 0 auto !important;
+    justify-content:flex-end !important;
+    gap:0 !important;
+    position:relative !important;
+    z-index:5 !important;
+  }
+
+  body[data-page] .navright .chip,
+  body[data-page] .navright .chip::before,
+  body[data-page] .navright .chip::after,
+  body[data-page] .navright .pulse,
+  body[data-page] .navright .pulse::before,
+  body[data-page] .navright .pulse::after{
+    display:none !important;
+    visibility:hidden !important;
+    pointer-events:none !important;
+    animation:none !important;
+  }
+
+  body[data-page] .hamb{
+    display:inline-grid !important;
+    place-items:center !important;
+    position:relative !important;
+    z-index:6 !important;
+    flex:0 0 40px !important;
+    width:40px !important;
+    height:40px !important;
+    pointer-events:auto !important;
+    touch-action:manipulation !important;
+  }
+
+  body[data-page] .hamb span{
+    pointer-events:none !important;
+    left:10px !important;
+    right:10px !important;
+  }
+
+  body[data-page] .hamb.is-open span:nth-child(1){
+    top:50% !important;
+    transform:translateY(-50%) rotate(45deg) !important;
+  }
+
+  body[data-page] .hamb.is-open span:nth-child(2){
+    opacity:0 !important;
+    transform:translateY(-50%) scaleX(.3) !important;
+  }
+
+  body[data-page] .hamb.is-open span:nth-child(3){
+    top:50% !important;
+    transform:translateY(-50%) rotate(-45deg) !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce){
   body[data-page] .navright .chip,
   body[data-page] .navright .chip::before,

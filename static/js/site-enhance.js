@@ -229,6 +229,7 @@
     const drawer = byId("drawer");
     const hamburger = byId("hamb");
     if (!drawer || !hamburger) return;
+    const isOverviewPage = document.body?.dataset?.page === "overview";
 
     const sync = () => {
       const isOpen = window.getComputedStyle(drawer).display !== "none";
@@ -236,6 +237,7 @@
       document.body.classList.toggle("drawer-open", isOpen);
       hamburger.classList.toggle("is-open", isOpen);
       hamburger.setAttribute("aria-expanded", String(isOpen));
+      hamburger.setAttribute("aria-label", isOpen ? "Close menu" : "Open menu");
 
       if (wrap && window.matchMedia("(max-width: 680px)").matches) {
         wrap.style.paddingTop = isOpen ? `${Math.ceil(drawer.getBoundingClientRect().bottom + 16)}px` : "";
@@ -243,6 +245,35 @@
         wrap.style.paddingTop = "";
       }
     };
+
+    const setDrawerOpen = (open) => {
+      drawer.style.display = open ? "block" : "none";
+      sync();
+    };
+
+    if (isOverviewPage && hamburger.dataset.drawerClickReady !== "1") {
+      hamburger.dataset.drawerClickReady = "1";
+      hamburger.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const isOpen = window.getComputedStyle(drawer).display !== "none";
+        setDrawerOpen(!isOpen);
+      });
+
+      drawer.addEventListener("click", (event) => {
+        if (event.target.closest("a")) setDrawerOpen(false);
+      });
+
+      document.addEventListener("click", (event) => {
+        if (window.getComputedStyle(drawer).display === "none") return;
+        if (drawer.contains(event.target) || hamburger.contains(event.target)) return;
+        setDrawerOpen(false);
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") setDrawerOpen(false);
+      });
+    }
 
     hamburger.setAttribute("aria-controls", "drawer");
     hamburger.setAttribute("aria-expanded", "false");
