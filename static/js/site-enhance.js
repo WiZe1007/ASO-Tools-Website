@@ -64,6 +64,66 @@
     });
   }
 
+  function installContactModal() {
+    const helpButtons = qsa('.nav-utility[aria-label="Help"]');
+    if (!helpButtons.length || window.__wwaContactModalInstalled) return;
+    window.__wwaContactModalInstalled = true;
+
+    const modal = document.createElement("div");
+    modal.className = "contact-modal";
+    modal.hidden = true;
+    modal.innerHTML = `
+      <div class="contact-modal__backdrop" data-contact-close></div>
+      <section class="contact-modal__panel" role="dialog" aria-modal="true" aria-labelledby="contactModalTitle">
+        <button class="contact-modal__close" type="button" aria-label="Закрити" data-contact-close>×</button>
+        <p class="contact-modal__eyebrow">WWA ASO Tools</p>
+        <h2 id="contactModalTitle">Контакти</h2>
+        <p class="contact-modal__text">Пропозиції та допомогу можна дізнатися за цими контактами</p>
+        <div class="contact-modal__list">
+          <a class="contact-modal__item" href="https://t.me/Nemofresh_publisher" target="_blank" rel="noopener noreferrer">
+            <span>Телеграм</span>
+            <b>@Nemofresh_publisher</b>
+          </a>
+          <a class="contact-modal__item" href="mailto:bohdan.m.publish@wildwildgroup.com">
+            <span>Пошта</span>
+            <b>bohdan.m.publish@wildwildgroup.com</b>
+          </a>
+        </div>
+      </section>
+    `;
+    document.body.appendChild(modal);
+
+    const closeButtons = qsa("[data-contact-close]", modal);
+    let lastActiveElement = null;
+
+    const openModal = () => {
+      lastActiveElement = document.activeElement;
+      modal.hidden = false;
+      document.body.classList.add("contact-modal-open");
+      qs(".contact-modal__close", modal)?.focus({ preventScroll: true });
+    };
+
+    const closeModal = () => {
+      modal.hidden = true;
+      document.body.classList.remove("contact-modal-open");
+      if (lastActiveElement && typeof lastActiveElement.focus === "function") {
+        lastActiveElement.focus({ preventScroll: true });
+      }
+    };
+
+    helpButtons.forEach((button) => {
+      button.dataset.contactReady = "1";
+      button.setAttribute("title", "Контакти");
+      button.setAttribute("aria-haspopup", "dialog");
+      button.addEventListener("click", openModal);
+    });
+
+    closeButtons.forEach((button) => button.addEventListener("click", closeModal));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.hidden) closeModal();
+    });
+  }
+
   function installToast() {
     if (window.__wwaAsoToastInstalled) return;
     window.__wwaAsoToastInstalled = true;
@@ -384,6 +444,7 @@
 
   ready(() => {
     installThemeToggle();
+    installContactModal();
     installToast();
     wrapLoadingState();
     enhancePersistentInputs();

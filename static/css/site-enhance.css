@@ -4393,6 +4393,154 @@ html[data-theme="light"] body[data-page] .navright .chip{
     inset 0 1px 0 rgba(255,255,255,.84) !important;
 }
 
+body.contact-modal-open{
+  overflow:hidden;
+}
+
+.contact-modal[hidden]{
+  display:none !important;
+}
+
+.contact-modal{
+  position:fixed;
+  inset:0;
+  z-index:9999;
+  display:grid;
+  place-items:center;
+  padding:24px;
+}
+
+.contact-modal__backdrop{
+  position:absolute;
+  inset:0;
+  background:rgba(2,8,18,.66);
+  backdrop-filter:blur(8px);
+  -webkit-backdrop-filter:blur(8px);
+}
+
+.contact-modal__panel{
+  position:relative;
+  z-index:1;
+  width:min(460px, calc(100vw - 32px));
+  padding:28px;
+  border-radius:22px;
+  color:#f5f8ff;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(35,211,238,.16), transparent 34%),
+    linear-gradient(145deg, rgba(13,31,48,.96), rgba(6,16,29,.94));
+  border:1px solid rgba(255,255,255,.16);
+  box-shadow:
+    0 28px 80px rgba(0,0,0,.44),
+    inset 0 1px 0 rgba(255,255,255,.13);
+}
+
+.contact-modal__close{
+  position:absolute;
+  top:14px;
+  right:14px;
+  width:36px;
+  height:36px;
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:999px;
+  color:rgba(245,248,255,.86);
+  background:rgba(255,255,255,.08);
+  font-size:24px;
+  line-height:1;
+  cursor:pointer;
+}
+
+.contact-modal__eyebrow{
+  margin:0 0 8px;
+  color:#ffc247;
+  font-size:13px;
+  font-weight:900;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+
+.contact-modal h2{
+  margin:0;
+  font-size:34px;
+  line-height:1.08;
+  letter-spacing:-.02em;
+}
+
+.contact-modal__text{
+  margin:14px 0 20px;
+  color:rgba(226,236,248,.78);
+  font-size:16px;
+  line-height:1.55;
+}
+
+.contact-modal__list{
+  display:grid;
+  gap:12px;
+}
+
+.contact-modal__item{
+  display:grid;
+  gap:4px;
+  padding:14px 16px;
+  border-radius:16px;
+  color:#f6f9ff;
+  text-decoration:none;
+  background:rgba(255,255,255,.075);
+  border:1px solid rgba(255,255,255,.12);
+}
+
+.contact-modal__item:hover,
+.contact-modal__item:focus-visible{
+  border-color:rgba(255,194,71,.52);
+  background:rgba(255,194,71,.12);
+  outline:none;
+}
+
+.contact-modal__item span{
+  color:rgba(226,236,248,.66);
+  font-size:13px;
+  font-weight:800;
+}
+
+.contact-modal__item b{
+  overflow-wrap:anywhere;
+  font-size:16px;
+}
+
+html[data-theme="light"] .contact-modal__backdrop{
+  background:rgba(18,33,52,.34);
+}
+
+html[data-theme="light"] .contact-modal__panel{
+  color:#122036;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(34,211,238,.14), transparent 34%),
+    linear-gradient(145deg, rgba(255,255,255,.98), rgba(238,246,255,.96));
+  border-color:rgba(36,61,88,.18);
+  box-shadow:
+    0 24px 70px rgba(35,54,78,.26),
+    inset 0 1px 0 rgba(255,255,255,.92);
+}
+
+html[data-theme="light"] .contact-modal__close{
+  color:#24364f;
+  background:rgba(255,255,255,.72);
+  border-color:rgba(36,61,88,.18);
+}
+
+html[data-theme="light"] .contact-modal__text{
+  color:#43536a;
+}
+
+html[data-theme="light"] .contact-modal__item{
+  color:#122036;
+  background:rgba(255,255,255,.68);
+  border-color:rgba(36,61,88,.14);
+}
+
+html[data-theme="light"] .contact-modal__item span{
+  color:#64748b;
+}
+
 @keyframes liveChipBreathe{
   0%, 100%{
     transform:translateY(0);
