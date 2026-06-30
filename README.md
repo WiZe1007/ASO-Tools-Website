@@ -7,6 +7,7 @@ Flask web app for ASO checks:
 - Google Play GEO link generator
 - App Overview page with public Sensor Tower data
 - optional App Magic data-countries integration for download shares
+- Telegram Availability monitor backed by Google Sheets
 
 ## Local Run
 
@@ -56,3 +57,99 @@ For Render automatic App Magic mode:
 6. Redeploy the service.
 
 After redeploy, App Magic mode is automatic for everyone who opens the hosted site.
+
+## Telegram Availability Monitor
+
+This feature uses Google Sheets as the shared company database and Telegram as the notification channel.
+
+### Google Sheet Structure
+
+Create a Google Spreadsheet and add app links to the `Apps` sheet. The app will create/update headers automatically.
+
+Required columns:
+
+```text
+enabled | status | app_url | app_id | app_name | owner | notes | last_checked_at | last_live_at | last_open_countries | last_closed_countries | last_closed_count | last_error
+```
+
+Use:
+
+- `enabled`: `TRUE` / `FALSE`
+- `status`: use `watch` for apps that are not live yet; use `live` for apps that are already live and should only be monitored for future country closures
+- `app_url`: Google Play link, for example `https://play.google.com/store/apps/details?id=com.example.app`
+- `app_name`, `owner`, `notes`: optional human fields
+
+The bot also writes events to the `Checks` sheet.
+
+### Google Service Account
+
+1. Create a Google Cloud service account.
+2. Enable Google Sheets API for the project.
+3. Create a JSON key for the service account.
+4. Share the Google Spreadsheet with the service account email as `Editor`.
+5. Add the JSON to Render as `GOOGLE_SERVICE_ACCOUNT_JSON`.
+
+For Render env vars, add:
+
+```text
+AVAILABILITY_DB_SPREADSHEET_ID=<spreadsheet id from the Google Sheet URL>
+GOOGLE_SERVICE_ACCOUNT_JSON=<full service account JSON>
+TELEGRAM_BOT_TOKEN=<token from @BotFather>
+TELEGRAM_CHAT_ID=<company chat/channel id>
+AVAILABILITY_TASK_SECRET=<random secret for the cron endpoint>
+```
+
+Optional:
+
+```text
+AVAILABILITY_DB_APPS_SHEET=Apps
+AVAILABILITY_DB_LOG_SHEET=Checks
+AVAILABILITY_CHECK_LIMIT=200
+```
+
+### How Notifications Work
+
+The monitor checks Google Play availability with the same country list and logic as the `/availability` page.
+
+It sends Telegram messages when:
+
+- an app first becomes live in at least one country;
+- a country that was previously open becomes closed.
+
+For already live apps, set `status=live` before the first bot run. Then the first run creates a baseline without sending a "new live" notification.
+
+### Render Cron Job
+
+Create a Render Cron Job connected to the same repository and environment variables.
+
+Build command:
+
+```bash
+pip install -r requirements.txt
+```
+
+Command:
+
+```bash
+python app.py bot-check
+```
+
+Schedule it 3 times per day, for example:
+
+```text
+0 9,15,21 * * *
+```
+
+Manual dry run locally or in Render Shell:
+
+```bash
+python app.py bot-check --dry-run
+```
+
+Dry run reads the sheet and checks apps, but does not update the sheet and does not send Telegram messages.
+
+You can also trigger the hosted web service endpoint:
+
+```bash
+curl -X POST "https://YOUR-RENDER-URL/tasks/check-availability?secret=AVAILABILITY_TASK_SECRET"
+```

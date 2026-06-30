@@ -9,6 +9,8 @@ import sys
 import socket
 import atexit
 import copy
+import base64
+import html as html_lib
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
@@ -18,6 +20,13 @@ import requests
 from requests.adapters import HTTPAdapter
 from bs4 import BeautifulSoup
 from flask import Flask, g, render_template, request, jsonify
+
+try:
+    from google.oauth2 import service_account
+    from google.auth.transport.requests import Request as GoogleAuthRequest
+except Exception:
+    service_account = None
+    GoogleAuthRequest = None
 
 # ---------------- CONFIG ----------------
 
@@ -105,6 +114,19 @@ SENSOR_TOWER_PUBLISHER_APPS_API_URL = "https://app.sensortower.com/api/{os}/publ
 SENSOR_TOWER_TIMEOUT = 30
 SENSOR_TOWER_ENGLISH_DESCRIPTION_COUNTRIES = ("US", "AU", "GB", "CA", "NZ", "IE")
 SENSOR_TOWER_PUBLISHER_APPS_LIMIT = 50
+
+GOOGLE_SHEETS_SCOPES = ("https://www.googleapis.com/auth/spreadsheets",)
+AVAILABILITY_DB_SPREADSHEET_ID = (
+    os.environ.get("AVAILABILITY_DB_SPREADSHEET_ID")
+    or os.environ.get("GOOGLE_SHEETS_SPREADSHEET_ID")
+    or ""
+).strip()
+AVAILABILITY_DB_APPS_SHEET = os.environ.get("AVAILABILITY_DB_APPS_SHEET", "Apps").strip() or "Apps"
+AVAILABILITY_DB_LOG_SHEET = os.environ.get("AVAILABILITY_DB_LOG_SHEET", "Checks").strip() or "Checks"
+AVAILABILITY_CHECK_LIMIT = env_int("AVAILABILITY_CHECK_LIMIT", 200, 1, 1000)
+AVAILABILITY_TASK_SECRET = (os.environ.get("AVAILABILITY_TASK_SECRET") or os.environ.get("BOT_CHECK_SECRET") or "").strip()
+TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
 
 # Single-instance state
 STATE_FILE = os.path.expanduser("~/.wwa_aso_checker_state.json")
@@ -3596,6 +3618,475 @@ def check_availability_apple(app_id: str, l_param: str | None, countries_en: lis
     return rows
 
 
+# ---------------- TELEGRAM AVAILABILITY BOT ----------------
+
+APPS_SHEET_HEADERS = [
+    "enabled",
+    "status",
+    "app_url",
+    "app_id",
+    "app_name",
+    "owner",
+    "notes",
+    "last_checked_at",
+    "last_live_at",
+    "last_open_countries",
+    "last_closed_countries",
+    "last_closed_count",
+    "last_error",
+]
+
+CHECKS_SHEET_HEADERS = [
+    "created_at",
+    "event",
+    "app_id",
+    "app_name",
+    "app_url",
+    "countries_count",
+    "countries",
+    "details",
+]
+
+
+class BotConfigError(RuntimeError):
+    pass
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def decode_service_account_info() -> dict:
+    raw_json = (
+        os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_INFO")
+        or ""
+    ).strip()
+    if raw_json:
+        if raw_json.startswith("{"):
+            return json.loads(raw_json)
+        return json.loads(base64.b64decode(raw_json).decode("utf-8"))
+
+    path = (
+        os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
+        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        or ""
+    ).strip()
+    if path:
+        with open(os.path.expanduser(path), "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    raise BotConfigError("GOOGLE_SERVICE_ACCOUNT_JSON або GOOGLE_SERVICE_ACCOUNT_FILE не задано.")
+
+
+def sheets_range(sheet_name: str, cell_range: str) -> str:
+    safe_name = (sheet_name or "").replace("'", "''")
+    return f"'{safe_name}'!{cell_range}"
+
+
+def boolish(value, default: bool = True) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return default
+    return text not in {"0", "false", "no", "ні", "off", "disabled", "pause", "paused"}
+
+
+def split_country_codes(value) -> set[str]:
+    if isinstance(value, list):
+        parts = value
+    else:
+        parts = re.split(r"[,;\s]+", str(value or ""))
+    return {
+        str(part).strip().upper()
+        for part in parts
+        if re.fullmatch(r"[A-Za-z]{2}", str(part).strip())
+    }
+
+
+def join_country_codes(codes) -> str:
+    return ",".join(sorted({str(code).strip().upper() for code in codes if str(code).strip()}))
+
+
+def country_flag(iso2: str) -> str:
+    code = (iso2 or "").strip().upper()
+    if len(code) != 2 or not code.isalpha():
+        return ""
+    return "".join(chr(127397 + ord(char)) for char in code)
+
+
+def country_label(iso2: str) -> str:
+    code = (iso2 or "").strip().upper()
+    name, _hl = get_country_meta_by_iso2(code)
+    flag = country_flag(code)
+    return f"{flag} {name} ({code})".strip()
+
+
+class GoogleSheetsAvailabilityStore:
+    def __init__(
+        self,
+        spreadsheet_id: str = AVAILABILITY_DB_SPREADSHEET_ID,
+        apps_sheet: str = AVAILABILITY_DB_APPS_SHEET,
+        log_sheet: str = AVAILABILITY_DB_LOG_SHEET,
+    ):
+        self.spreadsheet_id = (spreadsheet_id or "").strip()
+        self.apps_sheet = apps_sheet
+        self.log_sheet = log_sheet
+        self._credentials = None
+
+    def _require_config(self):
+        if not self.spreadsheet_id:
+            raise BotConfigError("AVAILABILITY_DB_SPREADSHEET_ID / GOOGLE_SHEETS_SPREADSHEET_ID не задано.")
+        if service_account is None or GoogleAuthRequest is None:
+            raise BotConfigError("google-auth не встановлено. Запусти pip install -r requirements.txt.")
+
+    def _token(self) -> str:
+        self._require_config()
+        if self._credentials is None:
+            info = decode_service_account_info()
+            self._credentials = service_account.Credentials.from_service_account_info(
+                info,
+                scopes=list(GOOGLE_SHEETS_SCOPES),
+            )
+        if not self._credentials.valid:
+            self._credentials.refresh(GoogleAuthRequest())
+        return self._credentials.token
+
+    def _request(self, method: str, path: str, **kwargs):
+        url = f"https://sheets.googleapis.com/v4/spreadsheets/{self.spreadsheet_id}{path}"
+        headers = kwargs.pop("headers", {})
+        headers["Authorization"] = f"Bearer {self._token()}"
+        headers.setdefault("Accept", "application/json")
+        response = session.request(method, url, headers=headers, timeout=30, **kwargs)
+        if response.status_code >= 400:
+            raise BotConfigError(f"Google Sheets HTTP {response.status_code}: {response.text[:500]}")
+        if response.text:
+            return response.json()
+        return {}
+
+    def _values_path(self, range_name: str, suffix: str = "") -> str:
+        encoded_range = quote(range_name, safe="!:'")
+        return f"/values/{encoded_range}{suffix}"
+
+    def get_sheet_titles(self) -> set[str]:
+        data = self._request("GET", "?fields=sheets.properties.title")
+        return {
+            (((item or {}).get("properties") or {}).get("title") or "")
+            for item in data.get("sheets", [])
+        }
+
+    def add_sheet(self, title: str):
+        self._request("POST", ":batchUpdate", json={
+            "requests": [{"addSheet": {"properties": {"title": title}}}]
+        })
+
+    def get_values(self, sheet_name: str, cell_range: str) -> list[list]:
+        data = self._request("GET", self._values_path(sheets_range(sheet_name, cell_range)))
+        return data.get("values") or []
+
+    def update_values(self, sheet_name: str, cell_range: str, values: list[list]):
+        self._request(
+            "PUT",
+            self._values_path(sheets_range(sheet_name, cell_range), "?valueInputOption=RAW"),
+            json={"values": values},
+        )
+
+    def append_values(self, sheet_name: str, values: list[list]):
+        self._request(
+            "POST",
+            self._values_path(
+                sheets_range(sheet_name, "A:Z"),
+                ":append?valueInputOption=RAW&insertDataOption=INSERT_ROWS",
+            ),
+            json={"values": values},
+        )
+
+    def ensure_ready(self):
+        titles = self.get_sheet_titles()
+        if self.apps_sheet not in titles:
+            self.add_sheet(self.apps_sheet)
+        if self.log_sheet not in titles:
+            self.add_sheet(self.log_sheet)
+
+        app_values = self.get_values(self.apps_sheet, "A1:M1")
+        if not app_values or [str(v).strip() for v in app_values[0]] != APPS_SHEET_HEADERS:
+            self.update_values(self.apps_sheet, "A1:M1", [APPS_SHEET_HEADERS])
+
+        log_values = self.get_values(self.log_sheet, "A1:H1")
+        if not log_values or [str(v).strip() for v in log_values[0]] != CHECKS_SHEET_HEADERS:
+            self.update_values(self.log_sheet, "A1:H1", [CHECKS_SHEET_HEADERS])
+
+    def load_apps(self) -> list[dict]:
+        self.ensure_ready()
+        values = self.get_values(self.apps_sheet, "A2:M")
+        apps = []
+        for offset, row in enumerate(values, start=2):
+            row_dict = {
+                header: row[idx] if idx < len(row) else ""
+                for idx, header in enumerate(APPS_SHEET_HEADERS)
+            }
+            app_url = str(row_dict.get("app_url") or "").strip()
+            app_id = str(row_dict.get("app_id") or "").strip() or extract_google_play_app_id(app_url)
+            if not app_url and not app_id:
+                continue
+            status = str(row_dict.get("status") or "watch").strip().lower()
+            if not boolish(row_dict.get("enabled"), default=True) or status in {"disabled", "paused", "pause", "off", "done"}:
+                continue
+            if not app_url:
+                app_url = build_google_play_url(app_id, GOOGLE_PLAY_DEFAULT_INSTALL_COUNTRY, GOOGLE_PLAY_DEFAULT_INSTALL_LANG)
+            if not app_id:
+                row_dict["last_error"] = "INVALID_GOOGLE_PLAY_URL"
+            row_dict.update({
+                "row_index": offset,
+                "app_url": app_url,
+                "app_id": app_id,
+                "status": status or "watch",
+            })
+            apps.append(row_dict)
+        return apps
+
+    def update_app(self, row_index: int, updates: dict):
+        values = self.get_values(self.apps_sheet, f"A{row_index}:M{row_index}")
+        current_row = values[0] if values else []
+        row_dict = {
+            header: current_row[idx] if idx < len(current_row) else ""
+            for idx, header in enumerate(APPS_SHEET_HEADERS)
+        }
+        row_dict.update(updates)
+        row = [row_dict.get(header, "") for header in APPS_SHEET_HEADERS]
+        self.update_values(self.apps_sheet, f"A{row_index}:M{row_index}", [row])
+
+    def append_log(self, event: str, app: dict, countries: list[str] | set[str], details: str = ""):
+        codes = sorted({str(code).strip().upper() for code in countries if str(code).strip()})
+        self.append_values(self.log_sheet, [[
+            utc_now_iso(),
+            event,
+            app.get("app_id") or "",
+            app.get("app_name") or "",
+            app.get("app_url") or "",
+            len(codes),
+            join_country_codes(codes),
+            details,
+        ]])
+
+
+def availability_error_is_transient(error: str | None) -> bool:
+    err = str(error or "")
+    return (
+        err.startswith("REQUEST_ERROR")
+        or err.startswith("HTTP_")
+        or err.startswith("BLOCKED_HTTP")
+        or err in {"CONSENT_OR_UNUSUAL_TRAFFIC"}
+    )
+
+
+def summarize_google_availability(app_id: str) -> dict:
+    rows = check_availability_google(app_id, get_geo_countries_en())
+    open_codes = sorted({row["iso2"] for row in rows if row.get("available") is True})
+    closed_codes = sorted({
+        row["iso2"]
+        for row in rows
+        if row.get("available") is False and not availability_error_is_transient(row.get("error"))
+    })
+    transient_codes = sorted({
+        row["iso2"]
+        for row in rows
+        if row.get("available") is False and availability_error_is_transient(row.get("error"))
+    })
+    return {
+        "rows": rows,
+        "total": len(rows),
+        "open_codes": open_codes,
+        "closed_codes": closed_codes,
+        "transient_codes": transient_codes,
+        "is_live": bool(open_codes),
+    }
+
+
+def format_country_lines(codes: list[str] | set[str], max_items: int = 80) -> str:
+    sorted_codes = sorted({str(code).upper() for code in codes})
+    labels = [country_label(code) for code in sorted_codes[:max_items]]
+    extra = len(sorted_codes) - len(labels)
+    text = ", ".join(labels) if labels else "немає"
+    if extra > 0:
+        text += f" та ще {extra}"
+    return text
+
+
+def telegram_chunk_text(text: str, max_len: int = 3900) -> list[str]:
+    if len(text) <= max_len:
+        return [text]
+    chunks = []
+    current = ""
+    for line in text.splitlines():
+        candidate = f"{current}\n{line}".strip() if current else line
+        if len(candidate) > max_len and current:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def send_telegram_message(text: str):
+    if not TELEGRAM_BOT_TOKEN:
+        raise BotConfigError("TELEGRAM_BOT_TOKEN не задано.")
+    if not TELEGRAM_CHAT_ID:
+        raise BotConfigError("TELEGRAM_CHAT_ID не задано.")
+
+    sent = []
+    for chunk in telegram_chunk_text(text):
+        response = session.post(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": chunk,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=20,
+        )
+        if response.status_code >= 400:
+            raise BotConfigError(f"Telegram HTTP {response.status_code}: {response.text[:500]}")
+        sent.append(response.json())
+    return sent
+
+
+def build_bot_message(event: str, app: dict, snapshot: dict, changed_codes: list[str] | set[str]) -> str:
+    app_id = app.get("app_id") or ""
+    app_name = app.get("app_name") or app_id
+    app_url = app.get("app_url") or build_google_play_url(app_id, "US", "en")
+    escaped_name = html_lib.escape(app_name)
+    escaped_id = html_lib.escape(app_id)
+    escaped_url = html_lib.escape(app_url)
+    open_count = len(snapshot.get("open_codes") or [])
+    closed_count = len(snapshot.get("closed_codes") or [])
+    total = snapshot.get("total") or 0
+
+    title = "🟢 Новий додаток вийшов у Live" if event == "new_live" else "🔴 Availability змінився: країни закрилися"
+    country_intro = "Закриті країни зараз" if event == "new_live" else "Нові закриті країни"
+
+    return "\n".join([
+        f"<b>{title}</b>",
+        "",
+        f"<b>{escaped_name}</b>",
+        f"<code>{escaped_id}</code>",
+        f'<a href="{escaped_url}">Google Play</a>',
+        "",
+        f"Open: <b>{open_count}</b> / {total}",
+        f"Closed: <b>{closed_count}</b>",
+        "",
+        f"<b>{country_intro}:</b>",
+        html_lib.escape(format_country_lines(changed_codes)),
+    ])
+
+
+def run_availability_bot_check(
+    send_messages: bool = True,
+    limit: int = AVAILABILITY_CHECK_LIMIT,
+    write_changes: bool = True,
+) -> dict:
+    store = GoogleSheetsAvailabilityStore()
+    apps = store.load_apps()
+    now = utc_now_iso()
+    result = {
+        "ok": True,
+        "checked_at": now,
+        "apps_total": len(apps),
+        "apps_checked": 0,
+        "notifications": [],
+        "skipped": [],
+        "errors": [],
+    }
+
+    for app in apps[:limit]:
+        app_id = app.get("app_id") or ""
+        if not app_id:
+            result["skipped"].append({"row": app.get("row_index"), "reason": "missing_app_id"})
+            continue
+
+        try:
+            snapshot = summarize_google_availability(app_id)
+        except Exception as e:
+            error = f"AVAILABILITY_CHECK_ERROR:{e}"
+            if write_changes:
+                store.update_app(app["row_index"], {"last_checked_at": now, "last_error": error})
+            result["errors"].append({"app_id": app_id, "error": error})
+            continue
+
+        result["apps_checked"] += 1
+        transient_count = len(snapshot["transient_codes"])
+        if transient_count > max(8, int((snapshot["total"] or 1) * 0.35)):
+            error = f"TOO_MANY_TRANSIENT_ERRORS:{transient_count}"
+            if write_changes:
+                store.update_app(app["row_index"], {"last_checked_at": now, "last_error": error})
+            result["errors"].append({"app_id": app_id, "error": error})
+            continue
+
+        prev_open = split_country_codes(app.get("last_open_countries"))
+        prev_status = str(app.get("status") or "").strip().lower()
+        prev_live = prev_status == "live" or bool(prev_open)
+        current_open = set(snapshot["open_codes"])
+        current_closed = set(snapshot["closed_codes"])
+        current_live = bool(current_open)
+
+        event = None
+        changed_codes: set[str] = set()
+        if current_live and not prev_live:
+            event = "new_live"
+            changed_codes = current_closed
+        elif current_live and prev_live:
+            changed_codes = prev_open & current_closed
+            if changed_codes:
+                event = "new_closed"
+
+        update_payload = {
+            "enabled": app.get("enabled") if str(app.get("enabled") or "").strip() else "TRUE",
+            "status": "live" if current_live else "watch",
+            "app_url": app.get("app_url") or build_google_play_url(app_id, "US", "en"),
+            "app_id": app_id,
+            "app_name": app.get("app_name") or app_id,
+            "owner": app.get("owner") or "",
+            "notes": app.get("notes") or "",
+            "last_checked_at": now,
+            "last_live_at": app.get("last_live_at") or (now if current_live else ""),
+            "last_open_countries": join_country_codes(current_open),
+            "last_closed_countries": join_country_codes(current_closed),
+            "last_closed_count": len(current_closed),
+            "last_error": "",
+        }
+        if write_changes:
+            store.update_app(app["row_index"], update_payload)
+
+        if event:
+            message = build_bot_message(event, {**app, **update_payload}, snapshot, changed_codes)
+            if send_messages:
+                send_telegram_message(message)
+            if write_changes:
+                store.append_log(event, {**app, **update_payload}, changed_codes, f"open={len(current_open)} closed={len(current_closed)}")
+            result["notifications"].append({
+                "event": event,
+                "app_id": app_id,
+                "countries_count": len(changed_codes),
+                "countries": sorted(changed_codes),
+            })
+
+    return result
+
+
+def task_request_authorized() -> bool:
+    if not AVAILABILITY_TASK_SECRET:
+        return is_local_request()
+    provided = (
+        request.headers.get("X-Task-Secret")
+        or request.args.get("secret")
+        or ((request.json or {}).get("secret") if request.is_json else "")
+        or ""
+    ).strip()
+    return provided == AVAILABILITY_TASK_SECRET
+
+
 # ---------------- NEW: GEO LINK HELPERS ----------------
 
 def resolve_country_for_geo_link(raw_country: str) -> tuple[str, str] | None:
@@ -3927,13 +4418,64 @@ def availability_check():
     })
 
 
+# ---------------- TASK API: TELEGRAM AVAILABILITY BOT ----------------
+
+@app.route("/tasks/check-availability", methods=["GET", "POST"])
+def task_check_availability():
+    if not task_request_authorized():
+        return jsonify({"ok": False, "error": "Forbidden"}), 403
+
+    payload = request.json if request.is_json else {}
+    dry_run_raw = (
+        request.args.get("dry_run")
+        or request.args.get("dry")
+        or (payload or {}).get("dry_run")
+        or ""
+    )
+    dry_run = boolish(dry_run_raw, default=False) if str(dry_run_raw).strip() else False
+    try:
+        limit = int(request.args.get("limit") or (payload or {}).get("limit") or AVAILABILITY_CHECK_LIMIT)
+    except Exception:
+        limit = AVAILABILITY_CHECK_LIMIT
+    limit = max(1, min(1000, limit))
+
+    try:
+        result = run_availability_bot_check(send_messages=not dry_run, limit=limit, write_changes=not dry_run)
+    except BotConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"AVAILABILITY_TASK_ERROR:{e}"}), 500
+
+    result["dry_run"] = dry_run
+    return jsonify(result)
+
+
 # ---------------- AUTO OPEN BROWSER ----------------
 
 def open_browser(port: int):
     webbrowser.open(f"http://{HOST}:{port}/")
 
 
+def run_cli_command() -> int | None:
+    if len(sys.argv) < 2 or sys.argv[1] not in {"bot-check", "availability-bot-check"}:
+        return None
+
+    dry_run = "--dry-run" in sys.argv or "--dry" in sys.argv
+    try:
+        result = run_availability_bot_check(send_messages=not dry_run, write_changes=not dry_run)
+        result["dry_run"] = dry_run
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False, indent=2), file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
+    cli_exit_code = run_cli_command()
+    if cli_exit_code is not None:
+        sys.exit(cli_exit_code)
+
     runtime_port = ensure_single_instance_or_get_port(PORT)
     _runtime_port = runtime_port
 

@@ -3,3 +3,4 @@ gunicorn>=21,<27
 requests>=2.31,<3
 beautifulsoup4>=4.12,<5
 lxml>=5,<7
+google-auth>=2.30,<3
