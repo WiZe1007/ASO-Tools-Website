@@ -96,7 +96,6 @@ AVAILABILITY_DB_SPREADSHEET_ID=<spreadsheet id from the Google Sheet URL>
 GOOGLE_SERVICE_ACCOUNT_JSON=<full service account JSON>
 TELEGRAM_BOT_TOKEN=<token from @BotFather>
 TELEGRAM_CHAT_ID=<company chat/channel id>
-AVAILABILITY_TASK_SECRET=<random secret for the cron endpoint>
 ```
 
 Optional:
@@ -105,6 +104,10 @@ Optional:
 AVAILABILITY_DB_APPS_SHEET=Apps
 AVAILABILITY_DB_LOG_SHEET=Checks
 AVAILABILITY_CHECK_LIMIT=200
+BOT_TIMEZONE=Europe/Kiev
+BOT_CHECK_HOURS=9,15,21
+TELEGRAM_ALLOWED_CHAT_IDS=<optional comma-separated chat ids for commands>
+AVAILABILITY_TASK_SECRET=<only needed if you also use the HTTP task endpoint>
 ```
 
 ### How Notifications Work
@@ -118,15 +121,57 @@ It sends Telegram messages when:
 
 For already live apps, set `status=live` before the first bot run. Then the first run creates a baseline without sending a "new live" notification.
 
-### Render Cron Job
+### Separate Telegram Bot
 
-Create a Render Cron Job connected to the same repository and environment variables.
+The repository includes a separate Telegram bot process in `telegram_bot.py`.
+
+Create the bot in Telegram:
+
+1. Open `@BotFather`.
+2. Send `/newbot`.
+3. Copy the bot token to `TELEGRAM_BOT_TOKEN`.
+4. Add the bot to the company chat/group.
+5. Send `/chatid` to the bot in that chat.
+6. Put that chat id into `TELEGRAM_CHAT_ID`.
+
+Render setup:
+
+1. Create a new Render service from the same GitHub repository.
+2. Choose **Background Worker**.
+3. Use the same environment variables as the web service.
 
 Build command:
 
 ```bash
 pip install -r requirements.txt
 ```
+
+Start command:
+
+```bash
+python telegram_bot.py
+```
+
+The bot keeps running separately from the website. It supports:
+
+```text
+/start  - help
+/chatid - show current chat id
+/status - show database status
+/check  - run a live check now
+/dryrun - check without writing to Google Sheets and without Telegram alerts
+```
+
+Automatic checks are controlled by:
+
+```text
+BOT_TIMEZONE=Europe/Kiev
+BOT_CHECK_HOURS=9,15,21
+```
+
+### Cron Alternative
+
+If you do not want a permanently running bot worker, you can run only the scheduled check as a Render Cron Job.
 
 Command:
 
