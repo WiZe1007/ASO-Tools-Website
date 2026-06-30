@@ -2880,10 +2880,12 @@ body[data-page] .navbtn .dot{
 body[data-page] .navbtn[data-nav="rating"] .dot::before{ content:"☆"; font-size:18px; }
 body[data-page] .navbtn[data-nav="availability"] .dot::before{ content:"◎"; font-size:18px; }
 body[data-page] .navbtn[data-nav="geolink"] .dot::before{ content:"⌁"; font-size:18px; }
+body[data-page] .navbtn[data-nav="database"] .dot::before{ content:"▤"; font-size:18px; }
 
 body[data-page="rating"] .navbtn[data-nav="rating"],
 body[data-page="availability"] .navbtn[data-nav="availability"],
-body[data-page="geolink"] .navbtn[data-nav="geolink"]{
+body[data-page="geolink"] .navbtn[data-nav="geolink"],
+body[data-page="live-db"] .navbtn[data-nav="database"]{
   background:transparent !important;
   box-shadow:none !important;
   border:0 !important;
@@ -2892,7 +2894,8 @@ body[data-page="geolink"] .navbtn[data-nav="geolink"]{
 
 body[data-page="rating"] .navbtn[data-nav="rating"]::after,
 body[data-page="availability"] .navbtn[data-nav="availability"]::after,
-body[data-page="geolink"] .navbtn[data-nav="geolink"]::after{
+body[data-page="geolink"] .navbtn[data-nav="geolink"]::after,
+body[data-page="live-db"] .navbtn[data-nav="database"]::after{
   background:#f5b320 !important;
 }
 
@@ -3324,13 +3327,15 @@ html[data-theme="light"] body[data-page] .navbtn:hover{
 
 html[data-theme="light"] body[data-page="rating"] .navbtn[data-nav="rating"],
 html[data-theme="light"] body[data-page="availability"] .navbtn[data-nav="availability"],
-html[data-theme="light"] body[data-page="geolink"] .navbtn[data-nav="geolink"]{
+html[data-theme="light"] body[data-page="geolink"] .navbtn[data-nav="geolink"],
+html[data-theme="light"] body[data-page="live-db"] .navbtn[data-nav="database"]{
   color:#d88a00 !important;
 }
 
 html[data-theme="light"] body[data-page="rating"] .navbtn[data-nav="rating"]::after,
 html[data-theme="light"] body[data-page="availability"] .navbtn[data-nav="availability"]::after,
-html[data-theme="light"] body[data-page="geolink"] .navbtn[data-nav="geolink"]::after{
+html[data-theme="light"] body[data-page="geolink"] .navbtn[data-nav="geolink"]::after,
+html[data-theme="light"] body[data-page="live-db"] .navbtn[data-nav="database"]::after{
   background:#eba414 !important;
 }
 
@@ -4152,17 +4157,23 @@ body[data-page] .navbtn[data-nav="overview"]{
   --nav-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='4' y='4' width='6.5' height='6.5' rx='1.2' fill='none' stroke='black' stroke-width='2.1'/%3E%3Crect x='13.5' y='4' width='6.5' height='6.5' rx='1.2' fill='none' stroke='black' stroke-width='2.1'/%3E%3Crect x='4' y='13.5' width='6.5' height='6.5' rx='1.2' fill='none' stroke='black' stroke-width='2.1'/%3E%3Crect x='13.5' y='13.5' width='6.5' height='6.5' rx='1.2' fill='none' stroke='black' stroke-width='2.1'/%3E%3C/svg%3E");
 }
 
+body[data-page] .navbtn[data-nav="database"]{
+  --nav-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='4' y='5' width='16' height='4.2' rx='1.4' fill='none' stroke='black' stroke-width='2.1'/%3E%3Crect x='4' y='10.9' width='16' height='4.2' rx='1.4' fill='none' stroke='black' stroke-width='2.1'/%3E%3Crect x='4' y='16.8' width='16' height='4.2' rx='1.4' fill='none' stroke='black' stroke-width='2.1'/%3E%3Cpath d='M8 7.1h.1M8 13h.1M8 18.9h.1' fill='none' stroke='black' stroke-width='2.8' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+
 body[data-page="rating"] .topnav .navbtn[data-nav="rating"],
 body[data-page="availability"] .topnav .navbtn[data-nav="availability"],
 body[data-page="geolink"] .topnav .navbtn[data-nav="geolink"],
-body[data-page="overview"] .topnav .navbtn[data-nav="overview"]{
+body[data-page="overview"] .topnav .navbtn[data-nav="overview"],
+body[data-page="live-db"] .topnav .navbtn[data-nav="database"]{
   color:#ffc22d !important;
 }
 
 html[data-theme="light"] body[data-page="rating"] .topnav .navbtn[data-nav="rating"],
 html[data-theme="light"] body[data-page="availability"] .topnav .navbtn[data-nav="availability"],
 html[data-theme="light"] body[data-page="geolink"] .topnav .navbtn[data-nav="geolink"],
-html[data-theme="light"] body[data-page="overview"] .topnav .navbtn[data-nav="overview"]{
+html[data-theme="light"] body[data-page="overview"] .topnav .navbtn[data-nav="overview"],
+html[data-theme="light"] body[data-page="live-db"] .topnav .navbtn[data-nav="database"]{
   color:#d98a00 !important;
 }
 

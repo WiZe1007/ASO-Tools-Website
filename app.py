@@ -3869,6 +3869,91 @@ class GoogleSheetsAvailabilityStore:
         ]])
 
 
+def safe_int(value, default: int = 0) -> int:
+    try:
+        if value is None or value == "":
+            return default
+        return int(float(str(value).replace(" ", "").replace(",", ".")))
+    except Exception:
+        return default
+
+
+def country_chip_payload(iso2: str) -> dict:
+    code = str(iso2 or "").strip().upper()
+    name, _hl = get_country_meta_by_iso2(code)
+    return {
+        "iso2": code,
+        "name": name,
+        "flag": country_flag(code),
+        "label": country_label(code),
+    }
+
+
+def availability_app_payload(app: dict) -> dict:
+    app_id = str(app.get("app_id") or "").strip()
+    app_url = str(app.get("app_url") or "").strip()
+    status = str(app.get("status") or "watch").strip().lower() or "watch"
+    open_codes = split_country_codes(app.get("last_open_countries"))
+    closed_codes = split_country_codes(app.get("last_closed_countries"))
+    saved_closed_count = safe_int(app.get("last_closed_count"), len(closed_codes))
+    closed_count = max(len(closed_codes), saved_closed_count)
+    is_live = status == "live" or bool(open_codes)
+
+    return {
+        "enabled": boolish(app.get("enabled"), default=True),
+        "status": status,
+        "is_live": is_live,
+        "app_url": app_url or (build_google_play_url(app_id, "US", "en") if app_id else ""),
+        "app_id": app_id,
+        "app_name": str(app.get("app_name") or app_id or "Untitled app").strip(),
+        "owner": str(app.get("owner") or "").strip(),
+        "notes": str(app.get("notes") or "").strip(),
+        "last_checked_at": str(app.get("last_checked_at") or "").strip(),
+        "last_live_at": str(app.get("last_live_at") or "").strip(),
+        "open_count": len(open_codes),
+        "closed_count": closed_count,
+        "closed_codes": sorted(closed_codes),
+        "closed_countries": [country_chip_payload(code) for code in sorted(closed_codes)],
+        "open_codes": sorted(open_codes),
+        "last_error": str(app.get("last_error") or "").strip(),
+    }
+
+
+def build_live_apps_database_payload() -> dict:
+    store = GoogleSheetsAvailabilityStore()
+    apps = [availability_app_payload(app) for app in store.load_apps()]
+    apps.sort(key=lambda item: (
+        0 if item["is_live"] else 1,
+        -item["closed_count"],
+        item["app_name"].lower(),
+        item["app_id"].lower(),
+    ))
+
+    live_apps = [item for item in apps if item["is_live"]]
+    watch_apps = [item for item in apps if not item["is_live"]]
+    apps_with_closed = [item for item in apps if item["closed_count"] > 0]
+    unique_closed_codes = sorted({
+        code
+        for item in apps
+        for code in item.get("closed_codes", [])
+    })
+
+    return {
+        "ok": True,
+        "source": "Google Sheets",
+        "checked_at": utc_now_iso(),
+        "apps": apps,
+        "stats": {
+            "total": len(apps),
+            "live": len(live_apps),
+            "watch": len(watch_apps),
+            "with_closed": len(apps_with_closed),
+            "unique_closed_geo": len(unique_closed_codes),
+        },
+        "unique_closed_countries": [country_chip_payload(code) for code in unique_closed_codes],
+    }
+
+
 def availability_error_is_transient(error: str | None) -> bool:
     err = str(error or "")
     return (
@@ -4187,6 +4272,21 @@ def app_overview_page():
         for name, (iso2, _hl) in sorted(COUNTRIES_FULL.items(), key=lambda item: item[0])
     ]
     return render_template("app_overview.html", countries=countries)
+
+
+@app.get("/live-apps")
+def live_apps_page():
+    return render_template("live_apps.html")
+
+
+@app.get("/api/live-apps")
+def live_apps_api():
+    try:
+        return jsonify(build_live_apps_database_payload())
+    except BotConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"LIVE_APPS_DATABASE_ERROR:{e}"}), 500
 
 
 # ---------------- API: APP OVERVIEW ----------------

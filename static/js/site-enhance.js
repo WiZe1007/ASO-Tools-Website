@@ -289,7 +289,7 @@
     const drawer = byId("drawer");
     const hamburger = byId("hamb");
     if (!drawer || !hamburger) return;
-    const isOverviewPage = document.body?.dataset?.page === "overview";
+    const drawerManagedPage = ["overview", "live-db"].includes(document.body?.dataset?.page || "");
 
     const sync = () => {
       const isOpen = window.getComputedStyle(drawer).display !== "none";
@@ -311,7 +311,7 @@
       sync();
     };
 
-    if (isOverviewPage && hamburger.dataset.drawerClickReady !== "1") {
+    if (drawerManagedPage && hamburger.dataset.drawerClickReady !== "1") {
       hamburger.dataset.drawerClickReady = "1";
       hamburger.addEventListener("click", (event) => {
         event.preventDefault();

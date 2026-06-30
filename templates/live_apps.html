@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Live Apps Database</title>
+  <link rel="icon" href="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" />
+
+  <style>
+    :root{
+      --glass:rgba(255,255,255,.12);
+      --border:rgba(255,255,255,.17);
+      --text:rgba(248,251,255,.94);
+      --muted:rgba(225,235,247,.70);
+      --muted2:rgba(225,235,247,.54);
+      --panel:rgba(7,18,31,.72);
+      --panel2:rgba(12,29,45,.80);
+      --accent:#ffc247;
+      --accent2:#ff9551;
+      --cyan:#23c7ff;
+      --ok:#6ee7b7;
+      --danger:#fb7185;
+      --navH:74px;
+      --shadow:0 22px 70px rgba(0,0,0,.34);
+    }
+
+    *{box-sizing:border-box}
+    html,body{min-height:100%}
+    body{
+      margin:0;
+      font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      color:var(--text);
+      background:#07101c;
+      overflow-x:hidden;
+    }
+
+    .bg{position:fixed;inset:0;z-index:-2;overflow:hidden;background:#07101c}
+    .bg::before{
+      content:"";
+      position:absolute;
+      inset:-14px;
+      background-image:url("{{ url_for('static', filename='img/dashboard-bg.png') }}");
+      background-size:cover;
+      background-position:center;
+      filter:saturate(1.04) contrast(1.04) brightness(.72);
+      transform:scale(1.01);
+    }
+    .bg::after{
+      content:"";
+      position:absolute;
+      inset:0;
+      background:
+        linear-gradient(180deg, rgba(4,9,16,.38), rgba(4,9,16,.26) 38%, rgba(4,9,16,.56)),
+        radial-gradient(80% 70% at 50% 8%, rgba(35,118,156,.12), rgba(3,8,15,.52));
+    }
+
+    .topnav{position:fixed;top:14px;left:0;right:0;z-index:1000;padding:0 14px;pointer-events:none}
+    .topnav-inner{
+      pointer-events:auto;
+      max-width:1280px;
+      height:var(--navH);
+      margin:0 auto;
+      display:flex;
+      align-items:center;
+      gap:14px;
+      padding:10px 14px;
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:20px;
+      background:linear-gradient(180deg, rgba(16,28,43,.76), rgba(9,18,31,.68));
+      box-shadow:var(--shadow);
+      backdrop-filter:blur(8px) saturate(1.06);
+      -webkit-backdrop-filter:blur(8px) saturate(1.06);
+    }
+    .brand{display:flex;align-items:center;gap:12px;min-width:230px}
+    .brand .logo{width:44px;height:44px;object-fit:contain;border-radius:12px;background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.16)}
+    .brand .name{margin:0;font-size:18px;line-height:1;font-weight:900}
+    .brand .tag{margin:5px 0 0;color:var(--muted2);font-size:12px;white-space:nowrap}
+    .navlinks{flex:1;display:flex;align-items:center;justify-content:center;gap:6px}
+    .navbtn{
+      display:inline-flex;
+      align-items:center;
+      gap:9px;
+      min-height:42px;
+      padding:10px 12px;
+      border-radius:13px;
+      color:rgba(245,248,252,.84);
+      text-decoration:none;
+      border:1px solid transparent;
+      background:transparent;
+      font-size:13px;
+      font-weight:820;
+      white-space:nowrap;
+      position:relative;
+    }
+    .navbtn:hover{background:rgba(255,255,255,.08)}
+    .navbtn .dot{width:18px;height:18px;display:grid;place-items:center;color:currentColor;font-size:18px}
+    .navbtn[data-nav="rating"] .dot::before{content:"☆"}
+    .navbtn[data-nav="availability"] .dot::before{content:"◎"}
+    .navbtn[data-nav="geolink"] .dot::before{content:"⌁"}
+    .navbtn[data-nav="overview"] .dot::before{content:"◫"}
+    .navbtn[data-nav="database"] .dot::before{content:"▤"}
+    body[data-page="live-db"] .navbtn[data-nav="database"]{color:#ffc22d}
+    body[data-page="live-db"] .navbtn[data-nav="database"]::after{
+      content:"";
+      position:absolute;
+      left:0;
+      right:0;
+      bottom:-7px;
+      height:2px;
+      background:#f5b320;
+    }
+    .navright{min-width:220px;display:flex;align-items:center;justify-content:flex-end;gap:12px}
+    .chip{display:inline-flex;align-items:center;gap:8px;color:rgba(245,248,252,.78);font-size:12px;white-space:nowrap}
+    .pulse{width:9px;height:9px;border-radius:99px;background:var(--ok);box-shadow:0 0 0 6px rgba(110,231,183,.10)}
+    .nav-utility,.hamb{width:38px;height:38px;border-radius:99px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.07);color:rgba(255,255,255,.82);font-weight:850;cursor:pointer}
+    .hamb{display:none;position:relative}
+    .hamb span{position:absolute;left:10px;right:10px;height:2px;background:currentColor;border-radius:8px}
+    .hamb span:nth-child(1){top:12px}.hamb span:nth-child(2){top:18px}.hamb span:nth-child(3){top:24px}
+    .drawer{display:none}
+
+    .wrap{width:min(1280px,calc(100% - 36px));margin:0 auto;padding:calc(var(--navH) + 48px) 0 60px}
+    .hero{display:grid;gap:14px;margin-bottom:22px}
+    .title{margin:0;font-size:clamp(38px,5vw,68px);line-height:.98;font-weight:950}
+    .subtitle{
+      max-width:900px;
+      margin:0;
+      color:var(--muted);
+      font-size:18px;
+      line-height:1.52;
+      padding:14px 16px;
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:18px;
+      background:rgba(8,18,31,.42);
+      backdrop-filter:blur(6px);
+    }
+
+    .panel{
+      border:1px solid var(--border);
+      border-radius:22px;
+      background:linear-gradient(180deg, rgba(11,25,40,.76), rgba(7,17,29,.70));
+      box-shadow:var(--shadow);
+      backdrop-filter:blur(9px) saturate(1.05);
+      -webkit-backdrop-filter:blur(9px) saturate(1.05);
+    }
+    .toolbar{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:end;padding:24px}
+    .field{display:grid;gap:9px}
+    .field span,.filter-title{color:var(--muted);font-weight:850}
+    .input{
+      width:100%;
+      min-height:58px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.16);
+      background:rgba(3,10,20,.58);
+      color:var(--text);
+      padding:0 16px;
+      font:800 17px ui-sans-serif,system-ui;
+      outline:none;
+    }
+    .input:focus{border-color:rgba(35,199,255,.55);box-shadow:0 0 0 5px rgba(35,199,255,.12)}
+    .filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .filter-btn,.refresh-btn,.link-btn,.copy-btn{
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.07);
+      color:var(--text);
+      border-radius:14px;
+      padding:12px 14px;
+      font-weight:900;
+      cursor:pointer;
+      text-decoration:none;
+      white-space:nowrap;
+    }
+    .filter-btn.is-active,.refresh-btn{
+      color:#1b170a;
+      background:linear-gradient(90deg,#ffd36b,#ff9854);
+      border-color:rgba(255,194,71,.45);
+    }
+
+    .status-line{padding:0 24px 22px;color:var(--muted);font-weight:800}
+    .status-line.error{color:#fecdd3}
+    .stats{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:18px 0}
+    .stat{
+      padding:18px;
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.13);
+      background:rgba(8,20,34,.62);
+    }
+    .stat span{display:block;color:var(--muted2);font-weight:850;font-size:13px}
+    .stat b{display:block;margin-top:6px;font-size:28px;line-height:1}
+
+    .results{display:grid;gap:14px}
+    .result-head{display:flex;justify-content:space-between;gap:12px;align-items:center;color:var(--muted);font-weight:850}
+    .app-card{padding:20px;display:grid;gap:16px}
+    .app-top{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:start}
+    .app-title{margin:0;font-size:25px;line-height:1.14;font-weight:950}
+    .bundle{margin:7px 0 0;color:#dce8f7;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-weight:850;overflow-wrap:anywhere}
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-height:34px;
+      border-radius:999px;
+      padding:8px 12px;
+      font-weight:950;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.08);
+    }
+    .pill.live{color:#75f5bf;background:rgba(16,185,129,.12);border-color:rgba(110,231,183,.25)}
+    .pill.watch{color:#fcd34d;background:rgba(245,158,11,.12);border-color:rgba(252,211,77,.24)}
+    .pill.error{color:#fecdd3;background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.24)}
+    .meta-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .meta{
+      min-height:78px;
+      padding:13px;
+      border:1px solid rgba(255,255,255,.10);
+      border-radius:16px;
+      background:rgba(255,255,255,.045);
+    }
+    .meta span{display:block;color:var(--muted2);font-weight:850;font-size:12px}
+    .meta b{display:block;margin-top:5px;font-size:18px;overflow-wrap:anywhere}
+    .closed-block{display:grid;gap:10px}
+    .closed-title{display:flex;justify-content:space-between;gap:10px;color:var(--muted);font-weight:900}
+    .geo-list{display:flex;gap:8px;flex-wrap:wrap}
+    .geo-chip{
+      display:inline-flex;
+      align-items:center;
+      gap:7px;
+      min-height:34px;
+      padding:7px 10px;
+      border-radius:999px;
+      background:rgba(251,113,133,.12);
+      border:1px solid rgba(251,113,133,.22);
+      color:#ffe3e8;
+      font-weight:850;
+    }
+    .geo-empty{color:#86efac;font-weight:900}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}
+    .copy-btn{color:#dff7ff}
+    .link-btn{color:#06101d;background:linear-gradient(90deg,#67e8f9,#23c7ff);border-color:rgba(103,232,249,.38)}
+    .empty-state{padding:34px;text-align:center;color:var(--muted);font-weight:850}
+
+    html[data-theme="light"] body{color:#152235;background:#eaf2fb}
+    html[data-theme="light"] .bg::before{filter:saturate(1.02) contrast(1.02) brightness(1)}
+    html[data-theme="light"] .bg::after{background:linear-gradient(180deg,rgba(239,247,255,.48),rgba(239,247,255,.32) 40%,rgba(226,238,250,.62))}
+    html[data-theme="light"] .subtitle,
+    html[data-theme="light"] .panel{background:rgba(255,255,255,.78);border-color:rgba(36,61,88,.16);box-shadow:0 22px 60px rgba(36,61,88,.20)}
+    html[data-theme="light"] .input,
+    html[data-theme="light"] .stat,
+    html[data-theme="light"] .meta{background:rgba(255,255,255,.76);border-color:rgba(36,61,88,.14);color:#152235}
+    html[data-theme="light"] .subtitle,
+    html[data-theme="light"] .field span,
+    html[data-theme="light"] .filter-title,
+    html[data-theme="light"] .status-line,
+    html[data-theme="light"] .result-head,
+    html[data-theme="light"] .closed-title{color:#52657d}
+    html[data-theme="light"] .bundle{color:#203049}
+    html[data-theme="light"] .geo-chip{color:#8c1930;background:rgba(251,113,133,.12)}
+    html[data-theme="light"] .geo-empty{color:#047857}
+
+    @media (max-width: 980px){
+      .toolbar{grid-template-columns:1fr}
+      .filters{justify-content:flex-start}
+      .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .meta-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .brand{min-width:auto}
+      .brand .tag{display:none}
+      .navlinks{display:none}
+      .hamb{display:block}
+      .navright .chip{display:none}
+      .drawer{
+        position:fixed;
+        top:calc(14px + var(--navH) + 10px);
+        right:14px;
+        z-index:999;
+        width:min(330px,calc(100vw - 28px));
+        padding:12px;
+        border-radius:18px;
+        border:1px solid rgba(255,255,255,.14);
+        background:rgba(8,18,31,.92);
+        box-shadow:0 20px 60px rgba(0,0,0,.36);
+        backdrop-filter:blur(12px);
+      }
+      .drawer .grid{display:grid;gap:8px}
+      .drawer .navbtn{justify-content:flex-start}
+    }
+    @media (max-width: 620px){
+      :root{--navH:64px}
+      .wrap{width:calc(100% - 24px);padding-top:calc(var(--navH) + 36px)}
+      .title{font-size:42px}
+      .subtitle{font-size:16px}
+      .toolbar{padding:18px}
+      .stats{grid-template-columns:1fr}
+      .app-top{grid-template-columns:1fr}
+      .meta-grid{grid-template-columns:1fr}
+      .brand .name{font-size:16px}
+      .brand .logo{width:42px;height:42px}
+    }
+  </style>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260701a') }}" />
+  <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260701a') }}" defer></script>
+</head>
+
+<body data-page="live-db">
+  <div class="bg"></div>
+
+  <div class="topnav">
+    <div class="topnav-inner">
+      <div class="brand">
+        <img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" alt="WWA" class="logo" />
+        <div class="txt">
+          <p class="name">WWA ASO Tools</p>
+          <p class="tag">Live app database</p>
+        </div>
+      </div>
+
+      <div class="navlinks" aria-label="Site navigation">
+        <a class="navbtn" data-nav="rating" href="/"><span class="dot"></span> Rating</a>
+        <a class="navbtn" data-nav="availability" href="/availability"><span class="dot"></span> Availability</a>
+        <a class="navbtn" data-nav="geolink" href="/geo-link"><span class="dot"></span> Geo Link</a>
+        <a class="navbtn" data-nav="overview" href="/app-overview"><span class="dot"></span> Overview</a>
+        <a class="navbtn" data-nav="database" href="/live-apps"><span class="dot"></span> Live DB</a>
+      </div>
+
+      <div class="navright">
+        <div class="chip" title="Service status"><span class="pulse"></span> Live tools</div>
+        <button class="nav-utility" type="button" aria-label="Help">?</button>
+        <button class="nav-utility theme-toggle" type="button" aria-label="Switch to light theme" title="Theme">☼</button>
+        <button class="hamb" id="hamb" aria-label="Open menu" type="button">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="drawer" id="drawer" aria-label="Mobile navigation">
+    <div class="grid">
+      <a class="navbtn" data-nav="rating" href="/"><span class="dot"></span> Rating</a>
+      <a class="navbtn" data-nav="availability" href="/availability"><span class="dot"></span> Availability</a>
+      <a class="navbtn" data-nav="geolink" href="/geo-link"><span class="dot"></span> Geo Link</a>
+      <a class="navbtn" data-nav="overview" href="/app-overview"><span class="dot"></span> Overview</a>
+      <a class="navbtn" data-nav="database" href="/live-apps"><span class="dot"></span> Live DB</a>
+    </div>
+  </div>
+
+  <main class="wrap">
+    <header class="hero">
+      <h1 class="title">Live Apps Database</h1>
+      <p class="subtitle">
+        Тут відображаються додатки з Google Sheet бази, які перевіряє Telegram bot.
+        Можна швидко знайти апку по bundle/package name і подивитися, які GEO зараз закриті.
+      </p>
+    </header>
+
+    <section class="panel toolbar" aria-label="Live apps filters">
+      <label class="field">
+        <span>Пошук по bundle, назві або URL</span>
+        <input id="searchInput" class="input" type="search" placeholder="com.dragonplus.cookingfr" autocomplete="off" />
+      </label>
+      <div>
+        <div class="filter-title">Фільтр</div>
+        <div class="filters" role="group" aria-label="Filter apps">
+          <button class="filter-btn is-active" type="button" data-filter="live">Live</button>
+          <button class="filter-btn" type="button" data-filter="closed">Є закриті GEO</button>
+          <button class="filter-btn" type="button" data-filter="watch">Watch</button>
+          <button class="filter-btn" type="button" data-filter="all">Усі</button>
+          <button id="refreshBtn" class="refresh-btn" type="button">Оновити</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="statusLine" class="status-line">Підвантажую базу live-додатків...</div>
+
+    <section id="stats" class="stats" aria-label="Database stats"></section>
+
+    <section class="results" aria-live="polite">
+      <div class="result-head">
+        <span id="resultCount">0 додатків</span>
+        <span id="lastLoaded">Ще не завантажено</span>
+      </div>
+      <div id="appsList" class="results"></div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      const byId = (id) => document.getElementById(id);
+      const state = { apps: [], filter: "live", query: "", loadedAt: "" };
+
+      const searchInput = byId("searchInput");
+      const statusLine = byId("statusLine");
+      const statsEl = byId("stats");
+      const appsList = byId("appsList");
+      const resultCount = byId("resultCount");
+      const lastLoaded = byId("lastLoaded");
+      const refreshBtn = byId("refreshBtn");
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function formatDate(value) {
+        if (!value) return "Ще не було";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return new Intl.DateTimeFormat("uk-UA", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }).format(date);
+      }
+
+      function pluralApps(count) {
+        const last = Math.abs(count) % 10;
+        const lastTwo = Math.abs(count) % 100;
+        if (last === 1 && lastTwo !== 11) return `${count} додаток`;
+        if ([2, 3, 4].includes(last) && ![12, 13, 14].includes(lastTwo)) return `${count} додатки`;
+        return `${count} додатків`;
+      }
+
+      function renderStats(stats = {}) {
+        const items = [
+          ["Усього в базі", stats.total ?? 0],
+          ["Live", stats.live ?? 0],
+          ["Watch", stats.watch ?? 0],
+          ["З закритими GEO", stats.with_closed ?? 0],
+          ["Унікальні закриті GEO", stats.unique_closed_geo ?? 0],
+        ];
+        statsEl.innerHTML = items.map(([label, value]) => `
+          <div class="stat">
+            <span>${escapeHtml(label)}</span>
+            <b>${escapeHtml(value)}</b>
+          </div>
+        `).join("");
+      }
+
+      function appMatchesSearch(app) {
+        const query = state.query.trim().toLowerCase();
+        if (!query) return true;
+        return [
+          app.app_id,
+          app.app_name,
+          app.app_url,
+          app.owner,
+          app.notes,
+        ].some((value) => String(value || "").toLowerCase().includes(query));
+      }
+
+      function appMatchesFilter(app) {
+        if (state.filter === "all") return true;
+        if (state.filter === "live") return Boolean(app.is_live);
+        if (state.filter === "watch") return !app.is_live;
+        if (state.filter === "closed") return Number(app.closed_count || 0) > 0;
+        return true;
+      }
+
+      function statusPill(app) {
+        if (app.last_error) return `<span class="pill error">Error</span>`;
+        if (app.is_live) return `<span class="pill live">Live</span>`;
+        return `<span class="pill watch">Watch</span>`;
+      }
+
+      function renderClosedCountries(app) {
+        const countries = app.closed_countries || [];
+        if (!countries.length) {
+          if (Number(app.closed_count || 0) > 0) {
+            return `<p class="geo-empty">У таблиці є ${escapeHtml(app.closed_count)} закритих GEO, але коди ще не збережені.</p>`;
+          }
+          return `<p class="geo-empty">Закритих GEO не зафіксовано.</p>`;
+        }
+        return `
+          <div class="geo-list">
+            ${countries.map((country) => `
+              <span class="geo-chip" title="${escapeHtml(country.name)}">
+                <span>${escapeHtml(country.flag)}</span>
+                <span>${escapeHtml(country.name)}</span>
+                <b>${escapeHtml(country.iso2)}</b>
+              </span>
+            `).join("")}
+          </div>
+        `;
+      }
+
+      function renderAppCard(app) {
+        const title = app.app_name || app.app_id || "Untitled app";
+        const appUrl = app.app_url || (app.app_id ? `https://play.google.com/store/apps/details?id=${encodeURIComponent(app.app_id)}` : "");
+        return `
+          <article class="panel app-card" data-app-id="${escapeHtml(app.app_id)}">
+            <div class="app-top">
+              <div>
+                <h2 class="app-title">${escapeHtml(title)}</h2>
+                <p class="bundle">${escapeHtml(app.app_id || "No bundle")}</p>
+              </div>
+              ${statusPill(app)}
+            </div>
+
+            <div class="meta-grid">
+              <div class="meta"><span>Open GEO</span><b>${escapeHtml(app.open_count || 0)}</b></div>
+              <div class="meta"><span>Closed GEO</span><b>${escapeHtml(app.closed_count || 0)}</b></div>
+              <div class="meta"><span>Last check</span><b>${escapeHtml(formatDate(app.last_checked_at))}</b></div>
+              <div class="meta"><span>Live since</span><b>${escapeHtml(formatDate(app.last_live_at))}</b></div>
+            </div>
+
+            <div class="closed-block">
+              <div class="closed-title">
+                <span>Закриті GEO</span>
+                <span>${escapeHtml(app.closed_count || 0)}</span>
+              </div>
+              ${renderClosedCountries(app)}
+            </div>
+
+            ${app.last_error ? `<div class="status-line error">Last error: ${escapeHtml(app.last_error)}</div>` : ""}
+
+            <div class="actions">
+              ${appUrl ? `<a class="link-btn" href="${escapeHtml(appUrl)}" target="_blank" rel="noopener noreferrer">Open Google Play</a>` : ""}
+              ${app.app_id ? `<button class="copy-btn" type="button" data-copy="${escapeHtml(app.app_id)}">Copy bundle</button>` : ""}
+            </div>
+          </article>
+        `;
+      }
+
+      function renderApps() {
+        const apps = state.apps.filter(appMatchesFilter).filter(appMatchesSearch);
+        resultCount.textContent = pluralApps(apps.length);
+        lastLoaded.textContent = state.loadedAt ? `Оновлено: ${formatDate(state.loadedAt)}` : "Ще не завантажено";
+
+        if (!apps.length) {
+          appsList.innerHTML = `<div class="panel empty-state">Нічого не знайдено. Спробуй інший bundle або перемкни фільтр.</div>`;
+          return;
+        }
+
+        appsList.innerHTML = apps.map(renderAppCard).join("");
+      }
+
+      async function loadApps() {
+        statusLine.classList.remove("error");
+        statusLine.textContent = "Підвантажую базу live-додатків...";
+        refreshBtn.disabled = true;
+        try {
+          const response = await fetch("/api/live-apps", { headers: { "Accept": "application/json" } });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || data.ok === false) {
+            throw new Error(data.error || `HTTP ${response.status}`);
+          }
+          state.apps = data.apps || [];
+          state.loadedAt = data.checked_at || new Date().toISOString();
+          renderStats(data.stats || {});
+          statusLine.textContent = `База завантажена з ${data.source || "Google Sheets"}.`;
+          renderApps();
+        } catch (error) {
+          statusLine.classList.add("error");
+          statusLine.textContent = `Не вдалося завантажити базу: ${error.message}`;
+          statsEl.innerHTML = "";
+          appsList.innerHTML = `<div class="panel empty-state">Перевір Render env vars для Google Sheets або доступ service account до таблиці.</div>`;
+        } finally {
+          refreshBtn.disabled = false;
+        }
+      }
+
+      document.querySelectorAll(".filter-btn").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll(".filter-btn").forEach((item) => item.classList.remove("is-active"));
+          button.classList.add("is-active");
+          state.filter = button.dataset.filter || "live";
+          renderApps();
+        });
+      });
+
+      searchInput.addEventListener("input", () => {
+        state.query = searchInput.value;
+        renderApps();
+      });
+
+      refreshBtn.addEventListener("click", loadApps);
+
+      appsList.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-copy]");
+        if (!button) return;
+        const value = button.dataset.copy || "";
+        try {
+          await navigator.clipboard.writeText(value);
+          button.textContent = "Copied";
+          setTimeout(() => { button.textContent = "Copy bundle"; }, 1000);
+        } catch {
+          button.textContent = value;
+        }
+      });
+
+      loadApps();
+    })();
+  </script>
+</body>
+</html>

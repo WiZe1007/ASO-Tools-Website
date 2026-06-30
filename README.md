@@ -6,6 +6,7 @@ Flask web app for ASO checks:
 - install availability checker by country
 - Google Play GEO link generator
 - App Overview page with public Sensor Tower data
+- Live Apps Database page backed by the Availability Google Sheet
 - optional App Magic data-countries integration for download shares
 - Telegram Availability monitor backed by Google Sheets
 
@@ -80,6 +81,10 @@ Use:
 - `app_name`, `owner`, `notes`: optional human fields
 
 The bot also writes events to the `Checks` sheet.
+
+The website also exposes `/live-apps`, a read-only page for employees to view
+the current live app database, search by bundle/package name, and see closed
+GEOs saved by the Telegram availability checks.
 
 ### Google Service Account
 
