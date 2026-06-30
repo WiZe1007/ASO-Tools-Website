@@ -1003,6 +1003,14 @@ body[data-page="rating"] .chip{
   cursor:pointer;
 }
 
+.auth-logout{
+  display:inline-grid !important;
+  place-items:center !important;
+  text-decoration:none !important;
+  line-height:1 !important;
+  font-size:18px !important;
+}
+
 body[data-page="rating"] .wrap{
   max-width:1492px;
   display:grid;
@@ -4602,7 +4610,7 @@ html[data-theme="light"] .contact-modal__item span{
 
 @media (max-width: 900px){
   body[data-page] .navright{
-    min-width:88px !important;
+    min-width:136px !important;
     flex:0 0 auto !important;
     justify-content:flex-end !important;
     gap:8px !important;
@@ -4622,7 +4630,8 @@ html[data-theme="light"] .contact-modal__item span{
     animation:none !important;
   }
 
-  body[data-page] .navright .nav-utility[aria-label="Help"]{
+  body[data-page] .navright .nav-utility[aria-label="Help"],
+  body[data-page] .navright .auth-logout{
     display:inline-grid !important;
     place-items:center !important;
     position:relative !important;

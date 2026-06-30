@@ -11,6 +11,8 @@ import atexit
 import copy
 import base64
 import html as html_lib
+import secrets
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
@@ -19,7 +21,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from requests.adapters import HTTPAdapter
 from bs4 import BeautifulSoup
-from flask import Flask, g, render_template, request, jsonify
+from flask import Flask, g, render_template, request, jsonify, redirect, url_for, session as flask_session
+from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
     from google.oauth2 import service_account
@@ -127,6 +130,12 @@ AVAILABILITY_CHECK_LIMIT = env_int("AVAILABILITY_CHECK_LIMIT", 200, 1, 1000)
 AVAILABILITY_TASK_SECRET = (os.environ.get("AVAILABILITY_TASK_SECRET") or os.environ.get("BOT_CHECK_SECRET") or "").strip()
 TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
 TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+AUTH_REQUIRED = (os.environ.get("AUTH_REQUIRED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
+AUTH_ALLOWED_EMAIL_DOMAIN = (os.environ.get("AUTH_ALLOWED_EMAIL_DOMAIN", "@wildwildgroup.com") or "@wildwildgroup.com").strip().lower()
+AUTH_DB_PATH = (
+    os.environ.get("AUTH_DB_PATH")
+    or os.path.expanduser("~/.wwa_aso_checker_users.sqlite3")
+).strip()
 
 # Single-instance state
 STATE_FILE = os.path.expanduser("~/.wwa_aso_checker_state.json")
@@ -1069,12 +1078,225 @@ app = Flask(
     static_folder=resource_path("static"),
 )
 app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 60 * 60 * 24 * 30
+app.config["SECRET_KEY"] = (
+    os.environ.get("SECRET_KEY")
+    or os.environ.get("AUTH_SECRET_KEY")
+    or "wwa-aso-tools-local-dev-secret-change-me"
+)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+if (os.environ.get("SESSION_COOKIE_SECURE") or "").strip() == "1":
+    app.config["SESSION_COOKIE_SECURE"] = True
 session = requests.Session()
 http_adapter = HTTPAdapter(pool_connections=HTTP_POOL_SIZE, pool_maxsize=HTTP_POOL_SIZE, max_retries=0)
 session.mount("https://", http_adapter)
 session.mount("http://", http_adapter)
 
 _runtime_port = None
+AUTH_DB_LOCK = threading.Lock()
+
+
+def auth_db_path() -> str:
+    path = os.path.expanduser(AUTH_DB_PATH)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return path
+
+
+def auth_db_connect():
+    conn = sqlite3.connect(auth_db_path(), timeout=20)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def ensure_auth_db():
+    with AUTH_DB_LOCK:
+        with auth_db_connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    last_login_at TEXT
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+
+
+def normalize_auth_email(email: str) -> str:
+    return str(email or "").strip().lower()
+
+
+def email_domain_allowed(email: str) -> bool:
+    normalized = normalize_auth_email(email)
+    return bool(normalized and normalized.endswith(AUTH_ALLOWED_EMAIL_DOMAIN))
+
+
+def get_user_by_email(email: str):
+    ensure_auth_db()
+    with auth_db_connect() as conn:
+        row = conn.execute(
+            "SELECT id, email, password_hash, active, created_at, last_login_at FROM users WHERE email = ?",
+            (normalize_auth_email(email),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id):
+    if not user_id:
+        return None
+    ensure_auth_db()
+    with auth_db_connect() as conn:
+        row = conn.execute(
+            "SELECT id, email, active, created_at, last_login_at FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def create_user(email: str, password: str):
+    ensure_auth_db()
+    normalized = normalize_auth_email(email)
+    with AUTH_DB_LOCK:
+        with auth_db_connect() as conn:
+            conn.execute(
+                "INSERT INTO users (email, password_hash, active, created_at) VALUES (?, ?, 1, ?)",
+                (normalized, generate_password_hash(password), utc_now_iso()),
+            )
+
+
+def mark_user_login(user_id: int):
+    with AUTH_DB_LOCK:
+        with auth_db_connect() as conn:
+            conn.execute(
+                "UPDATE users SET last_login_at = ? WHERE id = ?",
+                (utc_now_iso(), user_id),
+            )
+
+
+def login_user(user: dict):
+    flask_session.clear()
+    flask_session["user_id"] = user["id"]
+    flask_session["user_email"] = user["email"]
+    flask_session["session_nonce"] = secrets.token_urlsafe(12)
+    mark_user_login(user["id"])
+
+
+def logout_user():
+    flask_session.clear()
+
+
+def safe_next_url(value: str | None) -> str:
+    next_url = str(value or "").strip()
+    if next_url.startswith("/") and not next_url.startswith("//"):
+        return next_url
+    return url_for("index")
+
+
+def request_wants_json() -> bool:
+    if request.is_json:
+        return True
+    if request.path.startswith("/api/") or request.path.startswith("/tasks/"):
+        return True
+    return "application/json" in (request.headers.get("Accept") or "")
+
+
+@app.context_processor
+def inject_auth_context():
+    return {
+        "current_user_email": flask_session.get("user_email"),
+        "auth_required": AUTH_REQUIRED,
+        "auth_allowed_email_domain": AUTH_ALLOWED_EMAIL_DOMAIN,
+    }
+
+
+@app.before_request
+def require_site_auth():
+    g.current_user = None
+    if not AUTH_REQUIRED:
+        return None
+
+    public_endpoints = {
+        "health",
+        "login",
+        "register",
+        "static",
+        "task_check_availability",
+    }
+    if request.endpoint in public_endpoints:
+        return None
+
+    user = get_user_by_id(flask_session.get("user_id"))
+    if user and int(user.get("active") or 0) == 1:
+        g.current_user = user
+        return None
+
+    logout_user()
+    if request_wants_json():
+        return jsonify({"ok": False, "error": "AUTH_REQUIRED"}), 401
+    return redirect(url_for("login", next=request.full_path if request.query_string else request.path))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if not AUTH_REQUIRED:
+        return redirect(url_for("index"))
+
+    next_url = safe_next_url(request.values.get("next"))
+    error = ""
+    email = normalize_auth_email(request.form.get("email") or "")
+
+    if request.method == "POST":
+        password = request.form.get("password") or ""
+        user = get_user_by_email(email)
+        if not user or int(user.get("active") or 0) != 1 or not check_password_hash(user["password_hash"], password):
+            error = "Невірна пошта або пароль."
+        else:
+            login_user(user)
+            return redirect(next_url)
+
+    return render_template("auth.html", mode="login", email=email, error=error, next_url=next_url)
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if not AUTH_REQUIRED:
+        return redirect(url_for("index"))
+
+    next_url = safe_next_url(request.values.get("next"))
+    error = ""
+    email = normalize_auth_email(request.form.get("email") or "")
+
+    if request.method == "POST":
+        password = request.form.get("password") or ""
+        password_confirm = request.form.get("password_confirm") or ""
+
+        if not email_domain_allowed(email):
+            error = f"Реєстрація доступна тільки для пошти {AUTH_ALLOWED_EMAIL_DOMAIN}."
+        elif len(password) < 8:
+            error = "Пароль має містити мінімум 8 символів."
+        elif password != password_confirm:
+            error = "Паролі не співпадають."
+        elif get_user_by_email(email):
+            error = "Користувач з такою поштою вже існує."
+        else:
+            create_user(email, password)
+            user = get_user_by_email(email)
+            login_user(user)
+            return redirect(next_url)
+
+    return render_template("auth.html", mode="register", email=email, error=error, next_url=next_url)
+
+
+@app.get("/logout")
+def logout():
+    logout_user()
+    return redirect(url_for("login"))
 
 
 @app.get("/health")

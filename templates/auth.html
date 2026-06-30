@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ "Реєстрація" if mode == "register" else "Вхід" }} · WWA ASO Tools</title>
+  <link rel="icon" href="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" />
+  <style>
+    :root{
+      --text:rgba(248,251,255,.94);
+      --muted:rgba(226,236,248,.70);
+      --muted2:rgba(226,236,248,.56);
+      --border:rgba(255,255,255,.16);
+      --panel:rgba(8,18,31,.76);
+      --accent:#ffc247;
+      --accent2:#ff9551;
+      --danger:#fb7185;
+      --shadow:0 26px 80px rgba(0,0,0,.42);
+    }
+    *{box-sizing:border-box}
+    html,body{min-height:100%}
+    body{
+      margin:0;
+      font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      color:var(--text);
+      background:#07101c;
+      display:grid;
+      place-items:center;
+      padding:28px 16px;
+    }
+    .bg{position:fixed;inset:0;z-index:-2;background:#07101c;overflow:hidden}
+    .bg::before{
+      content:"";
+      position:absolute;
+      inset:-14px;
+      background-image:url("{{ url_for('static', filename='img/dashboard-bg.png') }}");
+      background-size:cover;
+      background-position:center;
+      filter:saturate(1.04) contrast(1.04) brightness(.70);
+      transform:scale(1.02);
+    }
+    .bg::after{
+      content:"";
+      position:absolute;
+      inset:0;
+      background:
+        linear-gradient(180deg,rgba(4,9,16,.42),rgba(4,9,16,.32) 38%,rgba(4,9,16,.62)),
+        radial-gradient(70% 60% at 50% 8%,rgba(35,118,156,.14),rgba(3,8,15,.58));
+    }
+    .card{
+      width:min(520px,100%);
+      border:1px solid var(--border);
+      border-radius:26px;
+      background:linear-gradient(180deg,rgba(14,30,48,.78),rgba(7,17,29,.76));
+      box-shadow:var(--shadow);
+      backdrop-filter:blur(12px) saturate(1.08);
+      -webkit-backdrop-filter:blur(12px) saturate(1.08);
+      padding:28px;
+    }
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:14px;
+      margin-bottom:28px;
+    }
+    .logo{
+      width:56px;
+      height:56px;
+      object-fit:contain;
+      border-radius:16px;
+      border:1px solid rgba(255,255,255,.16);
+      background:rgba(0,0,0,.24);
+    }
+    .brand h1{margin:0;font-size:24px;line-height:1.05}
+    .brand p{margin:5px 0 0;color:var(--muted2);font-weight:750}
+    h2{
+      margin:0;
+      font-size:42px;
+      line-height:1.02;
+      letter-spacing:-.03em;
+    }
+    .hint{
+      margin:12px 0 24px;
+      color:var(--muted);
+      font-size:16px;
+      line-height:1.48;
+    }
+    .hint code{
+      color:#ffe6a3;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      font-weight:900;
+    }
+    form{display:grid;gap:14px}
+    label{display:grid;gap:8px;color:var(--muted);font-weight:850}
+    input{
+      width:100%;
+      min-height:56px;
+      border-radius:15px;
+      border:1px solid rgba(255,255,255,.16);
+      background:rgba(3,10,20,.58);
+      color:var(--text);
+      padding:0 15px;
+      font:820 16px ui-sans-serif,system-ui;
+      outline:none;
+    }
+    input:focus{
+      border-color:rgba(35,199,255,.55);
+      box-shadow:0 0 0 5px rgba(35,199,255,.12);
+    }
+    .error{
+      border:1px solid rgba(251,113,133,.34);
+      background:rgba(251,113,133,.12);
+      color:#ffd7df;
+      border-radius:14px;
+      padding:12px 14px;
+      font-weight:850;
+    }
+    .submit{
+      min-height:58px;
+      border:0;
+      border-radius:16px;
+      color:#151006;
+      background:linear-gradient(90deg,var(--accent),var(--accent2));
+      font-size:17px;
+      font-weight:950;
+      cursor:pointer;
+      box-shadow:0 18px 40px rgba(255,149,81,.22);
+    }
+    .switch{
+      margin:20px 0 0;
+      color:var(--muted);
+      font-weight:760;
+      text-align:center;
+    }
+    .switch a{color:#ffd36b;text-decoration:none;font-weight:950}
+    .switch a:hover{text-decoration:underline}
+    @media (max-width: 560px){
+      .card{padding:22px;border-radius:22px}
+      h2{font-size:34px}
+      .brand h1{font-size:21px}
+    }
+  </style>
+</head>
+<body>
+  <div class="bg"></div>
+  <main class="card">
+    <div class="brand">
+      <img class="logo" src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" alt="WWA" />
+      <div>
+        <h1>WWA ASO Tools</h1>
+        <p>Company access only</p>
+      </div>
+    </div>
+
+    {% if mode == "register" %}
+      <h2>Реєстрація</h2>
+      <p class="hint">Створити акаунт можна тільки з корпоративною поштою <code>{{ auth_allowed_email_domain }}</code>.</p>
+    {% else %}
+      <h2>Вхід</h2>
+      <p class="hint">Увійди у свій акаунт WWA ASO Tools. Нові користувачі можуть зареєструватися тільки з поштою <code>{{ auth_allowed_email_domain }}</code>.</p>
+    {% endif %}
+
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for(mode) }}">
+      <input type="hidden" name="next" value="{{ next_url }}" />
+      <label>
+        Email
+        <input name="email" type="email" value="{{ email }}" placeholder="name{{ auth_allowed_email_domain }}" autocomplete="email" required autofocus />
+      </label>
+      <label>
+        Пароль
+        <input name="password" type="password" minlength="8" autocomplete="{{ 'new-password' if mode == 'register' else 'current-password' }}" required />
+      </label>
+      {% if mode == "register" %}
+        <label>
+          Повтори пароль
+          <input name="password_confirm" type="password" minlength="8" autocomplete="new-password" required />
+        </label>
+      {% endif %}
+      <button class="submit" type="submit">{{ "Створити акаунт" if mode == "register" else "Увійти" }}</button>
+    </form>
+
+    {% if mode == "register" %}
+      <p class="switch">Вже є акаунт? <a href="{{ url_for('login', next=next_url) }}">Увійти</a></p>
+    {% else %}
+      <p class="switch">Немає акаунта? <a href="{{ url_for('register', next=next_url) }}">Зареєструватися</a></p>
+    {% endif %}
+  </main>
+</body>
+</html>

@@ -42,6 +42,10 @@ The same command is also stored in `Procfile`.
 
 These are optional. Do not commit real values.
 
+- `SECRET_KEY` - required for stable login sessions on Render. Use a long random string.
+- `AUTH_ALLOWED_EMAIL_DOMAIN` - allowed registration email domain. Defaults to `@wildwildgroup.com`.
+- `AUTH_DB_PATH` - SQLite user database path. For persistent users on Render, point this to a mounted Disk, for example `/var/data/wwa_auth.sqlite3`.
+- `AUTH_REQUIRED` - defaults to `1`. Set `0` only for local debugging without login.
 - `APPMAGIC_BEARER_TOKEN` - required for fully automatic App Magic mode on Render. Add the App Magic `Authorization: Bearer ...` token here once, and users will not need to paste anything in the website.
 - `APPMAGIC_TOKEN` - alternative name for the same Bearer token.
 - `APPMAGIC_COOKIE` - fallback if you need cookie-based App Magic access.
