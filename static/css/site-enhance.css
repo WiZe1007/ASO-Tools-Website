@@ -4591,10 +4591,10 @@ html[data-theme="light"] .contact-modal__item span{
 
 @media (max-width: 900px){
   body[data-page] .navright{
-    min-width:40px !important;
+    min-width:88px !important;
     flex:0 0 auto !important;
     justify-content:flex-end !important;
-    gap:0 !important;
+    gap:8px !important;
     position:relative !important;
     z-index:5 !important;
   }
@@ -4609,6 +4609,18 @@ html[data-theme="light"] .contact-modal__item span{
     visibility:hidden !important;
     pointer-events:none !important;
     animation:none !important;
+  }
+
+  body[data-page] .navright .nav-utility[aria-label="Help"]{
+    display:inline-grid !important;
+    place-items:center !important;
+    position:relative !important;
+    z-index:6 !important;
+    flex:0 0 40px !important;
+    width:40px !important;
+    height:40px !important;
+    pointer-events:auto !important;
+    touch-action:manipulation !important;
   }
 
   body[data-page] .hamb{
