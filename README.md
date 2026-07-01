@@ -117,6 +117,8 @@ BOT_TIMEZONE=Europe/Kiev
 BOT_CHECK_HOURS=9,15,21
 TELEGRAM_ALLOWED_CHAT_IDS=<optional comma-separated chat ids for commands>
 AVAILABILITY_TASK_SECRET=<only needed if you also use the HTTP task endpoint>
+WWA_BOT_MAX_WORKERS_AVAILABILITY=3
+BOT_SCHEDULE_GRACE_MINUTES=10
 ```
 
 ### How Notifications Work

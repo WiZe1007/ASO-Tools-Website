@@ -7,6 +7,12 @@ import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+# Background workers on Render Starter have 512 MB RAM. Set conservative
+# defaults before importing app.py, because app.py reads these env values at
+# import time.
+os.environ.setdefault("WWA_BOT_MAX_WORKERS_AVAILABILITY", "3")
+os.environ.setdefault("WWA_CACHE_MAX_ITEMS", "240")
+
 from app import (
     AVAILABILITY_CHECK_LIMIT,
     TELEGRAM_BOT_TOKEN,
@@ -31,6 +37,7 @@ BOT_CHECK_HOURS = os.environ.get("BOT_CHECK_HOURS", "9,15,21").strip() or "9,15,
 BOT_POLL_TIMEOUT = env_int("BOT_POLL_TIMEOUT", 25, 5, 50)
 BOT_DROP_PENDING_UPDATES = os.environ.get("BOT_DROP_PENDING_UPDATES", "1").strip() != "0"
 BOT_MAX_COMMAND_CHECKS = env_int("BOT_MAX_COMMAND_CHECKS", AVAILABILITY_CHECK_LIMIT, 1, 1000)
+BOT_SCHEDULE_GRACE_MINUTES = env_int("BOT_SCHEDULE_GRACE_MINUTES", 10, 1, 59)
 
 check_lock = threading.Lock()
 last_scheduled_key = ""
@@ -210,6 +217,8 @@ def maybe_run_schedule():
         }, ensure_ascii=False))
         now = datetime.now(ZoneInfo("UTC"))
     if now.hour not in parse_check_hours():
+        return
+    if now.minute >= BOT_SCHEDULE_GRACE_MINUTES:
         return
 
     key = f"{now.date().isoformat()}-{now.hour}"

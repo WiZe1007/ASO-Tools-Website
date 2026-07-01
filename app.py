@@ -52,6 +52,7 @@ MAX_WORKERS_APPMAGIC = env_int("WWA_MAX_WORKERS_APPMAGIC", 14, 6, 32)
 # Availability checks
 MAX_WORKERS_AVAIL_GOOGLE = env_int("WWA_MAX_WORKERS_AVAIL_GOOGLE", 12, 6, 28)
 MAX_WORKERS_AVAIL_APPLE = env_int("WWA_MAX_WORKERS_AVAIL_APPLE", 25, 8, 48)
+MAX_WORKERS_BOT_AVAILABILITY = env_int("WWA_BOT_MAX_WORKERS_AVAILABILITY", 3, 1, 8)
 OVERVIEW_AVAILABILITY_CACHE_TTL = 15 * 60
 CACHE_TTL_RATINGS = env_int("WWA_CACHE_TTL_RATINGS", 6 * 60 * 60, 60, 24 * 60 * 60)
 CACHE_TTL_INSTALL_RANGE = env_int("WWA_CACHE_TTL_INSTALL_RANGE", 12 * 60 * 60, 60, 24 * 60 * 60)
@@ -4187,24 +4188,55 @@ def availability_error_is_transient(error: str | None) -> bool:
 
 
 def summarize_google_availability(app_id: str) -> dict:
-    rows = check_availability_google(app_id, get_geo_countries_en())
-    open_codes = sorted({row["iso2"] for row in rows if row.get("available") is True})
-    closed_codes = sorted({
-        row["iso2"]
-        for row in rows
-        if row.get("available") is False and not availability_error_is_transient(row.get("error"))
-    })
-    transient_codes = sorted({
-        row["iso2"]
-        for row in rows
-        if row.get("available") is False and availability_error_is_transient(row.get("error"))
-    })
+    countries_en = get_geo_countries_en()
+    open_codes: set[str] = set()
+    closed_codes: set[str] = set()
+    transient_codes: set[str] = set()
+    max_workers = max(1, min(MAX_WORKERS_BOT_AVAILABILITY, len(countries_en) or 1))
+
+    def task(country_name: str, iso2: str):
+        available, error = fetch_google_play_availability(app_id, iso2, hl="en")
+        return iso2, available, error
+
+    def consume_result(iso2: str, available: bool | None, error: str | None):
+        if available is True:
+            open_codes.add(iso2)
+        elif available is False and availability_error_is_transient(error):
+            transient_codes.add(iso2)
+        elif available is False:
+            closed_codes.add(iso2)
+
+    # Keep only a small window of futures alive. The Telegram worker runs on
+    # small Render instances, so the bot path avoids building the full UI rows
+    # payload and avoids submitting every country request at once.
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        country_iter = iter(countries_en)
+        pending = set()
+
+        def submit_next() -> bool:
+            try:
+                country_name, iso2 = next(country_iter)
+            except StopIteration:
+                return False
+            pending.add(ex.submit(task, country_name, iso2))
+            return True
+
+        for _ in range(max_workers * 2):
+            if not submit_next():
+                break
+
+        while pending:
+            for future in as_completed(pending):
+                pending.remove(future)
+                consume_result(*future.result())
+                submit_next()
+                break
+
     return {
-        "rows": rows,
-        "total": len(rows),
-        "open_codes": open_codes,
-        "closed_codes": closed_codes,
-        "transient_codes": transient_codes,
+        "total": len(countries_en),
+        "open_codes": sorted(open_codes),
+        "closed_codes": sorted(closed_codes),
+        "transient_codes": sorted(transient_codes),
         "is_live": bool(open_codes),
     }
 
