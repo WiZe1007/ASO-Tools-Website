@@ -7,6 +7,8 @@ import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import requests
+
 # Background workers on Render Starter have 512 MB RAM. Set conservative
 # defaults before importing app.py, because app.py reads these env values at
 # import time.
@@ -38,9 +40,12 @@ BOT_POLL_TIMEOUT = env_int("BOT_POLL_TIMEOUT", 25, 5, 50)
 BOT_DROP_PENDING_UPDATES = os.environ.get("BOT_DROP_PENDING_UPDATES", "1").strip() != "0"
 BOT_MAX_COMMAND_CHECKS = env_int("BOT_MAX_COMMAND_CHECKS", AVAILABILITY_CHECK_LIMIT, 1, 1000)
 BOT_SCHEDULE_GRACE_MINUTES = env_int("BOT_SCHEDULE_GRACE_MINUTES", 10, 1, 59)
+BOT_API_RETRIES = env_int("BOT_API_RETRIES", 4, 1, 8)
+BOT_PROGRESS_EVERY_APPS = env_int("BOT_PROGRESS_EVERY_APPS", 10, 1, 100)
 
 check_lock = threading.Lock()
 last_scheduled_key = ""
+active_check_state: dict = {}
 
 
 def parse_check_hours() -> set[int]:
@@ -70,11 +75,28 @@ def bot_api(method: str, payload: dict | None = None, timeout: int = 35) -> dict
     if not TELEGRAM_BOT_TOKEN:
         raise BotConfigError("TELEGRAM_BOT_TOKEN не задано.")
 
-    response = session.post(
-        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}",
-        json=payload or {},
-        timeout=timeout,
-    )
+    last_error = None
+    for attempt in range(1, BOT_API_RETRIES + 1):
+        try:
+            response = session.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}",
+                json=payload or {},
+                timeout=timeout,
+            )
+        except requests.RequestException as e:
+            last_error = e
+            if attempt >= BOT_API_RETRIES:
+                raise BotConfigError(f"Telegram {method} request failed: {e}")
+            time.sleep(0.8 * attempt)
+            continue
+
+        if response.status_code in {429, 500, 502, 503, 504} and attempt < BOT_API_RETRIES:
+            time.sleep(0.8 * attempt)
+            continue
+        break
+    else:
+        raise BotConfigError(f"Telegram {method} request failed: {last_error}")
+
     if response.status_code >= 400:
         raise BotConfigError(f"Telegram {method} HTTP {response.status_code}: {response.text[:500]}")
     data = response.json()
@@ -90,6 +112,19 @@ def send_message(chat_id: str | int, text: str):
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     })
+
+
+def safe_send_message(chat_id: str | int, text: str):
+    try:
+        return send_message(chat_id, text)
+    except Exception as e:
+        print(json.dumps({
+            "ok": False,
+            "event": "telegram_send_failed",
+            "chat_id": str(chat_id),
+            "error": str(e),
+        }, ensure_ascii=False))
+        return None
 
 
 def escape(value) -> str:
@@ -163,22 +198,60 @@ def is_authorized_chat(chat_id: str | int) -> bool:
 def run_check_async(chat_id: str | int, dry_run: bool = False):
     def worker():
         if not check_lock.acquire(blocking=False):
-            send_message(chat_id, "Перевірка вже йде. Дочекайся завершення.")
+            safe_send_message(chat_id, "Перевірка вже йде. Дочекайся завершення.")
             return
 
+        global active_check_state
         try:
             mode = "dry run" if dry_run else "live run"
-            send_message(chat_id, f"Запускаю <b>{escape(mode)}</b>. Це може зайняти кілька хвилин.")
+            active_check_state = {
+                "mode": mode,
+                "started_at": datetime.now(ZoneInfo(BOT_TIMEZONE)).strftime("%H:%M:%S"),
+                "app_index": 0,
+                "apps_to_check": 0,
+                "errors": 0,
+                "notifications": 0,
+                "skipped": 0,
+            }
+            last_progress = {"app_index": 0, "sent_at": 0.0}
+
+            def report_progress(progress: dict):
+                active_check_state.update(progress)
+                app_index = int(progress.get("app_index") or 0)
+                apps_to_check = int(progress.get("apps_to_check") or 0)
+                now_ts = time.time()
+                should_send = (
+                    app_index >= apps_to_check
+                    or app_index - int(last_progress["app_index"]) >= BOT_PROGRESS_EVERY_APPS
+                    or now_ts - float(last_progress["sent_at"]) >= 180
+                )
+                if not should_send:
+                    return
+                last_progress["app_index"] = app_index
+                last_progress["sent_at"] = now_ts
+                safe_send_message(
+                    chat_id,
+                    "\n".join([
+                        f"<b>Прогрес {escape(mode)}</b>",
+                        f"Apps: <b>{app_index}</b> / {apps_to_check}",
+                        f"Errors: <b>{progress.get('errors', 0)}</b>",
+                        f"Notifications: <b>{progress.get('notifications', 0)}</b>",
+                    ]),
+                )
+
+            safe_send_message(chat_id, f"Запускаю <b>{escape(mode)}</b>. Це може зайняти кілька хвилин.")
             result = run_availability_bot_check(
                 send_messages=not dry_run,
                 write_changes=not dry_run,
                 limit=BOT_MAX_COMMAND_CHECKS,
+                progress_callback=report_progress,
             )
             result["dry_run"] = dry_run
-            send_message(chat_id, summary_text(result, "Manual availability check finished"))
+            safe_send_message(chat_id, summary_text(result, "Manual availability check finished"))
         except Exception as e:
-            send_message(chat_id, f"<b>Помилка перевірки:</b>\n<code>{escape(e)}</code>")
+            safe_send_message(chat_id, f"<b>Помилка перевірки:</b>\n<code>{escape(e)}</code>")
         finally:
+            active_check_state = {}
             check_lock.release()
 
     threading.Thread(target=worker, daemon=True).start()
@@ -191,10 +264,10 @@ def run_scheduled_check():
     try:
         result = run_availability_bot_check(send_messages=True, write_changes=True, limit=AVAILABILITY_CHECK_LIMIT)
         if os.environ.get("TELEGRAM_SEND_EMPTY_SUMMARY", "0").strip() == "1" and TELEGRAM_CHAT_ID:
-            send_message(TELEGRAM_CHAT_ID, summary_text(result, "Scheduled availability check finished"))
+            safe_send_message(TELEGRAM_CHAT_ID, summary_text(result, "Scheduled availability check finished"))
     except Exception:
         if TELEGRAM_CHAT_ID:
-            send_message(
+            safe_send_message(
                 TELEGRAM_CHAT_ID,
                 "<b>Scheduled availability check failed</b>\n"
                 f"<code>{escape(traceback.format_exc()[-2500:])}</code>",
@@ -266,6 +339,12 @@ def handle_message(message: dict):
                     f"Watch: <b>{watch}</b>",
                     f"Check hours: <b>{escape(BOT_CHECK_HOURS)}</b>",
                     f"Timezone: <b>{escape(BOT_TIMEZONE)}</b>",
+                    "",
+                    (
+                        f"Current check: <b>{escape(active_check_state.get('mode'))}</b> "
+                        f"{active_check_state.get('app_index', 0)} / {active_check_state.get('apps_to_check', 0)}"
+                        if active_check_state else "Current check: <b>none</b>"
+                    ),
                 ]),
             )
         except Exception as e:

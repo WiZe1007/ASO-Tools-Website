@@ -62,6 +62,7 @@ CACHE_TTL_SENSOR_TOWER = env_int("WWA_CACHE_TTL_SENSOR_TOWER", 30 * 60, 60, 6 * 
 CACHE_TTL_APP_OVERVIEW = env_int("WWA_CACHE_TTL_APP_OVERVIEW", 15 * 60, 60, 6 * 60 * 60)
 CACHE_MAX_ITEMS = env_int("WWA_CACHE_MAX_ITEMS", 1200, 100, 10000)
 HTTP_POOL_SIZE = env_int("WWA_HTTP_POOL_SIZE", 64, 16, 256)
+HTTP_REQUEST_RETRIES = env_int("WWA_HTTP_REQUEST_RETRIES", 3, 1, 8)
 
 GOOGLE_JITTER_MIN = 0.08
 GOOGLE_JITTER_MAX = 0.35
@@ -3979,7 +3980,24 @@ class GoogleSheetsAvailabilityStore:
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = f"Bearer {self._token()}"
         headers.setdefault("Accept", "application/json")
-        response = session.request(method, url, headers=headers, timeout=30, **kwargs)
+        last_error = None
+        for attempt in range(1, HTTP_REQUEST_RETRIES + 1):
+            try:
+                response = session.request(method, url, headers=headers, timeout=30, **kwargs)
+            except requests.RequestException as e:
+                last_error = e
+                if attempt >= HTTP_REQUEST_RETRIES:
+                    raise BotConfigError(f"Google Sheets request failed: {e}")
+                time.sleep(0.7 * attempt)
+                continue
+
+            if response.status_code in {429, 500, 502, 503, 504} and attempt < HTTP_REQUEST_RETRIES:
+                time.sleep(0.7 * attempt)
+                continue
+            break
+        else:
+            raise BotConfigError(f"Google Sheets request failed: {last_error}")
+
         if response.status_code >= 400:
             raise BotConfigError(f"Google Sheets HTTP {response.status_code}: {response.text[:500]}")
         if response.text:
@@ -4276,16 +4294,34 @@ def send_telegram_message(text: str):
 
     sent = []
     for chunk in telegram_chunk_text(text):
-        response = session.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": chunk,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
-            timeout=20,
-        )
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": chunk,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        last_error = None
+        for attempt in range(1, HTTP_REQUEST_RETRIES + 1):
+            try:
+                response = session.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                    json=payload,
+                    timeout=20,
+                )
+            except requests.RequestException as e:
+                last_error = e
+                if attempt >= HTTP_REQUEST_RETRIES:
+                    raise BotConfigError(f"Telegram request failed: {e}")
+                time.sleep(0.7 * attempt)
+                continue
+
+            if response.status_code in {429, 500, 502, 503, 504} and attempt < HTTP_REQUEST_RETRIES:
+                time.sleep(0.7 * attempt)
+                continue
+            break
+        else:
+            raise BotConfigError(f"Telegram request failed: {last_error}")
+
         if response.status_code >= 400:
             raise BotConfigError(f"Telegram HTTP {response.status_code}: {response.text[:500]}")
         sent.append(response.json())
@@ -4325,9 +4361,11 @@ def run_availability_bot_check(
     send_messages: bool = True,
     limit: int = AVAILABILITY_CHECK_LIMIT,
     write_changes: bool = True,
+    progress_callback=None,
 ) -> dict:
     store = GoogleSheetsAvailabilityStore()
     apps = store.load_apps()
+    apps_to_check = apps[:limit]
     now = utc_now_iso()
     result = {
         "ok": True,
@@ -4339,10 +4377,27 @@ def run_availability_bot_check(
         "errors": [],
     }
 
-    for app in apps[:limit]:
+    def emit_progress(app_index: int, app_id: str):
+        if not progress_callback:
+            return
+        try:
+            progress_callback({
+                "app_index": app_index,
+                "apps_to_check": len(apps_to_check),
+                "app_id": app_id,
+                "apps_checked": result["apps_checked"],
+                "errors": len(result["errors"]),
+                "notifications": len(result["notifications"]),
+                "skipped": len(result["skipped"]),
+            })
+        except Exception:
+            pass
+
+    for app_index, app in enumerate(apps_to_check, start=1):
         app_id = app.get("app_id") or ""
         if not app_id:
             result["skipped"].append({"row": app.get("row_index"), "reason": "missing_app_id"})
+            emit_progress(app_index, "")
             continue
 
         try:
@@ -4352,6 +4407,7 @@ def run_availability_bot_check(
             if write_changes:
                 store.update_app(app["row_index"], {"last_checked_at": now, "last_error": error})
             result["errors"].append({"app_id": app_id, "error": error})
+            emit_progress(app_index, app_id)
             continue
 
         result["apps_checked"] += 1
@@ -4361,6 +4417,7 @@ def run_availability_bot_check(
             if write_changes:
                 store.update_app(app["row_index"], {"last_checked_at": now, "last_error": error})
             result["errors"].append({"app_id": app_id, "error": error})
+            emit_progress(app_index, app_id)
             continue
 
         prev_open = split_country_codes(app.get("last_open_countries"))
@@ -4410,6 +4467,8 @@ def run_availability_bot_check(
                 "countries_count": len(changed_codes),
                 "countries": sorted(changed_codes),
             })
+
+        emit_progress(app_index, app_id)
 
     return result
 
