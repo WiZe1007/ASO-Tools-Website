@@ -4374,6 +4374,70 @@ def fit_text(draw, text: str, font, max_width: int, min_size: int, start_size: i
     return value, font_obj
 
 
+def text_bbox_size(draw, text: str, font) -> tuple[int, int]:
+    if not font:
+        return (0, 0)
+    bbox = draw.textbbox((0, 0), str(text or ""), font=font)
+    return (bbox[2] - bbox[0], bbox[3] - bbox[1])
+
+
+def wrap_card_text(draw, text: str, font, max_width: int, max_lines: int = 2) -> list[str]:
+    value = re.sub(r"\s+", " ", str(text or "").strip()) or "Untitled app"
+    words = value.split(" ")
+    lines: list[str] = []
+    current = ""
+
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if not current or text_bbox_size(draw, candidate, font)[0] <= max_width:
+            current = candidate
+            continue
+        lines.append(current)
+        current = word
+        if len(lines) >= max_lines:
+            break
+
+    if current and len(lines) < max_lines:
+        lines.append(current)
+
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+
+    if len(lines) == max_lines:
+        line = lines[-1]
+        while text_bbox_size(draw, line, font)[0] > max_width and len(line) > 8:
+            line = line[:-2].rstrip() + "…"
+        lines[-1] = line
+
+    return lines or [value]
+
+
+def fit_wrapped_card_text(
+    draw,
+    text: str,
+    max_width: int,
+    max_lines: int,
+    start_size: int,
+    min_size: int,
+    bold: bool = False,
+):
+    size = start_size
+    font = load_card_font(size, bold=bold)
+    while font and size > min_size:
+        lines = wrap_card_text(draw, text, font, max_width, max_lines=max_lines)
+        if all(text_bbox_size(draw, line, font)[0] <= max_width for line in lines):
+            return lines, font
+        size -= 4
+        font = load_card_font(size, bold=bold)
+    return wrap_card_text(draw, text, font, max_width, max_lines=max_lines), font
+
+
+def draw_shadowed_text(draw, xy: tuple[int, int], text: str, font, fill=(255, 255, 255), shadow=(0, 0, 0, 165)):
+    x, y = xy
+    draw.text((x + 3, y + 4), text, font=font, fill=shadow)
+    draw.text((x, y), text, font=font, fill=fill)
+
+
 def normalize_content_rating_label(value: str) -> str:
     text = str(value or "").strip()
     if not text or text == "—":
@@ -4387,6 +4451,31 @@ def normalize_content_rating_label(value: str) -> str:
     return text
 
 
+def extract_card_media_urls(value) -> list[str]:
+    urls: list[str] = []
+    if isinstance(value, str):
+        return [value] if value.startswith(("http://", "https://")) else []
+    if isinstance(value, list):
+        for item in value:
+            urls.extend(extract_card_media_urls(item))
+        return urls
+    if isinstance(value, dict):
+        for key in ("url", "image_url", "src", "original", "original_url", "large", "medium"):
+            found = value.get(key)
+            if isinstance(found, str) and found.startswith(("http://", "https://")):
+                urls.append(found)
+        for key in ("screenshots", "android", "images"):
+            if key in value:
+                urls.extend(extract_card_media_urls(value.get(key)))
+    seen = set()
+    unique = []
+    for url in urls:
+        if url not in seen:
+            unique.append(url)
+            seen.add(url)
+    return unique
+
+
 def sensor_tower_app_card_meta(app: dict) -> dict:
     app_id = str(app.get("app_id") or "").strip()
     fallback_name = str(app.get("app_name") or app_id or "Untitled app").strip()
@@ -4396,6 +4485,7 @@ def sensor_tower_app_card_meta(app: dict) -> dict:
         "category": "—",
         "content_rating": "—",
         "icon_url": "",
+        "screenshots": [],
     }
     if not app_id:
         return meta
@@ -4410,12 +4500,15 @@ def sensor_tower_app_card_meta(app: dict) -> dict:
         if isinstance(item, dict) and (item.get("name") or item.get("id"))
     ]
     categories = [item for item in categories if item and item != "—"]
+    screenshots = data.get("screenshots") or {}
+    android_screenshots = screenshots.get("android") if isinstance(screenshots, dict) else screenshots
 
     meta.update({
         "name": data.get("name") or fallback_name,
         "category": categories[0] if categories else "—",
         "content_rating": normalize_content_rating_label(data.get("content_rating") or "—"),
         "icon_url": data.get("icon_url") or "",
+        "screenshots": extract_card_media_urls(android_screenshots)[:3],
     })
     return meta
 
@@ -4445,6 +4538,42 @@ def fetch_card_icon(icon_url: str, size: int):
         return None
 
 
+def fetch_card_media_image(url: str, size: tuple[int, int], radius: int):
+    if Image is None or ImageOps is None or not url:
+        return None
+    try:
+        response = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        if response.status_code != 200:
+            return None
+        image = Image.open(io.BytesIO(response.content)).convert("RGBA")
+        image = ImageOps.fit(image, size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+        return rounded_image(image, radius)
+    except Exception:
+        return None
+
+
+def draw_card_pill(draw, xy: tuple[int, int], label: str, font, fill, outline=None, text_fill=(255, 255, 255), min_width=0, pad_x=28, pad_y=12):
+    x, y = xy
+    text_w, text_h = text_bbox_size(draw, label, font)
+    width = max(min_width, text_w + pad_x * 2)
+    height = text_h + pad_y * 2
+    shadow_offset = 8
+    draw.rounded_rectangle(
+        (x + shadow_offset, y + shadow_offset, x + width + shadow_offset, y + height + shadow_offset),
+        radius=max(12, height // 3),
+        fill=(0, 0, 0, 80),
+    )
+    draw.rounded_rectangle(
+        (x, y, x + width, y + height),
+        radius=max(12, height // 3),
+        fill=fill,
+        outline=outline,
+        width=2 if outline else 1,
+    )
+    draw.text((x + pad_x, y + pad_y - 2), label, font=font, fill=text_fill)
+    return width, height
+
+
 def build_telegram_app_card(app: dict) -> bytes | None:
     if not TELEGRAM_SEND_APP_CARD or Image is None or ImageDraw is None:
         return None
@@ -4460,31 +4589,40 @@ def build_telegram_app_card(app: dict) -> bytes | None:
         return None
 
     try:
-        card = Image.open(bg_path).convert("RGB")
+        card = Image.open(bg_path).convert("RGBA")
     except Exception:
         return None
 
     draw = ImageDraw.Draw(card)
     meta = sensor_tower_app_card_meta(app)
+    width, height = card.size
 
-    title_font = load_card_font(76, bold=True)
-    meta_font = load_card_font(36, bold=True)
-    rating_font = load_card_font(34, bold=True)
-    small_font = load_card_font(26, bold=True)
+    title_font = load_card_font(74, bold=True)
+    meta_font = load_card_font(42, bold=True)
+    rating_font = load_card_font(38, bold=True)
+    small_font = load_card_font(30, bold=True)
 
-    icon_size = 230
-    icon_x, icon_y = 60, 78
+    panel = Image.new("RGBA", card.size, (0, 0, 0, 0))
+    panel_draw = ImageDraw.Draw(panel)
+    panel_draw.rounded_rectangle((44, 58, width - 42, 1018), radius=34, fill=(0, 0, 0, 82))
+    panel_draw.rounded_rectangle((44, 58, width - 42, 1018), radius=34, outline=(255, 255, 255, 34), width=2)
+    panel_draw.rounded_rectangle((54, 68, 1008, 482), radius=30, fill=(0, 0, 0, 88))
+    card = Image.alpha_composite(card, panel)
+    draw = ImageDraw.Draw(card)
+
+    icon_size = 300
+    icon_x, icon_y = 78, 94
     icon = fetch_card_icon(meta.get("icon_url"), icon_size)
     if icon is not None:
         shadow = Image.new("RGBA", (icon_size + 22, icon_size + 22), (0, 0, 0, 0))
         shadow_draw = ImageDraw.Draw(shadow)
-        shadow_draw.rounded_rectangle((11, 11, icon_size + 11, icon_size + 11), radius=34, fill=(0, 0, 0, 115))
-        card.paste(shadow, (icon_x - 11, icon_y - 6), shadow)
+        shadow_draw.rounded_rectangle((11, 11, icon_size + 11, icon_size + 11), radius=42, fill=(0, 0, 0, 150))
+        card.paste(shadow, (icon_x - 11, icon_y - 4), shadow)
         card.paste(icon, (icon_x, icon_y), icon)
     else:
         draw.rounded_rectangle(
             (icon_x, icon_y, icon_x + icon_size, icon_y + icon_size),
-            radius=30,
+            radius=42,
             fill=(22, 28, 36),
             outline=(255, 255, 255),
             width=3,
@@ -4499,35 +4637,96 @@ def build_telegram_app_card(app: dict) -> bytes | None:
             font=initials_font,
         )
 
-    text_x = 320
-    title, title_font = fit_text(draw, meta.get("name"), title_font, 680, 44, 76, bold=True)
-    draw.text((text_x, 90), title, fill=(255, 255, 255), font=title_font)
+    text_x = 420
+    title_lines, title_font = fit_wrapped_card_text(draw, meta.get("name"), 560, 2, 74, 50, bold=True)
+    title_y = 100
+    title_line_height = max(70, text_bbox_size(draw, "Ag", title_font)[1] + 18)
+    line_gap = 14
+    for index, line in enumerate(title_lines):
+        draw_shadowed_text(draw, (text_x, title_y + index * title_line_height), line, title_font)
 
+    after_title_y = title_y + len(title_lines) * title_line_height + line_gap
     category = meta.get("category") or "—"
-    category_text, meta_font = fit_text(draw, f"Android  {category}", meta_font, 620, 26, 36, bold=True)
-    draw.text((text_x, 190), category_text, fill=(255, 255, 255), font=meta_font)
+    category_text, meta_font = fit_text(draw, f"Android  •  {category}", meta_font, 560, 30, 42, bold=True)
+    draw_shadowed_text(draw, (text_x, after_title_y), category_text, meta_font)
 
     rating_label = normalize_content_rating_label(meta.get("content_rating"))
-    badge_x, badge_y, badge_w, badge_h = text_x, 250, 120, 56
-    draw.rounded_rectangle((badge_x, badge_y, badge_x + badge_w, badge_y + badge_h), radius=4, fill=(240, 0, 0))
-    draw.rectangle((badge_x, badge_y + badge_h - 10, badge_x + badge_w, badge_y + badge_h), fill=(184, 0, 0))
-    badge_bbox = draw.textbbox((0, 0), rating_label, font=rating_font)
-    draw.text(
-        (
-            badge_x + (badge_w - (badge_bbox[2] - badge_bbox[0])) / 2,
-            badge_y + (badge_h - (badge_bbox[3] - badge_bbox[1])) / 2 - 3,
-        ),
+    badge_y = after_title_y + 72
+    draw_card_pill(
+        draw,
+        (text_x, badge_y),
         rating_label,
-        fill=(255, 255, 255),
         font=rating_font,
+        fill=(230, 0, 0, 238),
+        outline=(255, 52, 52, 215),
+        min_width=150,
+        pad_x=34,
+        pad_y=14,
     )
 
     if app_id:
-        package_text, small_font = fit_text(draw, app_id, small_font, 620, 20, 26, bold=True)
-        draw.text((text_x, 320), package_text, fill=(255, 255, 255, ), font=small_font)
+        package_text, small_font = fit_text(draw, app_id, small_font, 500, 23, 30, bold=True)
+        package_y = badge_y + 88
+        draw_card_pill(
+            draw,
+            (text_x, package_y),
+            package_text,
+            font=small_font,
+            fill=(6, 12, 20, 170),
+            outline=(255, 255, 255, 42),
+            text_fill=(245, 245, 245),
+            pad_x=24,
+            pad_y=11,
+        )
+
+    screenshots = meta.get("screenshots") or []
+    media_y = 505
+    media_h = 440
+    media_gap = 28
+    media_w = (width - 120 - media_gap * 2) // 3
+    rendered_media = 0
+    for index, url in enumerate(screenshots[:3]):
+        image = fetch_card_media_image(url, (media_w, media_h), 26)
+        if image is None:
+            continue
+        x = 60 + index * (media_w + media_gap)
+        media_shadow = Image.new("RGBA", (media_w + 20, media_h + 20), (0, 0, 0, 0))
+        media_shadow_draw = ImageDraw.Draw(media_shadow)
+        media_shadow_draw.rounded_rectangle((10, 10, media_w + 10, media_h + 10), radius=30, fill=(0, 0, 0, 130))
+        card.paste(media_shadow, (x - 10, media_y - 4), media_shadow)
+        card.paste(image, (x, media_y), image)
+        draw.rounded_rectangle(
+            (x, media_y, x + media_w, media_y + media_h),
+            radius=26,
+            outline=(255, 255, 255, 54),
+            width=3,
+        )
+        rendered_media += 1
+
+    if rendered_media == 0:
+        fallback_font = load_card_font(48, bold=True)
+        fallback_small_font = load_card_font(34, bold=True)
+        draw_card_pill(
+            draw,
+            (72, 530),
+            "WWA ASO Availability",
+            fallback_font,
+            fill=(8, 18, 30, 186),
+            outline=(255, 255, 255, 50),
+            min_width=520,
+            pad_x=34,
+            pad_y=22,
+        )
+        draw_shadowed_text(
+            draw,
+            (86, 650),
+            "Live app monitoring • Google Play GEO checks",
+            fallback_small_font,
+            fill=(245, 245, 245),
+        )
 
     output = io.BytesIO()
-    card.save(output, format="PNG", optimize=True)
+    card.convert("RGB").save(output, format="PNG", optimize=True)
     data = output.getvalue()
     TELEGRAM_APP_CARD_CACHE.set(cache_key, data)
     return data
