@@ -478,8 +478,8 @@
       white-space: nowrap;
     }
   </style>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260701b') }}" />
-  <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260701b') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260701c') }}" />
+  <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260701c') }}" defer></script>
 </head>
 
 <body data-page="availability">
@@ -706,16 +706,22 @@
   }
 
   function statusLabel(available){
-    return (available === true) ? "Open" : "Closed";
+    if (available === true) return "Open";
+    if (available === false) return "Closed";
+    return "Unknown";
   }
 
   function statusClass(available){
-    return (available === true) ? "good" : "bad";
+    if (available === true) return "good";
+    if (available === false) return "bad";
+    return "warn";
   }
 
   function statusOrder(available){
-    // Closed first by default
-    return (available === false) ? 0 : 1;
+    // Closed first, then unknown, then open.
+    if (available === false) return 0;
+    if (available === true) return 2;
+    return 1;
   }
 
   function renderSummary(data){
@@ -751,8 +757,9 @@
 
     for (const r of rows){
       const isOpen = r.available === true;
+      const isClosed = r.available === false;
       const st = statusLabel(r.available);
-      const chipCls = isOpen ? "open" : "closed";
+      const chipCls = isOpen ? "open" : (isClosed ? "closed" : "unknown");
 
       const isApple = String(r.store || "").toLowerCase().includes("apple") || String(r.store || "").toLowerCase().includes("app store");
       const storeIco = isApple
@@ -760,8 +767,8 @@
         : `<span class="store-ico gp" title="Google Play"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M3 3.5v17a1 1 0 0 0 1.5.87l14.6-8.5a1 1 0 0 0 0-1.74L4.5 2.63A1 1 0 0 0 3 3.5Z" fill="url(#tg)"/><defs><linearGradient id="tg" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#00d4ff"/><stop offset=".5" stop-color="#52e36a"/><stop offset="1" stop-color="#ffd166"/></linearGradient></defs></svg></span>`;
 
       const noteCell = r.error
-        ? `<span class="note-err">${escapeHtml(r.error)}</span>`
-        : `<span class="note-${isOpen ? "ok" : "below"}">${isOpen ? "Доступно" : "Недоступно"}</span>`;
+        ? `<span class="${isClosed ? "note-err" : "note-warn"}">${escapeHtml(r.error)}</span>`
+        : `<span class="note-${isOpen ? "ok" : (isClosed ? "below" : "warn")}">${isOpen ? "Доступно" : (isClosed ? "Недоступно" : "Не підтверджено")}</span>`;
 
       const tr = document.createElement("tr");
       tr.innerHTML = `

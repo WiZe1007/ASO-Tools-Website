@@ -2154,7 +2154,9 @@ tbody td:first-child, thead th:first-child{padding-left:16px;}
 }
 .status-chip.open{background:rgba(110,231,183,.18); border-color:rgba(110,231,183,.38); color:#a9f0cf;}
 .status-chip.closed{background:rgba(255,90,95,.18); border-color:rgba(255,90,95,.42); color:#ffb4b8;}
+.status-chip.unknown{background:rgba(255,209,102,.15); border-color:rgba(255,209,102,.35); color:#ffe1a6;}
 .status-chip .sc-dot{width:7px; height:7px; border-radius:50%; background:currentColor;}
+.note-warn{color:#ffe1a6; font-weight:800;}
 
 /* Green metric variant (e.g. Open count) */
 .metric-ok .metric-ico{background:rgba(110,231,183,.2); border-color:rgba(110,231,183,.4); color:#a9f0cf;}
@@ -3583,6 +3585,12 @@ html[data-theme="light"] body[data-page] .status-chip.closed{
   color:#b63440 !important;
 }
 
+html[data-theme="light"] body[data-page] .status-chip.unknown{
+  background:rgba(255,247,226,.92) !important;
+  border-color:rgba(161,112,20,.28) !important;
+  color:#8a5f11 !important;
+}
+
 html[data-theme="light"] body[data-page] .open-ico,
 html[data-theme="light"] body[data-page] .export-btn,
 html[data-theme="light"] body[data-page] .copy{
@@ -4023,6 +4031,11 @@ html[data-theme="light"] body[data-page] .star-chip.na{
 html[data-theme="light"] body[data-page] .note-err,
 html[data-theme="light"] body[data-page] .note-below{
   color:#bd3340 !important;
+  font-weight:850 !important;
+}
+
+html[data-theme="light"] body[data-page] .note-warn{
+  color:#8a5f11 !important;
   font-weight:850 !important;
 }
 

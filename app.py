@@ -41,6 +41,13 @@ def env_int(name: str, default: int, min_value: int = 1, max_value: int = 256) -
     return max(min_value, min(max_value, value))
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() not in {"0", "false", "no", "off", "ні"}
+
+
 DEFAULT_THRESHOLD = 4.0
 HOST = "127.0.0.1"
 PORT = 5000  # preferred port if free
@@ -68,6 +75,8 @@ GOOGLE_JITTER_MIN = 0.08
 GOOGLE_JITTER_MAX = 0.35
 GOOGLE_PLAY_DEFAULT_INSTALL_COUNTRY = "US"
 GOOGLE_PLAY_DEFAULT_INSTALL_LANG = "en"
+GOOGLE_AVAILABILITY_CLOSED_ERRORS = {"NO_INSTALL_SIGNALS", "NOT_FOUND"}
+AVAILABILITY_CONFIRM_ALL_COUNTRIES = env_bool("WWA_AVAILABILITY_CONFIRM_ALL_COUNTRIES", True)
 
 APPMAGIC_SEARCH_BY_IDS_URL = "https://appmagic.rocks/api/v2/united-applications/search-by-ids"
 APPMAGIC_DATA_COUNTRIES_URL = "https://appmagic.rocks/api/v2/united-applications/data-countries"
@@ -3189,9 +3198,9 @@ def build_google_play_overview_availability(app_id: str, sensor_tower_data: dict
 
     geo = get_geo_countries_en()
     rows = check_availability_google(app_id, geo)
-    available_rows = [row for row in rows if row.get("available")]
-    closed_rows = [row for row in rows if not row.get("available")]
-    error_rows = [row for row in rows if row.get("error") and not row.get("available")]
+    available_rows = [row for row in rows if row.get("available") is True]
+    closed_rows = [row for row in rows if row.get("available") is False]
+    error_rows = [row for row in rows if row.get("error") and row.get("available") is not True]
 
     sensor_tower_data = sensor_tower_data or {}
     sensor_tower_available_codes = [
@@ -3511,11 +3520,12 @@ def enrich_appmagic_download_estimates(
 
 # ---------------- FETCHERS (INSTALL AVAILABILITY) ----------------
 
-def fetch_google_play_availability(app_id: str, gl: str, hl: str = "en"):
+def fetch_google_play_availability(app_id: str, gl: str, hl: str = "en", force_refresh: bool = False):
     cache_key = ("google_availability", app_id.lower(), gl.upper(), hl)
-    cached = GOOGLE_AVAILABILITY_CACHE.get(cache_key)
-    if cached is not CACHE_MISS:
-        return cached
+    if not force_refresh:
+        cached = GOOGLE_AVAILABILITY_CACHE.get(cache_key)
+        if cached is not CACHE_MISS:
+            return cached
 
     time.sleep(random.uniform(GOOGLE_JITTER_MIN, GOOGLE_JITTER_MAX))
 
@@ -3636,6 +3646,45 @@ def fetch_google_play_availability(app_id: str, gl: str, hl: str = "en"):
     result = (False, "NO_INSTALL_SIGNALS")
     GOOGLE_AVAILABILITY_CACHE.set(cache_key, result)
     return result
+
+
+def google_availability_error_code(error: str | None) -> str:
+    return str(error or "").split(":", 1)[0].strip().upper()
+
+
+def google_availability_is_closed_error(error: str | None) -> bool:
+    return google_availability_error_code(error) in GOOGLE_AVAILABILITY_CLOSED_ERRORS
+
+
+def fetch_google_play_availability_confirmed(app_id: str, gl: str, primary_hl: str = "en"):
+    first_available, first_error = fetch_google_play_availability(app_id, gl, hl=primary_hl)
+    should_confirm = (
+        AVAILABILITY_CONFIRM_ALL_COUNTRIES
+        or first_available is not True
+        or google_availability_is_closed_error(first_error)
+    )
+    if not should_confirm:
+        return first_available, first_error
+
+    _country_name, local_hl = get_country_meta_by_iso2(gl)
+    confirm_hl = (local_hl or primary_hl or "en").strip() or "en"
+    second_available, second_error = fetch_google_play_availability(
+        app_id,
+        gl,
+        hl=confirm_hl,
+        force_refresh=True,
+    )
+
+    # Any clear open signal wins. Google Play can sometimes return incomplete
+    # markup for a country, so a country is closed only after both checks agree
+    # with one of the strict closed signals we trust.
+    if first_available is True:
+        return True, first_error
+    if second_available is True:
+        return True, second_error
+    if google_availability_is_closed_error(first_error) and google_availability_is_closed_error(second_error):
+        return False, second_error or first_error
+    return None, second_error or first_error
 
 
 def fetch_apple_store_availability(app_id: str, country_iso2: str):
@@ -3798,7 +3847,7 @@ def check_availability_google(app_id: str, countries_en: list[tuple[str, str]]):
     rows = []
 
     def task(country_name: str, iso2: str):
-        available, error = fetch_google_play_availability(app_id, iso2, hl="en")
+        available, error = fetch_google_play_availability_confirmed(app_id, iso2, primary_hl="en")
         return country_name, iso2, available, error
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS_AVAIL_GOOGLE) as ex:
@@ -4196,13 +4245,7 @@ def build_live_apps_database_payload() -> dict:
 
 
 def availability_error_is_transient(error: str | None) -> bool:
-    err = str(error or "")
-    return (
-        err.startswith("REQUEST_ERROR")
-        or err.startswith("HTTP_")
-        or err.startswith("BLOCKED_HTTP")
-        or err in {"CONSENT_OR_UNUSUAL_TRAFFIC"}
-    )
+    return not google_availability_is_closed_error(error)
 
 
 def summarize_google_availability(app_id: str) -> dict:
@@ -4213,16 +4256,16 @@ def summarize_google_availability(app_id: str) -> dict:
     max_workers = max(1, min(MAX_WORKERS_BOT_AVAILABILITY, len(countries_en) or 1))
 
     def task(country_name: str, iso2: str):
-        available, error = fetch_google_play_availability(app_id, iso2, hl="en")
+        available, error = fetch_google_play_availability_confirmed(app_id, iso2, primary_hl="en")
         return iso2, available, error
 
     def consume_result(iso2: str, available: bool | None, error: str | None):
         if available is True:
             open_codes.add(iso2)
-        elif available is False and availability_error_is_transient(error):
-            transient_codes.add(iso2)
-        elif available is False:
+        elif available is False and google_availability_is_closed_error(error):
             closed_codes.add(iso2)
+        else:
+            transient_codes.add(iso2)
 
     # Keep only a small window of futures alive. The Telegram worker runs on
     # small Render instances, so the bot path avoids building the full UI rows
