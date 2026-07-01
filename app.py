@@ -10,6 +10,7 @@ import socket
 import atexit
 import copy
 import base64
+import io
 import html as html_lib
 import secrets
 import sqlite3
@@ -23,6 +24,14 @@ from requests.adapters import HTTPAdapter
 from bs4 import BeautifulSoup
 from flask import Flask, g, render_template, request, jsonify, redirect, url_for, session as flask_session
 from werkzeug.security import check_password_hash, generate_password_hash
+
+try:
+    from PIL import Image, ImageDraw, ImageFont, ImageOps
+except Exception:
+    Image = None
+    ImageDraw = None
+    ImageFont = None
+    ImageOps = None
 
 try:
     from google.oauth2 import service_account
@@ -141,6 +150,7 @@ AVAILABILITY_CHECK_LIMIT = env_int("AVAILABILITY_CHECK_LIMIT", 200, 1, 1000)
 AVAILABILITY_TASK_SECRET = (os.environ.get("AVAILABILITY_TASK_SECRET") or os.environ.get("BOT_CHECK_SECRET") or "").strip()
 TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
 TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+TELEGRAM_SEND_APP_CARD = env_bool("TELEGRAM_SEND_APP_CARD", True)
 AUTH_REQUIRED = (os.environ.get("AUTH_REQUIRED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
 AUTH_ALLOWED_EMAIL_DOMAIN = (os.environ.get("AUTH_ALLOWED_EMAIL_DOMAIN", "@wildwildgroup.com") or "@wildwildgroup.com").strip().lower()
 AUTH_DB_PATH = (
@@ -210,6 +220,7 @@ SENSOR_TOWER_PUBLISHER_METADATA_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
 SENSOR_TOWER_PUBLISHER_APPS_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
 APP_OVERVIEW_PAYLOAD_CACHE = TTLCache(CACHE_TTL_APP_OVERVIEW)
 PUBLISHER_PAYLOAD_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
+TELEGRAM_APP_CARD_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
 
 # ---------------- COUNTRY LISTS ----------------
 
@@ -4329,6 +4340,199 @@ def telegram_chunk_text(text: str, max_len: int = 3900) -> list[str]:
     return chunks
 
 
+def load_card_font(size: int, bold: bool = False):
+    if ImageFont is None:
+        return None
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial Bold.ttf" if bold else "/Library/Fonts/Arial.ttf",
+    ]
+    for path in candidates:
+        try:
+            if path and os.path.exists(path):
+                return ImageFont.truetype(path, size=size)
+        except Exception:
+            continue
+    try:
+        return ImageFont.load_default()
+    except Exception:
+        return None
+
+
+def fit_text(draw, text: str, font, max_width: int, min_size: int, start_size: int, bold: bool = False):
+    value = str(text or "").strip() or "Untitled app"
+    font_obj = font
+    size = start_size
+    while font_obj and size > min_size and draw.textbbox((0, 0), value, font=font_obj)[2] > max_width:
+        size -= 4
+        font_obj = load_card_font(size, bold=bold)
+    if not font_obj:
+        return value, font
+    while draw.textbbox((0, 0), value, font=font_obj)[2] > max_width and len(value) > 8:
+        value = value[:-2].rstrip() + "…"
+    return value, font_obj
+
+
+def normalize_content_rating_label(value: str) -> str:
+    text = str(value or "").strip()
+    if not text or text == "—":
+        return "—"
+    match = re.search(r"(\d{1,2})\s*\+", text)
+    if match:
+        return f"{match.group(1)}+"
+    match = re.search(r"rated\s+for\s+(\d{1,2})", text, flags=re.I)
+    if match:
+        return f"{match.group(1)}+"
+    return text
+
+
+def sensor_tower_app_card_meta(app: dict) -> dict:
+    app_id = str(app.get("app_id") or "").strip()
+    fallback_name = str(app.get("app_name") or app_id or "Untitled app").strip()
+    meta = {
+        "app_id": app_id,
+        "name": fallback_name,
+        "category": "—",
+        "content_rating": "—",
+        "icon_url": "",
+    }
+    if not app_id:
+        return meta
+
+    data, _error = fetch_sensor_tower_app_overview(app_id, "US")
+    if not isinstance(data, dict):
+        return meta
+
+    categories = [
+        format_sensor_tower_category(item.get("name") or item.get("id"))
+        for item in (data.get("categories") or [])
+        if isinstance(item, dict) and (item.get("name") or item.get("id"))
+    ]
+    categories = [item for item in categories if item and item != "—"]
+
+    meta.update({
+        "name": data.get("name") or fallback_name,
+        "category": categories[0] if categories else "—",
+        "content_rating": normalize_content_rating_label(data.get("content_rating") or "—"),
+        "icon_url": data.get("icon_url") or "",
+    })
+    return meta
+
+
+def rounded_image(image, radius: int):
+    if Image is None or ImageOps is None:
+        return image
+    img = image.convert("RGBA")
+    mask = Image.new("L", img.size, 0)
+    draw = ImageDraw.Draw(mask)
+    draw.rounded_rectangle((0, 0, img.size[0], img.size[1]), radius=radius, fill=255)
+    img.putalpha(mask)
+    return img
+
+
+def fetch_card_icon(icon_url: str, size: int):
+    if Image is None or not icon_url:
+        return None
+    try:
+        response = session.get(icon_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        if response.status_code != 200:
+            return None
+        icon = Image.open(io.BytesIO(response.content)).convert("RGBA")
+        icon = ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
+        return rounded_image(icon, 28)
+    except Exception:
+        return None
+
+
+def build_telegram_app_card(app: dict) -> bytes | None:
+    if not TELEGRAM_SEND_APP_CARD or Image is None or ImageDraw is None:
+        return None
+
+    app_id = str(app.get("app_id") or "").strip().lower()
+    cache_key = ("telegram_app_card", app_id)
+    cached = TELEGRAM_APP_CARD_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
+    bg_path = resource_path("static/img/telegram-alert-bg.png")
+    if not os.path.exists(bg_path):
+        return None
+
+    try:
+        card = Image.open(bg_path).convert("RGB")
+    except Exception:
+        return None
+
+    draw = ImageDraw.Draw(card)
+    meta = sensor_tower_app_card_meta(app)
+
+    title_font = load_card_font(76, bold=True)
+    meta_font = load_card_font(36, bold=True)
+    rating_font = load_card_font(34, bold=True)
+    small_font = load_card_font(26, bold=True)
+
+    icon_size = 230
+    icon_x, icon_y = 60, 78
+    icon = fetch_card_icon(meta.get("icon_url"), icon_size)
+    if icon is not None:
+        shadow = Image.new("RGBA", (icon_size + 22, icon_size + 22), (0, 0, 0, 0))
+        shadow_draw = ImageDraw.Draw(shadow)
+        shadow_draw.rounded_rectangle((11, 11, icon_size + 11, icon_size + 11), radius=34, fill=(0, 0, 0, 115))
+        card.paste(shadow, (icon_x - 11, icon_y - 6), shadow)
+        card.paste(icon, (icon_x, icon_y), icon)
+    else:
+        draw.rounded_rectangle(
+            (icon_x, icon_y, icon_x + icon_size, icon_y + icon_size),
+            radius=30,
+            fill=(22, 28, 36),
+            outline=(255, 255, 255),
+            width=3,
+        )
+        initials = (meta.get("name") or "APP")[:2].upper()
+        initials_font = load_card_font(74, bold=True)
+        bbox = draw.textbbox((0, 0), initials, font=initials_font)
+        draw.text(
+            (icon_x + (icon_size - (bbox[2] - bbox[0])) / 2, icon_y + (icon_size - (bbox[3] - bbox[1])) / 2 - 8),
+            initials,
+            fill=(255, 255, 255),
+            font=initials_font,
+        )
+
+    text_x = 320
+    title, title_font = fit_text(draw, meta.get("name"), title_font, 680, 44, 76, bold=True)
+    draw.text((text_x, 90), title, fill=(255, 255, 255), font=title_font)
+
+    category = meta.get("category") or "—"
+    category_text, meta_font = fit_text(draw, f"Android  {category}", meta_font, 620, 26, 36, bold=True)
+    draw.text((text_x, 190), category_text, fill=(255, 255, 255), font=meta_font)
+
+    rating_label = normalize_content_rating_label(meta.get("content_rating"))
+    badge_x, badge_y, badge_w, badge_h = text_x, 250, 120, 56
+    draw.rounded_rectangle((badge_x, badge_y, badge_x + badge_w, badge_y + badge_h), radius=4, fill=(240, 0, 0))
+    draw.rectangle((badge_x, badge_y + badge_h - 10, badge_x + badge_w, badge_y + badge_h), fill=(184, 0, 0))
+    badge_bbox = draw.textbbox((0, 0), rating_label, font=rating_font)
+    draw.text(
+        (
+            badge_x + (badge_w - (badge_bbox[2] - badge_bbox[0])) / 2,
+            badge_y + (badge_h - (badge_bbox[3] - badge_bbox[1])) / 2 - 3,
+        ),
+        rating_label,
+        fill=(255, 255, 255),
+        font=rating_font,
+    )
+
+    if app_id:
+        package_text, small_font = fit_text(draw, app_id, small_font, 620, 20, 26, bold=True)
+        draw.text((text_x, 320), package_text, fill=(255, 255, 255, ), font=small_font)
+
+    output = io.BytesIO()
+    card.save(output, format="PNG", optimize=True)
+    data = output.getvalue()
+    TELEGRAM_APP_CARD_CACHE.set(cache_key, data)
+    return data
+
+
 def send_telegram_message(text: str):
     if not TELEGRAM_BOT_TOKEN:
         raise BotConfigError("TELEGRAM_BOT_TOKEN не задано.")
@@ -4369,6 +4573,73 @@ def send_telegram_message(text: str):
             raise BotConfigError(f"Telegram HTTP {response.status_code}: {response.text[:500]}")
         sent.append(response.json())
     return sent
+
+
+def send_telegram_photo(photo_bytes: bytes, caption: str = ""):
+    if not TELEGRAM_BOT_TOKEN:
+        raise BotConfigError("TELEGRAM_BOT_TOKEN не задано.")
+    if not TELEGRAM_CHAT_ID:
+        raise BotConfigError("TELEGRAM_CHAT_ID не задано.")
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": "true",
+    }
+    if caption:
+        payload["caption"] = caption
+
+    last_error = None
+    response = None
+    for attempt in range(1, HTTP_REQUEST_RETRIES + 1):
+        try:
+            files = {"photo": ("wwa-app-card.png", io.BytesIO(photo_bytes), "image/png")}
+            response = session.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto",
+                data=payload,
+                files=files,
+                timeout=35,
+            )
+        except requests.RequestException as e:
+            last_error = e
+            if attempt >= HTTP_REQUEST_RETRIES:
+                raise BotConfigError(f"Telegram photo request failed: {e}")
+            time.sleep(0.7 * attempt)
+            continue
+
+        if response.status_code in {429, 500, 502, 503, 504} and attempt < HTTP_REQUEST_RETRIES:
+            time.sleep(0.7 * attempt)
+            continue
+        break
+    else:
+        raise BotConfigError(f"Telegram photo request failed: {last_error}")
+
+    if response is None or response.status_code >= 400:
+        body = response.text[:500] if response is not None else str(last_error)
+        status = response.status_code if response is not None else "unknown"
+        raise BotConfigError(f"Telegram photo HTTP {status}: {body}")
+    return [response.json()]
+
+
+def send_telegram_event_message(text: str, app: dict):
+    try:
+        card = build_telegram_app_card(app)
+    except Exception:
+        card = None
+
+    if not card:
+        return send_telegram_message(text)
+
+    # Telegram photo captions are limited to 1024 characters. For long country
+    # lists, send the visual card first and the full text immediately after.
+    caption = text if len(text) <= 950 else ""
+    try:
+        sent = send_telegram_photo(card, caption=caption)
+        if not caption:
+            sent.extend(send_telegram_message(text))
+        return sent
+    except Exception:
+        return send_telegram_message(text)
 
 
 def build_bot_message(event: str, app: dict, snapshot: dict, changed_codes: list[str] | set[str]) -> str:
@@ -4508,11 +4779,12 @@ def run_availability_bot_check(
             store.update_app(app["row_index"], update_payload)
 
         for event, changed_codes in events:
-            message = build_bot_message(event, {**app, **update_payload}, snapshot, changed_codes)
+            app_for_message = {**app, **update_payload}
+            message = build_bot_message(event, app_for_message, snapshot, changed_codes)
             if send_messages:
-                send_telegram_message(message)
+                send_telegram_event_message(message, app_for_message)
             if write_changes:
-                store.append_log(event, {**app, **update_payload}, changed_codes, f"open={len(current_open)} closed={len(current_closed)}")
+                store.append_log(event, app_for_message, changed_codes, f"open={len(current_open)} closed={len(current_closed)}")
             result["notifications"].append({
                 "event": event,
                 "app_id": app_id,
