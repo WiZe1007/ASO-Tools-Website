@@ -132,6 +132,14 @@ def escape(value) -> str:
     return html.escape(str(value or ""))
 
 
+def event_label(event: str) -> str:
+    return {
+        "new_live": "новий Live",
+        "new_closed": "країни закрилися",
+        "new_opened": "країни відкрилися",
+    }.get(str(event or ""), str(event or "event"))
+
+
 def summary_text(result: dict, title: str = "Availability check finished") -> str:
     notifications = result.get("notifications") or []
     errors = result.get("errors") or []
@@ -151,7 +159,7 @@ def summary_text(result: dict, title: str = "Availability check finished") -> st
         for item in notifications[:20]:
             countries = ", ".join(item.get("countries") or [])
             lines.append(
-                f"• {escape(item.get('event'))}: <code>{escape(item.get('app_id'))}</code> "
+                f"• {escape(event_label(item.get('event')))}: <code>{escape(item.get('app_id'))}</code> "
                 f"({item.get('countries_count', 0)} countries: {escape(countries)})"
             )
         if len(notifications) > 20:

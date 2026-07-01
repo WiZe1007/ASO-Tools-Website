@@ -4382,8 +4382,15 @@ def build_bot_message(event: str, app: dict, snapshot: dict, changed_codes: list
     closed_count = len(snapshot.get("closed_codes") or [])
     total = snapshot.get("total") or 0
 
-    title = "🟢 Новий додаток вийшов у Live" if event == "new_live" else "🔴 Availability змінився: країни закрилися"
-    country_intro = "Закриті країни зараз" if event == "new_live" else "Нові закриті країни"
+    if event == "new_live":
+        title = "🟢 Новий додаток вийшов у Live"
+        country_intro = "Закриті країни зараз"
+    elif event == "new_opened":
+        title = "🔵 Availability змінився: країни відкрилися"
+        country_intro = "Нові відкриті країни"
+    else:
+        title = "🔴 Availability змінився: країни закрилися"
+        country_intro = "Нові закриті країни"
 
     return "\n".join([
         f"<b>{title}</b>",
@@ -4464,21 +4471,23 @@ def run_availability_bot_check(
             continue
 
         prev_open = split_country_codes(app.get("last_open_countries"))
+        prev_closed = split_country_codes(app.get("last_closed_countries"))
         prev_status = str(app.get("status") or "").strip().lower()
         prev_live = prev_status == "live" or bool(prev_open)
         current_open = set(snapshot["open_codes"])
         current_closed = set(snapshot["closed_codes"])
         current_live = bool(current_open)
 
-        event = None
-        changed_codes: set[str] = set()
+        events: list[tuple[str, set[str]]] = []
         if current_live and not prev_live:
-            event = "new_live"
-            changed_codes = current_closed
+            events.append(("new_live", current_closed))
         elif current_live and prev_live:
-            changed_codes = prev_open & current_closed
-            if changed_codes:
-                event = "new_closed"
+            newly_closed = prev_open & current_closed
+            newly_opened = prev_closed & current_open
+            if newly_closed:
+                events.append(("new_closed", newly_closed))
+            if newly_opened:
+                events.append(("new_opened", newly_opened))
 
         update_payload = {
             "enabled": app.get("enabled") if str(app.get("enabled") or "").strip() else "TRUE",
@@ -4498,7 +4507,7 @@ def run_availability_bot_check(
         if write_changes:
             store.update_app(app["row_index"], update_payload)
 
-        if event:
+        for event, changed_codes in events:
             message = build_bot_message(event, {**app, **update_payload}, snapshot, changed_codes)
             if send_messages:
                 send_telegram_message(message)
