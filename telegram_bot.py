@@ -42,6 +42,7 @@ BOT_MAX_COMMAND_CHECKS = env_int("BOT_MAX_COMMAND_CHECKS", AVAILABILITY_CHECK_LI
 BOT_SCHEDULE_GRACE_MINUTES = env_int("BOT_SCHEDULE_GRACE_MINUTES", 10, 1, 59)
 BOT_API_RETRIES = env_int("BOT_API_RETRIES", 4, 1, 8)
 BOT_PROGRESS_EVERY_APPS = env_int("BOT_PROGRESS_EVERY_APPS", 10, 1, 100)
+TELEGRAM_SEND_EMPTY_SUMMARY = os.environ.get("TELEGRAM_SEND_EMPTY_SUMMARY", "1").strip() != "0"
 
 check_lock = threading.Lock()
 last_scheduled_key = ""
@@ -166,6 +167,16 @@ def summary_text(result: dict, title: str = "Availability check finished") -> st
     return "\n".join(lines)
 
 
+def scheduled_summary_title(result: dict) -> str:
+    notifications = result.get("notifications") or []
+    errors = result.get("errors") or []
+    if errors:
+        return "Автоматична перевірка завершена: є помилки"
+    if notifications:
+        return "Автоматична перевірка завершена: є зміни"
+    return "Автоматична перевірка завершена: змін не було"
+
+
 def help_text(chat_id: str | int) -> str:
     hours = ", ".join(str(hour) for hour in sorted(parse_check_hours()))
     return "\n".join([
@@ -263,8 +274,12 @@ def run_scheduled_check():
 
     try:
         result = run_availability_bot_check(send_messages=True, write_changes=True, limit=AVAILABILITY_CHECK_LIMIT)
-        if os.environ.get("TELEGRAM_SEND_EMPTY_SUMMARY", "0").strip() == "1" and TELEGRAM_CHAT_ID:
-            safe_send_message(TELEGRAM_CHAT_ID, summary_text(result, "Scheduled availability check finished"))
+        if TELEGRAM_CHAT_ID and (
+            TELEGRAM_SEND_EMPTY_SUMMARY
+            or result.get("notifications")
+            or result.get("errors")
+        ):
+            safe_send_message(TELEGRAM_CHAT_ID, summary_text(result, scheduled_summary_title(result)))
     except Exception:
         if TELEGRAM_CHAT_ID:
             safe_send_message(
