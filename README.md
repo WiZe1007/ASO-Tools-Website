@@ -110,6 +110,7 @@ TELEGRAM_CHAT_ID=<company chat/channel id>
 Optional:
 
 ```text
+BOT_DISPLAY_NAME=WWA ASO Availability Bot
 AVAILABILITY_DB_APPS_SHEET=Apps
 AVAILABILITY_DB_LOG_SHEET=Checks
 AVAILABILITY_CHECK_LIMIT=200
@@ -130,8 +131,55 @@ It sends Telegram messages when:
 
 - an app first becomes live in at least one country;
 - a country that was previously open becomes closed.
+- a country that was previously closed becomes open.
+- a scheduled check finishes without changes, if `TELEGRAM_SEND_EMPTY_SUMMARY=1`.
 
 For already live apps, set `status=live` before the first bot run. Then the first run creates a baseline without sending a "new live" notification.
+
+### Second Team Bot
+
+For another developer team, do not copy the code. Create one more Telegram bot
+and one more Render **Background Worker** from the same GitHub repository.
+Each worker is isolated by its own environment variables.
+
+Recommended setup:
+
+1. Create a new bot in `@BotFather`.
+2. Create a separate Telegram channel/group for the second team.
+3. Add the new bot to that channel/group as admin.
+4. Create a separate Google Sheet for the second team's apps, or use separate
+   tabs in the same spreadsheet.
+5. Create a new Render **Background Worker** from this repo.
+6. Use the same build/start commands:
+
+```bash
+pip install -r requirements.txt
+python telegram_bot.py
+```
+
+Environment variables for the second worker:
+
+```text
+BOT_DISPLAY_NAME=WWA GEO Availability Bot - Team 2
+TELEGRAM_BOT_TOKEN=<second bot token from @BotFather>
+TELEGRAM_CHAT_ID=<second team channel/group id>
+AVAILABILITY_DB_SPREADSHEET_ID=<second team spreadsheet id>
+GOOGLE_SERVICE_ACCOUNT_JSON=<same or separate service account JSON>
+BOT_TIMEZONE=Europe/Kiev
+BOT_CHECK_HOURS=9,15,21
+TELEGRAM_SEND_EMPTY_SUMMARY=1
+WWA_BOT_MAX_WORKERS_AVAILABILITY=3
+```
+
+If both teams use one spreadsheet, separate them by sheet names instead:
+
+```text
+AVAILABILITY_DB_SPREADSHEET_ID=<shared spreadsheet id>
+AVAILABILITY_DB_APPS_SHEET=Apps_Team2
+AVAILABILITY_DB_LOG_SHEET=Checks_Team2
+```
+
+The service account email must have `Editor` access to the spreadsheet.
 
 ### Separate Telegram Bot
 

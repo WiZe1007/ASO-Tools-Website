@@ -36,6 +36,7 @@ def env_int(name: str, default: int, min_value: int = 1, max_value: int = 3600) 
 
 BOT_TIMEZONE = os.environ.get("BOT_TIMEZONE", "Europe/Kiev").strip() or "Europe/Kiev"
 BOT_CHECK_HOURS = os.environ.get("BOT_CHECK_HOURS", "9,15,21").strip() or "9,15,21"
+BOT_DISPLAY_NAME = os.environ.get("BOT_DISPLAY_NAME", "WWA ASO Availability Bot").strip() or "WWA ASO Availability Bot"
 BOT_POLL_TIMEOUT = env_int("BOT_POLL_TIMEOUT", 25, 5, 50)
 BOT_DROP_PENDING_UPDATES = os.environ.get("BOT_DROP_PENDING_UPDATES", "1").strip() != "0"
 BOT_MAX_COMMAND_CHECKS = env_int("BOT_MAX_COMMAND_CHECKS", AVAILABILITY_CHECK_LIMIT, 1, 1000)
@@ -188,7 +189,7 @@ def scheduled_summary_title(result: dict) -> str:
 def help_text(chat_id: str | int) -> str:
     hours = ", ".join(str(hour) for hour in sorted(parse_check_hours()))
     return "\n".join([
-        "<b>WWA ASO Availability Bot</b>",
+        f"<b>{escape(BOT_DISPLAY_NAME)}</b>",
         "",
         "Команди:",
         "/status - показати стан бази",
@@ -355,7 +356,7 @@ def handle_message(message: dict):
             send_message(
                 chat_id,
                 "\n".join([
-                    "<b>Bot status</b>",
+                    f"<b>{escape(BOT_DISPLAY_NAME)} status</b>",
                     "",
                     f"Apps in database: <b>{len(apps)}</b>",
                     f"Live: <b>{live}</b>",
@@ -400,6 +401,7 @@ def polling_loop():
     print(json.dumps({
         "ok": True,
         "event": "bot_started",
+        "bot": BOT_DISPLAY_NAME,
         "timezone": BOT_TIMEZONE,
         "check_hours": sorted(parse_check_hours()),
         "allowed_chats": sorted(allowed_chat_ids()),
