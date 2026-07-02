@@ -144,8 +144,7 @@
     }
     .toolbar{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:end;padding:24px}
     .field{display:grid;gap:9px}
-    .field span,.filter-title{color:var(--muted);font-weight:850}
-    .filter-title{margin:0 0 12px}
+    .field span{color:var(--muted);font-weight:850}
     .input{
       width:100%;
       min-height:58px;
@@ -159,7 +158,7 @@
     }
     .input:focus{border-color:rgba(35,199,255,.55);box-shadow:0 0 0 5px rgba(35,199,255,.12)}
     .filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
-    .filter-btn,.refresh-btn,.link-btn,.copy-btn{
+    .refresh-btn,.link-btn,.copy-btn{
       border:1px solid rgba(255,255,255,.14);
       background:rgba(255,255,255,.07);
       color:var(--text);
@@ -170,7 +169,7 @@
       text-decoration:none;
       white-space:nowrap;
     }
-    .filter-btn.is-active,.refresh-btn{
+    .refresh-btn{
       color:#1b170a;
       background:linear-gradient(90deg,#ffd36b,#ff9854);
       border-color:rgba(255,194,71,.45);
@@ -249,7 +248,6 @@
     html[data-theme="light"] .meta{background:rgba(255,255,255,.76);border-color:rgba(36,61,88,.14);color:#152235}
     html[data-theme="light"] .subtitle,
     html[data-theme="light"] .field span,
-    html[data-theme="light"] .filter-title,
     html[data-theme="light"] .status-line,
     html[data-theme="light"] .result-head,
     html[data-theme="light"] .closed-title{color:#52657d}
@@ -358,15 +356,8 @@
         <span>Пошук по bundle, назві або URL</span>
         <input id="searchInput" class="input" type="search" placeholder="com.dragonplus.cookingfr" autocomplete="off" />
       </label>
-      <div>
-        <div class="filter-title">Фільтр</div>
-        <div class="filters" role="group" aria-label="Filter apps">
-          <button class="filter-btn is-active" type="button" data-filter="live">Live</button>
-          <button class="filter-btn" type="button" data-filter="closed">Є закриті GEO</button>
-          <button class="filter-btn" type="button" data-filter="watch">Watch</button>
-          <button class="filter-btn" type="button" data-filter="all">Усі</button>
-          <button id="refreshBtn" class="refresh-btn" type="button">Оновити</button>
-        </div>
+      <div class="filters" role="group" aria-label="Оновити базу live-додатків">
+        <button id="refreshBtn" class="refresh-btn" type="button">Оновити</button>
       </div>
     </section>
 
@@ -386,7 +377,7 @@
   <script>
     (() => {
       const byId = (id) => document.getElementById(id);
-      const state = { apps: [], filter: "live", query: "", loadedAt: "" };
+      const state = { apps: [], query: "", loadedAt: "" };
 
       const searchInput = byId("searchInput");
       const statusLine = byId("statusLine");
@@ -452,14 +443,6 @@
           app.owner,
           app.notes,
         ].some((value) => String(value || "").toLowerCase().includes(query));
-      }
-
-      function appMatchesFilter(app) {
-        if (state.filter === "all") return true;
-        if (state.filter === "live") return Boolean(app.is_live);
-        if (state.filter === "watch") return !app.is_live;
-        if (state.filter === "closed") return Number(app.closed_count || 0) > 0;
-        return true;
       }
 
       function statusPill(app) {
@@ -528,12 +511,12 @@
       }
 
       function renderApps() {
-        const apps = state.apps.filter(appMatchesFilter).filter(appMatchesSearch);
+        const apps = state.apps.filter(appMatchesSearch);
         resultCount.textContent = pluralApps(apps.length);
         lastLoaded.textContent = state.loadedAt ? `Оновлено: ${formatDate(state.loadedAt)}` : "Ще не завантажено";
 
         if (!apps.length) {
-          appsList.innerHTML = `<div class="panel empty-state">Нічого не знайдено. Спробуй інший bundle або перемкни фільтр.</div>`;
+          appsList.innerHTML = `<div class="panel empty-state">Нічого не знайдено. Спробуй інший bundle або назву додатку.</div>`;
           return;
         }
 
@@ -564,15 +547,6 @@
           refreshBtn.disabled = false;
         }
       }
-
-      document.querySelectorAll(".filter-btn").forEach((button) => {
-        button.addEventListener("click", () => {
-          document.querySelectorAll(".filter-btn").forEach((item) => item.classList.remove("is-active"));
-          button.classList.add("is-active");
-          state.filter = button.dataset.filter || "live";
-          renderApps();
-        });
-      });
 
       searchInput.addEventListener("input", () => {
         state.query = searchInput.value;
