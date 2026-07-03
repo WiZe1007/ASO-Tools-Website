@@ -90,6 +90,10 @@ The website also exposes `/live-apps`, a read-only page for employees to view
 the current live app database, search by bundle/package name, and see closed
 GEOs saved by the Telegram availability checks.
 
+The website can also expose `/s-live-apps` as a separate read-only page for the
+second team's live app database. Access to this page is controlled by employee
+email through `S_LIVE_DB_ALLOWED_EMAILS`.
+
 ### Google Service Account
 
 1. Create a Google Cloud service account.
@@ -180,6 +184,26 @@ AVAILABILITY_DB_LOG_SHEET=Checks_Team2
 ```
 
 The service account email must have `Editor` access to the spreadsheet.
+
+To show the second team's database inside the website, add these variables to
+the Render **Web Service** too:
+
+```text
+S_LIVE_DB_ALLOWED_EMAILS=email1@wildwildgroup.com,email2@wildwildgroup.com
+S_AVAILABILITY_DB_SPREADSHEET_ID=<second team spreadsheet id>
+S_GOOGLE_SERVICE_ACCOUNT_JSON=<second team service account JSON>
+```
+
+Optional website variables for that page:
+
+```text
+S_AVAILABILITY_DB_APPS_SHEET=Apps
+S_AVAILABILITY_DB_LOG_SHEET=Checks
+```
+
+Only logged-in users whose email is listed in `S_LIVE_DB_ALLOWED_EMAILS` will
+see `S Live DB` in the navigation. Direct access to `/s-live-apps` and
+`/api/s-live-apps` returns forbidden for everyone else.
 
 ### Separate Telegram Bot
 

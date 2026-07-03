@@ -1,9 +1,14 @@
+{% set live_db_title = live_db_title|default('Live Apps Database') %}
+{% set live_db_tag = live_db_tag|default('Live app database') %}
+{% set live_db_heading = live_db_heading|default(live_db_title) %}
+{% set live_db_api_url = live_db_api_url|default(url_for('live_apps_api')) %}
+{% set live_db_page = live_db_page|default('live-db') %}
 <!doctype html>
 <html lang="uk">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Live Apps Database</title>
+  <title>{{ live_db_title }}</title>
   <link rel="icon" href="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" />
 
   <style>
@@ -99,8 +104,19 @@
     .navbtn[data-nav="geolink"] .dot::before{content:"⌁"}
     .navbtn[data-nav="overview"] .dot::before{content:"◫"}
     .navbtn[data-nav="database"] .dot::before{content:"▤"}
+    .navbtn[data-nav="s-database"] .dot::before{content:"▥"}
     body[data-page="live-db"] .navbtn[data-nav="database"]{color:#ffc22d}
+    body[data-page="s-live-db"] .navbtn[data-nav="s-database"]{color:#ffc22d}
     body[data-page="live-db"] .navbtn[data-nav="database"]::after{
+      content:"";
+      position:absolute;
+      left:0;
+      right:0;
+      bottom:-7px;
+      height:2px;
+      background:#f5b320;
+    }
+    body[data-page="s-live-db"] .navbtn[data-nav="s-database"]::after{
       content:"";
       position:absolute;
       left:0;
@@ -299,7 +315,7 @@
   <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260701c') }}" defer></script>
 </head>
 
-<body data-page="live-db">
+<body data-page="{{ live_db_page }}">
   <div class="bg"></div>
 
   <div class="topnav">
@@ -308,7 +324,7 @@
         <img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" alt="WWA" class="logo" />
         <div class="txt">
           <p class="name">WWA ASO Tools</p>
-          <p class="tag">Live app database</p>
+          <p class="tag">{{ live_db_tag }}</p>
         </div>
       </div>
 
@@ -318,6 +334,9 @@
         <a class="navbtn" data-nav="geolink" href="/geo-link"><span class="dot"></span> Geo Link</a>
         <a class="navbtn" data-nav="overview" href="/app-overview"><span class="dot"></span> Overview</a>
         <a class="navbtn" data-nav="database" href="/live-apps"><span class="dot"></span> Live DB</a>
+        {% if can_access_s_live_db %}
+        <a class="navbtn" data-nav="s-database" href="/s-live-apps"><span class="dot"></span> S Live DB</a>
+        {% endif %}
       </div>
 
       <div class="navright">
@@ -339,12 +358,15 @@
       <a class="navbtn" data-nav="geolink" href="/geo-link"><span class="dot"></span> Geo Link</a>
       <a class="navbtn" data-nav="overview" href="/app-overview"><span class="dot"></span> Overview</a>
       <a class="navbtn" data-nav="database" href="/live-apps"><span class="dot"></span> Live DB</a>
+      {% if can_access_s_live_db %}
+      <a class="navbtn" data-nav="s-database" href="/s-live-apps"><span class="dot"></span> S Live DB</a>
+      {% endif %}
     </div>
   </div>
 
   <main class="wrap">
     <header class="hero">
-      <h1 class="title">Live Apps Database</h1>
+      <h1 class="title">{{ live_db_heading }}</h1>
       <p class="subtitle">
         Тут відображаються додатки з Google Sheet бази.
         Можна швидко знайти апку по bundle/package name і подивитися, які GEO зараз закриті.
@@ -377,6 +399,7 @@
   <script>
     (() => {
       const byId = (id) => document.getElementById(id);
+      const API_URL = {{ live_db_api_url|tojson }};
       const state = { apps: [], query: "", loadedAt: "" };
 
       const searchInput = byId("searchInput");
@@ -528,7 +551,7 @@
         statusLine.textContent = "Підвантажую базу live-додатків...";
         refreshBtn.disabled = true;
         try {
-          const response = await fetch("/api/live-apps", { headers: { "Accept": "application/json" } });
+          const response = await fetch(API_URL, { headers: { "Accept": "application/json" } });
           const data = await response.json().catch(() => ({}));
           if (!response.ok || data.ok === false) {
             throw new Error(data.error || `HTTP ${response.status}`);

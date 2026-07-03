@@ -1334,6 +1334,9 @@
         <a class="navbtn" data-nav="geolink" href="/geo-link"><span class="dot"></span> Geo Link</a>
         <a class="navbtn" data-nav="overview" href="/app-overview"><span class="dot"></span> Overview</a>
         <a class="navbtn" data-nav="database" href="/live-apps"><span class="dot"></span> Live DB</a>
+        {% if can_access_s_live_db %}
+        <a class="navbtn" data-nav="s-database" href="/s-live-apps"><span class="dot"></span> S Live DB</a>
+        {% endif %}
       </div>
 
       <div class="navright">
@@ -1355,6 +1358,9 @@
       <a class="navbtn" data-nav="geolink" href="/geo-link"><span class="dot"></span> Geo Link</a>
       <a class="navbtn" data-nav="overview" href="/app-overview"><span class="dot"></span> Overview</a>
       <a class="navbtn" data-nav="database" href="/live-apps"><span class="dot"></span> Live DB</a>
+      {% if can_access_s_live_db %}
+      <a class="navbtn" data-nav="s-database" href="/s-live-apps"><span class="dot"></span> S Live DB</a>
+      {% endif %}
     </div>
   </div>
 

@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from requests.adapters import HTTPAdapter
 from bs4 import BeautifulSoup
-from flask import Flask, g, render_template, request, jsonify, redirect, url_for, session as flask_session
+from flask import Flask, abort, g, render_template, request, jsonify, redirect, url_for, session as flask_session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
@@ -146,6 +146,14 @@ AVAILABILITY_DB_SPREADSHEET_ID = (
 ).strip()
 AVAILABILITY_DB_APPS_SHEET = os.environ.get("AVAILABILITY_DB_APPS_SHEET", "Apps").strip() or "Apps"
 AVAILABILITY_DB_LOG_SHEET = os.environ.get("AVAILABILITY_DB_LOG_SHEET", "Checks").strip() or "Checks"
+S_AVAILABILITY_DB_SPREADSHEET_ID = (
+    os.environ.get("S_AVAILABILITY_DB_SPREADSHEET_ID")
+    or os.environ.get("S_GOOGLE_SHEETS_SPREADSHEET_ID")
+    or ""
+).strip()
+S_AVAILABILITY_DB_APPS_SHEET = os.environ.get("S_AVAILABILITY_DB_APPS_SHEET", "Apps").strip() or "Apps"
+S_AVAILABILITY_DB_LOG_SHEET = os.environ.get("S_AVAILABILITY_DB_LOG_SHEET", "Checks").strip() or "Checks"
+S_LIVE_DB_ALLOWED_EMAILS = os.environ.get("S_LIVE_DB_ALLOWED_EMAILS", "").strip()
 AVAILABILITY_CHECK_LIMIT = env_int("AVAILABILITY_CHECK_LIMIT", 200, 1, 1000)
 AVAILABILITY_TASK_SECRET = (os.environ.get("AVAILABILITY_TASK_SECRET") or os.environ.get("BOT_CHECK_SECRET") or "").strip()
 TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
@@ -1154,9 +1162,25 @@ def normalize_auth_email(email: str) -> str:
     return str(email or "").strip().lower()
 
 
+def parse_email_allowlist(value: str) -> set[str]:
+    return {
+        normalize_auth_email(part)
+        for part in re.split(r"[\s,;]+", str(value or ""))
+        if normalize_auth_email(part)
+    }
+
+
 def email_domain_allowed(email: str) -> bool:
     normalized = normalize_auth_email(email)
     return bool(normalized and normalized.endswith(AUTH_ALLOWED_EMAIL_DOMAIN))
+
+
+def user_can_access_s_live_db(email: str | None = None) -> bool:
+    allowed = parse_email_allowlist(S_LIVE_DB_ALLOWED_EMAILS)
+    if not allowed:
+        return False
+    current_email = normalize_auth_email(email or flask_session.get("user_email") or "")
+    return current_email in allowed
 
 
 def get_user_by_email(email: str):
@@ -1234,6 +1258,7 @@ def inject_auth_context():
         "current_user_email": flask_session.get("user_email"),
         "auth_required": AUTH_REQUIRED,
         "auth_allowed_email_domain": AUTH_ALLOWED_EMAIL_DOMAIN,
+        "can_access_s_live_db": user_can_access_s_live_db(),
     }
 
 
@@ -3940,27 +3965,30 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def decode_service_account_info() -> dict:
-    raw_json = (
-        os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
-        or os.environ.get("GOOGLE_SERVICE_ACCOUNT_INFO")
-        or ""
-    ).strip()
+def decode_service_account_info(
+    json_env_names: tuple[str, ...] = ("GOOGLE_SERVICE_ACCOUNT_JSON", "GOOGLE_SERVICE_ACCOUNT_INFO"),
+    file_env_names: tuple[str, ...] = ("GOOGLE_SERVICE_ACCOUNT_FILE", "GOOGLE_APPLICATION_CREDENTIALS"),
+) -> dict:
+    raw_json = ""
+    for name in json_env_names:
+        raw_json = (os.environ.get(name) or "").strip()
+        if raw_json:
+            break
     if raw_json:
         if raw_json.startswith("{"):
             return json.loads(raw_json)
         return json.loads(base64.b64decode(raw_json).decode("utf-8"))
 
-    path = (
-        os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE")
-        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-        or ""
-    ).strip()
+    path = ""
+    for name in file_env_names:
+        path = (os.environ.get(name) or "").strip()
+        if path:
+            break
     if path:
         with open(os.path.expanduser(path), "r", encoding="utf-8") as f:
             return json.load(f)
 
-    raise BotConfigError("GOOGLE_SERVICE_ACCOUNT_JSON або GOOGLE_SERVICE_ACCOUNT_FILE не задано.")
+    raise BotConfigError(f"{json_env_names[0]} або {file_env_names[0]} не задано.")
 
 
 def sheets_range(sheet_name: str, cell_range: str) -> str:
@@ -4011,10 +4039,12 @@ class GoogleSheetsAvailabilityStore:
         spreadsheet_id: str = AVAILABILITY_DB_SPREADSHEET_ID,
         apps_sheet: str = AVAILABILITY_DB_APPS_SHEET,
         log_sheet: str = AVAILABILITY_DB_LOG_SHEET,
+        service_account_info: dict | None = None,
     ):
         self.spreadsheet_id = (spreadsheet_id or "").strip()
         self.apps_sheet = apps_sheet
         self.log_sheet = log_sheet
+        self.service_account_info = service_account_info
         self._credentials = None
 
     def _require_config(self):
@@ -4026,7 +4056,7 @@ class GoogleSheetsAvailabilityStore:
     def _token(self) -> str:
         self._require_config()
         if self._credentials is None:
-            info = decode_service_account_info()
+            info = self.service_account_info or decode_service_account_info()
             self._credentials = service_account.Credentials.from_service_account_info(
                 info,
                 scopes=list(GOOGLE_SHEETS_SCOPES),
@@ -4220,8 +4250,8 @@ def availability_app_payload(app: dict) -> dict:
     }
 
 
-def build_live_apps_database_payload() -> dict:
-    store = GoogleSheetsAvailabilityStore()
+def build_live_apps_database_payload(store: GoogleSheetsAvailabilityStore | None = None, source: str = "Google Sheets") -> dict:
+    store = store or GoogleSheetsAvailabilityStore()
     apps = [availability_app_payload(app) for app in store.load_apps()]
     apps.sort(key=lambda item: (
         0 if item["is_live"] else 1,
@@ -4241,7 +4271,7 @@ def build_live_apps_database_payload() -> dict:
 
     return {
         "ok": True,
-        "source": "Google Sheets",
+        "source": source,
         "checked_at": utc_now_iso(),
         "apps": apps,
         "stats": {
@@ -4253,6 +4283,26 @@ def build_live_apps_database_payload() -> dict:
         },
         "unique_closed_countries": [country_chip_payload(code) for code in unique_closed_codes],
     }
+
+
+def build_s_live_apps_store() -> GoogleSheetsAvailabilityStore:
+    return GoogleSheetsAvailabilityStore(
+        spreadsheet_id=S_AVAILABILITY_DB_SPREADSHEET_ID,
+        apps_sheet=S_AVAILABILITY_DB_APPS_SHEET,
+        log_sheet=S_AVAILABILITY_DB_LOG_SHEET,
+        service_account_info=decode_service_account_info(
+            json_env_names=("S_GOOGLE_SERVICE_ACCOUNT_JSON", "S_GOOGLE_SERVICE_ACCOUNT_INFO"),
+            file_env_names=("S_GOOGLE_SERVICE_ACCOUNT_FILE", "S_GOOGLE_APPLICATION_CREDENTIALS"),
+        ),
+    )
+
+
+def require_s_live_db_access():
+    if user_can_access_s_live_db():
+        return None
+    if request_wants_json():
+        return jsonify({"ok": False, "error": "S_LIVE_DB_FORBIDDEN"}), 403
+    abort(403)
 
 
 def availability_error_is_transient(error: str | None) -> bool:
@@ -5112,7 +5162,14 @@ def app_overview_page():
 
 @app.get("/live-apps")
 def live_apps_page():
-    return render_template("live_apps.html")
+    return render_template(
+        "live_apps.html",
+        live_db_title="Live Apps Database",
+        live_db_tag="Live app database",
+        live_db_heading="Live Apps Database",
+        live_db_api_url=url_for("live_apps_api"),
+        live_db_page="live-db",
+    )
 
 
 @app.get("/api/live-apps")
@@ -5123,6 +5180,34 @@ def live_apps_api():
         return jsonify({"ok": False, "error": str(e)}), 400
     except Exception as e:
         return jsonify({"ok": False, "error": f"LIVE_APPS_DATABASE_ERROR:{e}"}), 500
+
+
+@app.get("/s-live-apps")
+def s_live_apps_page():
+    access_response = require_s_live_db_access()
+    if access_response is not None:
+        return access_response
+    return render_template(
+        "live_apps.html",
+        live_db_title="S Live DB",
+        live_db_tag="S team database",
+        live_db_heading="S Live DB",
+        live_db_api_url=url_for("s_live_apps_api"),
+        live_db_page="s-live-db",
+    )
+
+
+@app.get("/api/s-live-apps")
+def s_live_apps_api():
+    access_response = require_s_live_db_access()
+    if access_response is not None:
+        return access_response
+    try:
+        return jsonify(build_live_apps_database_payload(build_s_live_apps_store(), source="S Google Sheets"))
+    except BotConfigError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"S_LIVE_APPS_DATABASE_ERROR:{e}"}), 500
 
 
 # ---------------- API: APP OVERVIEW ----------------
