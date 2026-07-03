@@ -2891,7 +2891,18 @@ body[data-page] .navbtn[data-nav="rating"] .dot::before{ content:"☆"; font-siz
 body[data-page] .navbtn[data-nav="availability"] .dot::before{ content:"◎"; font-size:18px; }
 body[data-page] .navbtn[data-nav="geolink"] .dot::before{ content:"⌁"; font-size:18px; }
 body[data-page] .navbtn[data-nav="database"] .dot::before{ content:"▤"; font-size:18px; }
-body[data-page] .navbtn[data-nav="s-database"] .dot::before{ content:"▥"; font-size:18px; }
+body[data-page] .navbtn[data-nav="s-database"] .dot::before{
+  content:"S";
+  width:18px;
+  height:18px;
+  display:grid;
+  place-items:center;
+  border:1.6px solid currentColor;
+  border-radius:7px;
+  font-size:10px;
+  font-weight:950;
+  line-height:1;
+}
 
 body[data-page="rating"] .navbtn[data-nav="rating"],
 body[data-page="availability"] .navbtn[data-nav="availability"],
@@ -4188,7 +4199,7 @@ body[data-page] .navbtn[data-nav="database"]{
 }
 
 body[data-page] .navbtn[data-nav="s-database"]{
-  --nav-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 5.5h14M5 12h14M5 18.5h14' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'/%3E%3Crect x='4' y='3.8' width='16' height='3.4' rx='1.2' fill='none' stroke='black' stroke-width='1.8'/%3E%3Crect x='4' y='10.3' width='16' height='3.4' rx='1.2' fill='none' stroke='black' stroke-width='1.8'/%3E%3Crect x='4' y='16.8' width='16' height='3.4' rx='1.2' fill='none' stroke='black' stroke-width='1.8'/%3E%3Cpath d='M8.2 5.5h.1M8.2 12h.1M8.2 18.5h.1' fill='none' stroke='black' stroke-width='2.7' stroke-linecap='round'/%3E%3C/svg%3E");
+  --nav-icon:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3.6' y='3.6' width='16.8' height='16.8' rx='5.2' fill='none' stroke='black' stroke-width='2.15'/%3E%3Cpath d='M15.75 7.45C14.78 6.78 13.58 6.43 12.2 6.43c-2.24 0-3.72.91-3.72 2.32 0 1.49 1.5 2.03 3.56 2.39 2.33.41 3.86 1.02 3.86 2.83 0 1.72-1.58 2.86-4.08 2.86-1.58 0-2.94-.39-4.02-1.18' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M7.85 19h8.3' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
 }
 
 body[data-page="rating"] .topnav .navbtn[data-nav="rating"],

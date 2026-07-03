@@ -104,7 +104,18 @@
     .navbtn[data-nav="geolink"] .dot::before{content:"⌁"}
     .navbtn[data-nav="overview"] .dot::before{content:"◫"}
     .navbtn[data-nav="database"] .dot::before{content:"▤"}
-    .navbtn[data-nav="s-database"] .dot::before{content:"▥"}
+    .navbtn[data-nav="s-database"] .dot::before{
+      content:"S";
+      width:18px;
+      height:18px;
+      display:grid;
+      place-items:center;
+      border:1.6px solid currentColor;
+      border-radius:7px;
+      font-size:10px;
+      font-weight:950;
+      line-height:1;
+    }
     body[data-page="live-db"] .navbtn[data-nav="database"]{color:#ffc22d}
     body[data-page="s-live-db"] .navbtn[data-nav="s-database"]{color:#ffc22d}
     body[data-page="live-db"] .navbtn[data-nav="database"]::after{
@@ -311,8 +322,8 @@
     }
   </style>
 
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260701c') }}" />
-  <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260701c') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260703a') }}" />
+  <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260703a') }}" defer></script>
 </head>
 
 <body data-page="{{ live_db_page }}">
