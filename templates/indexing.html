@@ -23,10 +23,53 @@
     *{box-sizing:border-box}
     body{margin:0;min-height:100vh;color:var(--text);background:var(--bg)}
     .bg{position:fixed;inset:0;z-index:-2;background:#07111f}
-    .wrap{width:min(1492px,calc(100% - 32px));margin:0 auto;padding:106px 0 42px}
-    .header{margin:0 0 20px}
-    .title{margin:0;font-size:46px;line-height:1.02;font-weight:950;letter-spacing:0}
-    .subtitle{
+    .topnav{position:fixed;top:14px;left:0;right:0;z-index:1000;padding:0 14px;pointer-events:none}
+    .topnav-inner{
+      width:min(1492px,100%);
+      margin:0 auto;
+      display:flex;
+      align-items:center;
+      gap:14px;
+      position:relative;
+      pointer-events:auto;
+      overflow:visible;
+    }
+    .brand{display:flex;align-items:center;gap:12px;min-width:0}
+    .brand .logo{display:block;object-fit:cover;flex:0 0 auto}
+    .brand .txt{min-width:0}
+    .brand .name,.brand .tag{margin:0}
+    .navlinks{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 auto}
+    .navbtn{display:inline-flex;align-items:center;gap:8px;text-decoration:none;white-space:nowrap}
+    .navright{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0}
+    .nav-utility,.hamb{
+      display:inline-grid;
+      place-items:center;
+      text-decoration:none;
+      flex:0 0 auto;
+    }
+    .hamb{display:none;position:relative}
+    .hamb span{position:absolute;left:10px;right:10px;height:2px;background:currentColor;border-radius:8px}
+    .hamb span:nth-child(1){top:12px}
+    .hamb span:nth-child(2){top:18px}
+    .hamb span:nth-child(3){top:24px}
+    .drawer{
+      display:none;
+      position:fixed;
+      z-index:999;
+      left:14px;
+      right:14px;
+      width:min(1492px,calc(100% - 28px));
+      margin:0 auto;
+      padding:12px;
+      border:1px solid var(--line);
+      box-shadow:0 22px 60px rgba(0,0,0,.34);
+    }
+    .drawer .grid{display:grid;gap:8px}
+    .drawer .navbtn{justify-content:flex-start}
+    .indexing-wrap{width:min(1492px,calc(100% - 32px));margin:0 auto;padding:106px 0 42px}
+    .indexing-header{margin:0 0 20px}
+    .indexing-title{margin:0;font-size:46px;line-height:1.02;font-weight:950;letter-spacing:0}
+    .indexing-subtitle{
       width:min(920px,100%);
       margin:14px 0 0;
       padding:14px 18px;
@@ -38,23 +81,23 @@
       line-height:1.48;
       backdrop-filter:blur(8px);
     }
-    .panel{
+    .indexing-panel{
       border:1px solid var(--line);
       border-radius:22px;
       background:linear-gradient(180deg, rgba(14,31,51,.82), rgba(9,20,34,.68));
       box-shadow:0 20px 60px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.08);
       backdrop-filter:blur(12px);
     }
-    .search-panel{padding:24px}
-    .form-grid{
+    .indexing-search-panel{padding:24px}
+    .indexing-form-grid{
       display:grid;
       grid-template-columns:minmax(0,1.4fr) minmax(220px,.55fr) minmax(150px,.28fr);
       gap:14px;
       align-items:end;
     }
-    .field{display:flex;flex-direction:column;gap:8px;min-width:0}
-    .field span{color:var(--muted);font-size:13px;font-weight:850;letter-spacing:.2px}
-    .input,.textarea{
+    .indexing-field{display:flex;flex-direction:column;gap:8px;min-width:0}
+    .indexing-field span{color:var(--muted);font-size:13px;font-weight:850;letter-spacing:.2px}
+    .indexing-input,.indexing-textarea{
       width:100%;
       border:1px solid rgba(161,181,204,.24);
       border-radius:12px;
@@ -65,16 +108,16 @@
       font-weight:720;
       box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
     }
-    .input{height:54px;padding:0 16px}
-    .textarea{
+    .indexing-input{height:54px;padding:0 16px}
+    .indexing-textarea{
       margin-top:14px;
       min-height:142px;
       resize:vertical;
       padding:14px 16px;
       line-height:1.45;
     }
-    .input::placeholder,.textarea::placeholder{color:rgba(229,236,247,.34)}
-    .btn{
+    .indexing-input::placeholder,.indexing-textarea::placeholder{color:rgba(229,236,247,.34)}
+    .indexing-btn{
       height:54px;
       border:0;
       border-radius:13px;
@@ -85,19 +128,19 @@
       font-weight:950;
       box-shadow:0 16px 36px rgba(255,160,60,.26), inset 0 1px 0 rgba(255,255,255,.46);
     }
-    .btn:disabled{opacity:.58;cursor:wait}
-    .status{margin-top:14px;min-height:22px;color:var(--muted);font-weight:800}
-    .summary{
+    .indexing-btn:disabled{opacity:.58;cursor:wait}
+    .indexing-status{margin-top:14px;min-height:22px;color:var(--muted);font-weight:800}
+    .indexing-summary{
       display:grid;
       grid-template-columns:repeat(5,minmax(0,1fr));
       gap:12px;
       margin:18px 0;
     }
-    .metric{padding:17px 18px;border-radius:16px;background:var(--panel2);border:1px solid var(--line)}
-    .metric span{display:block;color:var(--muted2);font-size:12px;font-weight:850;text-transform:uppercase;letter-spacing:.5px}
-    .metric b{display:block;margin-top:6px;font-size:24px;line-height:1.05;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .results{overflow:hidden}
-    .results-head{
+    .indexing-metric{padding:17px 18px;border-radius:16px;background:var(--panel2);border:1px solid var(--line)}
+    .indexing-metric span{display:block;color:var(--muted2);font-size:12px;font-weight:850;text-transform:uppercase;letter-spacing:.5px}
+    .indexing-metric b{display:block;margin-top:6px;font-size:24px;line-height:1.05;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .indexing-results{overflow:hidden}
+    .indexing-results-head{
       display:flex;
       align-items:center;
       justify-content:space-between;
@@ -105,16 +148,16 @@
       padding:18px 20px;
       border-bottom:1px solid var(--line);
     }
-    .results-head h2{margin:0;font-size:22px}
-    .hint{margin:0;color:var(--muted2);font-size:13px;font-weight:700}
-    .table-scroll{overflow:auto}
-    table{width:100%;border-collapse:collapse;min-width:920px}
-    th,td{padding:13px 16px;text-align:left;border-bottom:1px solid rgba(161,181,204,.10);vertical-align:top}
-    th{position:sticky;top:0;background:rgba(10,22,37,.96);color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px;z-index:1}
-    td{color:rgba(245,248,252,.88);font-size:14px;font-weight:690}
-    .kw{font-weight:900;color:#fff}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
-    .pill{
+    .indexing-results-head h2{margin:0;font-size:22px}
+    .indexing-hint{margin:0;color:var(--muted2);font-size:13px;font-weight:700}
+    .indexing-table-scroll{overflow:auto}
+    .indexing-table{width:100%;border-collapse:collapse;min-width:920px}
+    .indexing-table th,.indexing-table td{padding:13px 16px;text-align:left;border-bottom:1px solid rgba(161,181,204,.10);vertical-align:top}
+    .indexing-table th{position:sticky;top:0;background:rgba(10,22,37,.96);color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px;z-index:1}
+    .indexing-table td{color:rgba(245,248,252,.88);font-size:14px;font-weight:690}
+    .indexing-kw{font-weight:900;color:#fff}
+    .indexing-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    .indexing-pill{
       display:inline-flex;
       align-items:center;
       gap:7px;
@@ -126,43 +169,50 @@
       white-space:nowrap;
       font-weight:900;
     }
-    .pill.ok{color:var(--ok);background:rgba(104,224,170,.12);border-color:rgba(104,224,170,.32)}
-    .pill.miss{color:#f7d284;background:rgba(255,201,95,.12);border-color:rgba(255,201,95,.26)}
-    .pill.err{color:var(--bad);background:rgba(255,125,134,.12);border-color:rgba(255,125,134,.32)}
-    .rank{font-size:18px;font-weight:950;color:var(--blue)}
-    .top-apps{color:var(--muted2);font-size:12px;line-height:1.45;max-width:320px}
-    a.open-link{color:#9ee7ff;text-decoration:none;border-bottom:1px dashed rgba(158,231,255,.42)}
-    .empty{
+    .indexing-pill.ok{color:var(--ok);background:rgba(104,224,170,.12);border-color:rgba(104,224,170,.32)}
+    .indexing-pill.miss{color:#f7d284;background:rgba(255,201,95,.12);border-color:rgba(255,201,95,.26)}
+    .indexing-pill.err{color:var(--bad);background:rgba(255,125,134,.12);border-color:rgba(255,125,134,.32)}
+    .indexing-rank{font-size:18px;font-weight:950;color:var(--blue)}
+    .indexing-top-apps{color:var(--muted2);font-size:12px;line-height:1.45;max-width:320px}
+    a.indexing-open-link{color:#9ee7ff;text-decoration:none;border-bottom:1px dashed rgba(158,231,255,.42)}
+    .indexing-empty{
       padding:28px 20px;
       color:var(--muted);
       font-weight:800;
     }
     html[data-theme="light"] body{background:#eef4fb;color:#152235}
-    html[data-theme="light"] .subtitle,
-    html[data-theme="light"] .panel,
-    html[data-theme="light"] .metric{
+    html[data-theme="light"] .indexing-subtitle,
+    html[data-theme="light"] .indexing-panel,
+    html[data-theme="light"] .indexing-metric{
       background:rgba(255,255,255,.78);
       border-color:rgba(83,111,142,.20);
       color:#152235;
     }
-    html[data-theme="light"] .subtitle,
-    html[data-theme="light"] .status,
-    html[data-theme="light"] .hint,
-    html[data-theme="light"] .metric span{color:#51647d}
-    html[data-theme="light"] .input,
-    html[data-theme="light"] .textarea{
+    html[data-theme="light"] .indexing-subtitle,
+    html[data-theme="light"] .indexing-status,
+    html[data-theme="light"] .indexing-hint,
+    html[data-theme="light"] .indexing-metric span{color:#51647d}
+    html[data-theme="light"] .indexing-input,
+    html[data-theme="light"] .indexing-textarea{
       background:rgba(255,255,255,.86);
       border-color:rgba(83,111,142,.26);
       color:#152235;
     }
-    html[data-theme="light"] th{background:rgba(229,238,248,.96);color:#51647d}
-    html[data-theme="light"] td{color:#152235}
-    html[data-theme="light"] .kw{color:#152235}
-    html[data-theme="light"] .top-apps{color:#667890}
+    html[data-theme="light"] .indexing-table th{background:rgba(229,238,248,.96);color:#51647d}
+    html[data-theme="light"] .indexing-table td{color:#152235}
+    html[data-theme="light"] .indexing-kw{color:#152235}
+    html[data-theme="light"] .indexing-top-apps{color:#667890}
     @media (max-width:980px){
-      .wrap{width:min(100% - 24px,1492px);padding-top:96px}
-      .title{font-size:34px}
-      .form-grid,.summary{grid-template-columns:1fr}
+      .topnav-inner{width:100%}
+      .navlinks{display:none}
+      .hamb{display:inline-grid}
+      .indexing-wrap{width:min(100% - 24px,1492px);padding-top:96px}
+      .indexing-title{font-size:34px}
+      .indexing-form-grid,.indexing-summary{grid-template-columns:1fr}
+    }
+    @media (max-width:620px){
+      .navright{gap:8px}
+      .indexing-wrap{padding-top:92px}
     }
   </style>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260704a') }}" />
@@ -219,24 +269,24 @@
     </div>
   </div>
 
-  <main class="wrap">
-    <header class="header">
-      <h1 class="title">Keyword Indexing</h1>
-      <p class="subtitle">
+  <main class="indexing-wrap">
+    <header class="indexing-header">
+      <h1 class="indexing-title">Keyword Indexing</h1>
+      <p class="indexing-subtitle">
         Введи Google Play package name або URL, GEO і список ключів. Сторінка покаже,
         чи знаходиться апка у Google Play search по кожному ключу і на якій позиції.
       </p>
     </header>
 
-    <section class="panel search-panel">
-      <div class="form-grid">
-        <label class="field">
+    <section class="indexing-panel indexing-search-panel">
+      <div class="indexing-form-grid">
+        <label class="indexing-field">
           <span>Package name / URL</span>
-          <input id="appInput" class="input" type="text" placeholder="com.dragonplus.cookingfr" autocomplete="off" />
+          <input id="appInput" class="indexing-input" type="text" placeholder="com.dragonplus.cookingfr" autocomplete="off" />
         </label>
-        <label class="field">
+        <label class="indexing-field">
           <span>Country / Region</span>
-          <input id="countriesInput" class="input" type="text" placeholder="US або US, AU, GB" list="countriesList" autocomplete="off" />
+          <input id="countriesInput" class="indexing-input" type="text" placeholder="US або US, AU, GB" list="countriesList" autocomplete="off" />
           <datalist id="countriesList">
             {% for country in countries %}
             <option value="{{ country.code }}">{{ country.name }} ({{ country.code }})</option>
@@ -244,30 +294,30 @@
             {% endfor %}
           </datalist>
         </label>
-        <label class="field">
+        <label class="indexing-field">
           <span>Search top</span>
-          <input id="limitInput" class="input" type="number" min="20" max="250" step="10" value="100" />
+          <input id="limitInput" class="indexing-input" type="number" min="20" max="250" step="10" value="100" />
         </label>
       </div>
-      <label class="field">
+      <label class="indexing-field">
         <span>Keywords</span>
-        <textarea id="keywordsInput" class="textarea" placeholder="casino&#10;slot games&#10;fruit win"></textarea>
+        <textarea id="keywordsInput" class="indexing-textarea" placeholder="casino&#10;slot games&#10;fruit win"></textarea>
       </label>
-      <div class="form-grid" style="grid-template-columns:minmax(0,1fr) minmax(220px,340px);margin-top:14px">
-        <div id="statusText" class="status">Готово до перевірки.</div>
-        <button id="runButton" class="btn" type="button">Перевірити індексацію</button>
+      <div class="indexing-form-grid" style="grid-template-columns:minmax(0,1fr) minmax(220px,340px);margin-top:14px">
+        <div id="statusText" class="indexing-status">Готово до перевірки.</div>
+        <button id="runButton" class="indexing-btn" type="button">Перевірити індексацію</button>
       </div>
     </section>
 
-    <section id="summary" class="summary" hidden></section>
+    <section id="summary" class="indexing-summary" hidden></section>
 
-    <section id="resultsPanel" class="panel results" hidden>
-      <div class="results-head">
+    <section id="resultsPanel" class="indexing-panel indexing-results" hidden>
+      <div class="indexing-results-head">
         <h2>Результати</h2>
-        <p class="hint">Позиція рахується серед результатів, які Google Play повернув у HTML видачі.</p>
+        <p class="indexing-hint">Позиція рахується серед результатів, які Google Play повернув у HTML видачі.</p>
       </div>
-      <div class="table-scroll">
-        <table>
+      <div class="indexing-table-scroll">
+        <table class="indexing-table">
           <thead>
             <tr>
               <th>Keyword</th>
@@ -282,7 +332,7 @@
           <tbody id="resultsBody"></tbody>
         </table>
       </div>
-      <div id="emptyState" class="empty" hidden>Поки немає результатів.</div>
+      <div id="emptyState" class="indexing-empty" hidden>Поки немає результатів.</div>
     </section>
   </main>
 
@@ -298,6 +348,35 @@
     const resultsBody = document.getElementById("resultsBody");
     const emptyState = document.getElementById("emptyState");
 
+    (function setupMobileMenu(){
+      const hamb = document.getElementById("hamb");
+      const drawer = document.getElementById("drawer");
+      if (!hamb || !drawer) return;
+
+      const close = () => {
+        drawer.style.display = "none";
+        hamb.classList.remove("is-open");
+        document.body.classList.remove("drawer-open");
+      };
+      const open = () => {
+        drawer.style.display = "block";
+        hamb.classList.add("is-open");
+        document.body.classList.add("drawer-open");
+      };
+
+      hamb.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (drawer.style.display === "block") close();
+        else open();
+      });
+      document.addEventListener("click", (event) => {
+        if (!drawer.contains(event.target) && !hamb.contains(event.target)) close();
+      });
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") close();
+      });
+    })();
+
     function esc(value){
       return String(value ?? "").replace(/[&<>"']/g, ch => ({
         "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"
@@ -305,13 +384,13 @@
     }
 
     function metric(label, value){
-      return `<div class="metric"><span>${esc(label)}</span><b title="${esc(value)}">${esc(value)}</b></div>`;
+      return `<div class="indexing-metric"><span>${esc(label)}</span><b title="${esc(value)}">${esc(value)}</b></div>`;
     }
 
     function renderStatus(row){
-      if (row.status === "indexed") return `<span class="pill ok">Indexed</span>`;
-      if (row.status === "not_found_top") return `<span class="pill miss">Not found</span>`;
-      return `<span class="pill err">Error</span>`;
+      if (row.status === "indexed") return `<span class="indexing-pill ok">Indexed</span>`;
+      if (row.status === "not_found_top") return `<span class="indexing-pill miss">Not found</span>`;
+      return `<span class="indexing-pill err">Error</span>`;
     }
 
     function renderResults(data){
@@ -329,17 +408,17 @@
       const rows = data.rows || [];
       emptyState.hidden = rows.length > 0;
       resultsBody.innerHTML = rows.map(row => {
-        const rank = row.rank ? `<span class="rank">#${esc(row.rank)}</span>` : "—";
-        const topApps = (row.top_app_ids || []).slice(0, 5).map(id => `<div class="mono">${esc(id)}</div>`).join("") || "—";
+        const rank = row.rank ? `<span class="indexing-rank">#${esc(row.rank)}</span>` : "—";
+        const topApps = (row.top_app_ids || []).slice(0, 5).map(id => `<div class="indexing-mono">${esc(id)}</div>`).join("") || "—";
         return `
           <tr>
-            <td class="kw">${esc(row.keyword)}</td>
-            <td>${esc(row.country)} <span class="mono">(${esc(row.gl)})</span></td>
-            <td>${renderStatus(row)}${row.error ? `<div class="top-apps">${esc(row.error)}</div>` : ""}</td>
+            <td class="indexing-kw">${esc(row.keyword)}</td>
+            <td>${esc(row.country)} <span class="indexing-mono">(${esc(row.gl)})</span></td>
+            <td>${renderStatus(row)}${row.error ? `<div class="indexing-top-apps">${esc(row.error)}</div>` : ""}</td>
             <td>${rank}</td>
             <td>${esc(row.result_count)} / top ${esc(row.searched_top)}</td>
-            <td><div class="top-apps">${topApps}</div></td>
-            <td><a class="open-link" href="${esc(row.search_url)}" target="_blank" rel="noopener">Search</a></td>
+            <td><div class="indexing-top-apps">${topApps}</div></td>
+            <td><a class="indexing-open-link" href="${esc(row.search_url)}" target="_blank" rel="noopener">Search</a></td>
           </tr>
         `;
       }).join("");
