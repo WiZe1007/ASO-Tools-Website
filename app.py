@@ -76,9 +76,15 @@ CACHE_TTL_AVAILABILITY = env_int("WWA_CACHE_TTL_AVAILABILITY", 6 * 60 * 60, 60, 
 CACHE_TTL_APPMAGIC = env_int("WWA_CACHE_TTL_APPMAGIC", 20 * 60, 60, 6 * 60 * 60)
 CACHE_TTL_SENSOR_TOWER = env_int("WWA_CACHE_TTL_SENSOR_TOWER", 30 * 60, 60, 6 * 60 * 60)
 CACHE_TTL_APP_OVERVIEW = env_int("WWA_CACHE_TTL_APP_OVERVIEW", 15 * 60, 60, 6 * 60 * 60)
+CACHE_TTL_INDEXING = env_int("WWA_CACHE_TTL_INDEXING", 30 * 60, 60, 6 * 60 * 60)
 CACHE_MAX_ITEMS = env_int("WWA_CACHE_MAX_ITEMS", 1200, 100, 10000)
 HTTP_POOL_SIZE = env_int("WWA_HTTP_POOL_SIZE", 64, 16, 256)
 HTTP_REQUEST_RETRIES = env_int("WWA_HTTP_REQUEST_RETRIES", 3, 1, 8)
+MAX_WORKERS_INDEXING = env_int("WWA_MAX_WORKERS_INDEXING", 8, 2, 16)
+INDEXING_MAX_KEYWORDS = env_int("WWA_INDEXING_MAX_KEYWORDS", 40, 1, 200)
+INDEXING_MAX_COUNTRIES = env_int("WWA_INDEXING_MAX_COUNTRIES", 10, 1, 80)
+INDEXING_MAX_CHECKS = env_int("WWA_INDEXING_MAX_CHECKS", 120, 1, 1000)
+INDEXING_DEFAULT_SEARCH_LIMIT = env_int("WWA_INDEXING_SEARCH_LIMIT", 100, 20, 250)
 
 GOOGLE_JITTER_MIN = 0.08
 GOOGLE_JITTER_MAX = 0.35
@@ -229,6 +235,7 @@ SENSOR_TOWER_PUBLISHER_APPS_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
 APP_OVERVIEW_PAYLOAD_CACHE = TTLCache(CACHE_TTL_APP_OVERVIEW)
 PUBLISHER_PAYLOAD_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
 TELEGRAM_APP_CARD_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
+GOOGLE_PLAY_SEARCH_CACHE = TTLCache(CACHE_TTL_INDEXING)
 
 # ---------------- COUNTRY LISTS ----------------
 
@@ -5132,6 +5139,299 @@ def resolve_country_for_geo_link(raw_country: str) -> tuple[str, str] | None:
     return iso2, hl
 
 
+# ---------------- API: GOOGLE PLAY KEYWORD INDEXING HELPERS ----------------
+
+def split_user_values(raw_value) -> list[str]:
+    if raw_value is None:
+        return []
+    if isinstance(raw_value, (list, tuple)):
+        values = []
+        for item in raw_value:
+            if isinstance(item, dict):
+                item = item.get("value") or item.get("code") or item.get("gl") or item.get("name") or ""
+            values.extend(split_user_values(str(item)))
+        return values
+    raw = str(raw_value).replace("\r", "\n")
+    return [part.strip() for part in re.split(r"[\n,;]+", raw) if part.strip()]
+
+
+def normalize_indexing_keywords(raw_keywords) -> tuple[list[str], list[str]]:
+    values = split_user_values(raw_keywords)
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for keyword in values:
+        cleaned = re.sub(r"\s+", " ", keyword).strip()
+        if not cleaned:
+            continue
+        key = cleaned.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        keywords.append(cleaned)
+        if len(keywords) >= INDEXING_MAX_KEYWORDS:
+            break
+
+    errors = []
+    if not keywords:
+        errors.append("Додай хоча б один keyword для перевірки.")
+    return keywords, errors
+
+
+def normalize_indexing_countries(raw_countries) -> tuple[list[dict], list[str]]:
+    values = split_user_values(raw_countries)
+    if not values:
+        values = ["US"]
+
+    countries: list[dict] = []
+    seen: set[str] = set()
+    errors: list[str] = []
+    for raw_country in values:
+        resolved = resolve_country_for_geo_link(raw_country)
+        if not resolved:
+            errors.append(f"Країну не знайдено: {raw_country}")
+            continue
+        gl, hl = resolved
+        gl = gl.upper()
+        if gl in seen:
+            continue
+        seen.add(gl)
+        country_name, default_hl = get_country_meta_by_iso2(gl)
+        countries.append({
+            "name": country_name,
+            "gl": gl,
+            "hl": hl or default_hl or "en",
+        })
+        if len(countries) >= INDEXING_MAX_COUNTRIES:
+            break
+
+    if not countries:
+        errors.append("Додай хоча б одну коректну країну.")
+    return countries, errors
+
+
+def normalize_indexing_limit(raw_limit) -> int:
+    try:
+        limit = int(raw_limit or INDEXING_DEFAULT_SEARCH_LIMIT)
+    except Exception:
+        limit = INDEXING_DEFAULT_SEARCH_LIMIT
+    return max(20, min(250, limit))
+
+
+def build_google_play_search_url(keyword: str, gl: str, hl: str) -> str:
+    return (
+        "https://play.google.com/store/search"
+        f"?q={quote(keyword)}&c=apps&gl={gl.upper()}&hl={quote(hl or 'en')}"
+    )
+
+
+def parse_google_play_search_app_ids(raw_html: str) -> list[str]:
+    text = html_lib.unescape(raw_html or "")
+    replacements = {
+        "\\u003d": "=",
+        "\\u0026": "&",
+        "\\u002F": "/",
+        "\\/": "/",
+        "%3F": "?",
+        "%3D": "=",
+        "%26": "&",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    pattern = re.compile(
+        r"(?:/store/apps/details\?id=|apps/details\?id=|details\?id=)([A-Za-z0-9._]+)"
+    )
+    app_ids: list[str] = []
+    seen: set[str] = set()
+    for match in pattern.finditer(text):
+        app_id = match.group(1).strip(".")
+        if "." not in app_id or app_id in seen:
+            continue
+        seen.add(app_id)
+        app_ids.append(app_id)
+    return app_ids
+
+
+def fetch_google_play_search_results(keyword: str, gl: str, hl: str, limit: int) -> dict:
+    normalized_keyword = re.sub(r"\s+", " ", keyword or "").strip()
+    gl = (gl or "US").upper()
+    hl = (hl or "en").strip() or "en"
+    limit = normalize_indexing_limit(limit)
+    cache_key = ("google_play_search", normalized_keyword.casefold(), gl, hl, limit)
+    cached = GOOGLE_PLAY_SEARCH_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        cached_result = copy.deepcopy(cached)
+        cached_result["cached"] = True
+        return cached_result
+
+    time.sleep(random.uniform(GOOGLE_JITTER_MIN, GOOGLE_JITTER_MAX))
+    url = build_google_play_search_url(normalized_keyword, gl, hl)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": f"{hl},{hl.split('-')[0]};q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+
+    try:
+        response = session.get(url, headers=headers, timeout=30, allow_redirects=True)
+    except Exception as e:
+        return {
+            "ok": False,
+            "keyword": normalized_keyword,
+            "gl": gl,
+            "hl": hl,
+            "url": url,
+            "error": f"REQUEST_ERROR:{e}",
+            "cached": False,
+        }
+
+    if response.status_code in (429, 503):
+        return {
+            "ok": False,
+            "keyword": normalized_keyword,
+            "gl": gl,
+            "hl": hl,
+            "url": url,
+            "error": f"BLOCKED_HTTP_{response.status_code}",
+            "cached": False,
+        }
+    if response.status_code != 200:
+        return {
+            "ok": False,
+            "keyword": normalized_keyword,
+            "gl": gl,
+            "hl": hl,
+            "url": url,
+            "error": f"HTTP_{response.status_code}",
+            "cached": False,
+        }
+
+    html = response.text or ""
+    if "consent.google.com" in html.lower() or "unusual traffic" in html.lower():
+        return {
+            "ok": False,
+            "keyword": normalized_keyword,
+            "gl": gl,
+            "hl": hl,
+            "url": url,
+            "error": "CONSENT_OR_UNUSUAL_TRAFFIC",
+            "cached": False,
+        }
+
+    app_ids = parse_google_play_search_app_ids(html)[:limit]
+    result = {
+        "ok": True,
+        "keyword": normalized_keyword,
+        "gl": gl,
+        "hl": hl,
+        "url": url,
+        "app_ids": app_ids,
+        "result_count": len(app_ids),
+        "cached": False,
+    }
+    GOOGLE_PLAY_SEARCH_CACHE.set(cache_key, result)
+    return result
+
+
+def check_google_play_keyword_indexing(app_id: str, keyword: str, country: dict, limit: int) -> dict:
+    search = fetch_google_play_search_results(keyword, country["gl"], country["hl"], limit)
+    row = {
+        "keyword": keyword,
+        "country": country["name"],
+        "gl": country["gl"],
+        "hl": country["hl"],
+        "indexed": False,
+        "rank": None,
+        "status": "error",
+        "searched_top": normalize_indexing_limit(limit),
+        "result_count": int(search.get("result_count") or 0),
+        "search_url": search.get("url") or build_google_play_search_url(keyword, country["gl"], country["hl"]),
+        "cached": bool(search.get("cached")),
+        "error": search.get("error"),
+        "top_app_ids": (search.get("app_ids") or [])[:10],
+    }
+
+    if not search.get("ok"):
+        return row
+
+    app_ids = search.get("app_ids") or []
+    try:
+        rank = app_ids.index(app_id) + 1
+    except ValueError:
+        rank = None
+
+    if rank:
+        row.update({"indexed": True, "rank": rank, "status": "indexed", "error": None})
+    else:
+        row.update({"status": "not_found_top", "error": None})
+    return row
+
+
+def build_google_play_indexing_payload(app_id: str, keywords: list[str], countries: list[dict], limit: int) -> dict:
+    checks = [(country_idx, keyword_idx, country, keyword)
+              for country_idx, country in enumerate(countries)
+              for keyword_idx, keyword in enumerate(keywords)]
+    checks = checks[:INDEXING_MAX_CHECKS]
+
+    rows_by_order: dict[tuple[int, int], dict] = {}
+    with ThreadPoolExecutor(max_workers=min(MAX_WORKERS_INDEXING, max(1, len(checks)))) as executor:
+        future_map = {
+            executor.submit(check_google_play_keyword_indexing, app_id, keyword, country, limit): (country_idx, keyword_idx)
+            for country_idx, keyword_idx, country, keyword in checks
+        }
+        for future in as_completed(future_map):
+            order = future_map[future]
+            try:
+                rows_by_order[order] = future.result()
+            except Exception as e:
+                country_idx, keyword_idx = order
+                rows_by_order[order] = {
+                    "keyword": keywords[keyword_idx],
+                    "country": countries[country_idx]["name"],
+                    "gl": countries[country_idx]["gl"],
+                    "hl": countries[country_idx]["hl"],
+                    "indexed": False,
+                    "rank": None,
+                    "status": "error",
+                    "searched_top": normalize_indexing_limit(limit),
+                    "result_count": 0,
+                    "search_url": build_google_play_search_url(keywords[keyword_idx], countries[country_idx]["gl"], countries[country_idx]["hl"]),
+                    "cached": False,
+                    "error": f"CHECK_ERROR:{e}",
+                    "top_app_ids": [],
+                }
+
+    rows = [rows_by_order[key] for key in sorted(rows_by_order)]
+    indexed_rows = [row for row in rows if row.get("indexed")]
+    error_rows = [row for row in rows if row.get("status") == "error"]
+    best_rank = min((int(row["rank"]) for row in indexed_rows if row.get("rank")), default=None)
+
+    return {
+        "ok": True,
+        "store": "google_play",
+        "app_id": app_id,
+        "keywords": keywords,
+        "countries": countries,
+        "limit": normalize_indexing_limit(limit),
+        "limited": len(countries) * len(keywords) > len(checks),
+        "max_checks": INDEXING_MAX_CHECKS,
+        "rows": rows,
+        "stats": {
+            "total_checks": len(rows),
+            "indexed": len(indexed_rows),
+            "not_found": len([row for row in rows if row.get("status") == "not_found_top"]),
+            "errors": len(error_rows),
+            "best_rank": best_rank,
+        },
+    }
+
+
 # ---------------- ROUTES (PAGES) ----------------
 
 @app.get("/")
@@ -5149,6 +5449,15 @@ def geo_link_page():
     # for frontend autocomplete
     countries = {name: {"gl": iso2, "hl": hl} for name, (iso2, hl) in COUNTRIES_FULL.items()}
     return render_template("geo_link.html", countries_json=json.dumps(countries, ensure_ascii=False))
+
+
+@app.get("/indexing")
+def indexing_page():
+    countries = [
+        {"name": name, "code": iso2, "hl": hl}
+        for name, (iso2, hl) in sorted(COUNTRIES_FULL.items(), key=lambda item: item[0])
+    ]
+    return render_template("indexing.html", countries=countries)
 
 
 @app.get("/app-overview")
@@ -5306,6 +5615,35 @@ def api_geo_link():
         "hl": hl,
         "url": url,
     })
+
+
+# ---------------- API: INDEXING ----------------
+
+@app.post("/api/indexing/check")
+def api_indexing_check():
+    payload = request.json or {}
+    raw_app = (
+        payload.get("app_id")
+        or payload.get("package")
+        or payload.get("query")
+        or payload.get("url")
+        or ""
+    )
+    app_id = normalize_android_package_input(raw_app)
+    if not app_id:
+        return jsonify({"ok": False, "error": "Введи Google Play URL або package name, наприклад com.dragonplus.cookingfr."}), 400
+
+    raw_keywords = payload.get("keywords")
+    keywords, keyword_errors = normalize_indexing_keywords(raw_keywords)
+    raw_countries = payload.get("countries") or payload.get("country") or payload.get("gl") or "US"
+    countries, country_errors = normalize_indexing_countries(raw_countries)
+    errors = keyword_errors + country_errors
+    if errors:
+        return jsonify({"ok": False, "error": " ".join(errors), "errors": errors}), 400
+
+    limit = normalize_indexing_limit(payload.get("limit") or payload.get("search_limit"))
+    data = build_google_play_indexing_payload(app_id, keywords, countries, limit)
+    return jsonify(data)
 
 
 # ---------------- EXISTING API: /check ----------------
