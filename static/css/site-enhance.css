@@ -2928,8 +2928,10 @@ body[data-page="s-live-db"] .navbtn[data-nav="s-database"]::after{
 }
 
 body[data-page] .navright{
-  min-width:260px !important;
+  min-width:274px !important;
   gap:14px !important;
+  padding-right:10px !important;
+  box-sizing:border-box !important;
 }
 
 body[data-page] .chip{
@@ -4739,30 +4741,28 @@ body[data-page] .theme-toggle{
   display:inline-grid !important;
   place-items:center !important;
   position:relative !important;
-  overflow:visible !important;
-  flex:0 0 36px !important;
-  width:36px !important;
-  height:36px !important;
-  min-width:36px !important;
+  overflow:hidden !important;
+  flex:0 0 auto !important;
   padding:0 !important;
   line-height:1 !important;
   font-size:0 !important;
+  box-sizing:border-box !important;
 }
 
 body[data-page] .theme-toggle::before{
   content:"";
   display:block;
-  width:17px;
-  height:17px;
+  width:16px;
+  height:16px;
   background:currentColor;
   -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='4'/%3E%3Cpath d='M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41'/%3E%3C/svg%3E");
   -webkit-mask-repeat:no-repeat;
   -webkit-mask-position:center;
-  -webkit-mask-size:17px 17px;
+  -webkit-mask-size:16px 16px;
   mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='4'/%3E%3Cpath d='M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41'/%3E%3C/svg%3E");
   mask-repeat:no-repeat;
   mask-position:center;
-  mask-size:17px 17px;
+  mask-size:16px 16px;
 }
 
 html[data-theme="light"] body[data-page] .theme-toggle::before{
@@ -4771,10 +4771,19 @@ html[data-theme="light"] body[data-page] .theme-toggle::before{
 }
 
 @media (max-width: 900px){
+  body[data-page] .navright{
+    min-width:154px !important;
+    flex:0 0 auto !important;
+    padding-right:10px !important;
+    gap:8px !important;
+  }
+
   body[data-page] .theme-toggle{
     flex:0 0 40px !important;
     width:40px !important;
     height:40px !important;
     min-width:40px !important;
+    margin-right:0 !important;
+    overflow:hidden !important;
   }
 }
