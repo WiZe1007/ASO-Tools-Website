@@ -5003,3 +5003,29 @@ html[data-theme="light"] body[data-page="s-live-db"] .input::placeholder{
   color:#64768d !important;
   opacity:1 !important;
 }
+
+html[data-theme="light"] body[data-page="live-db"] .copy-btn,
+html[data-theme="light"] body[data-page="s-live-db"] .copy-btn{
+  color:#102033 !important;
+  background:linear-gradient(180deg, #ffffff, #e6f2ff) !important;
+  border-color:rgba(40,75,112,.42) !important;
+  font-size:14px !important;
+  letter-spacing:.01em !important;
+  box-shadow:0 10px 24px rgba(34,66,100,.16), inset 0 1px 0 rgba(255,255,255,.90) !important;
+  text-shadow:none !important;
+}
+
+html[data-theme="light"] body[data-page="live-db"] .copy-btn:hover,
+html[data-theme="light"] body[data-page="s-live-db"] .copy-btn:hover{
+  color:#06101d !important;
+  background:linear-gradient(180deg, #ffffff, #dff0ff) !important;
+  border-color:rgba(35,127,184,.46) !important;
+  box-shadow:0 12px 28px rgba(35,127,184,.16), inset 0 1px 0 rgba(255,255,255,.92) !important;
+}
+
+html[data-theme="light"] body[data-page="live-db"] .copy-btn.copied,
+html[data-theme="light"] body[data-page="s-live-db"] .copy-btn.copied{
+  color:#07533b !important;
+  background:linear-gradient(180deg, #e9fff6, #cff7e8) !important;
+  border-color:rgba(16,128,89,.34) !important;
+}

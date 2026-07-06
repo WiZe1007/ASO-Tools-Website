@@ -281,6 +281,25 @@
     html[data-theme="light"] .bundle{color:#203049}
     html[data-theme="light"] .geo-chip{color:#8c1930;background:rgba(251,113,133,.12)}
     html[data-theme="light"] .geo-empty{color:#047857}
+    html[data-theme="light"] .copy-btn{
+      color:#102033;
+      background:linear-gradient(180deg, #ffffff, #e6f2ff);
+      border-color:rgba(40,75,112,.42);
+      font-size:14px;
+      letter-spacing:.01em;
+      box-shadow:0 10px 24px rgba(34,66,100,.16), inset 0 1px 0 rgba(255,255,255,.90);
+    }
+    html[data-theme="light"] .copy-btn:hover{
+      color:#06101d;
+      background:linear-gradient(180deg, #ffffff, #dff0ff);
+      border-color:rgba(35,127,184,.46);
+      box-shadow:0 12px 28px rgba(35,127,184,.16), inset 0 1px 0 rgba(255,255,255,.92);
+    }
+    html[data-theme="light"] .copy-btn.copied{
+      color:#07533b;
+      background:linear-gradient(180deg, #e9fff6, #cff7e8);
+      border-color:rgba(16,128,89,.34);
+    }
 
     @media (max-width: 980px){
       .toolbar{grid-template-columns:1fr}
@@ -322,8 +341,8 @@
     }
   </style>
 
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260706d') }}" />
-  <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260706d') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260706e') }}" />
+  <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260706e') }}" defer></script>
 </head>
 
 <body data-page="{{ live_db_page }}">
@@ -597,8 +616,12 @@
         const value = button.dataset.copy || "";
         try {
           await navigator.clipboard.writeText(value);
+          button.classList.add("copied");
           button.textContent = "Copied";
-          setTimeout(() => { button.textContent = "Copy bundle"; }, 1000);
+          setTimeout(() => {
+            button.classList.remove("copied");
+            button.textContent = "Copy bundle";
+          }, 1000);
         } catch {
           button.textContent = value;
         }
