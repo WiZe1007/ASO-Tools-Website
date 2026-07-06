@@ -4742,7 +4742,10 @@ body[data-page] .theme-toggle{
   place-items:center !important;
   position:relative !important;
   overflow:hidden !important;
-  flex:0 0 auto !important;
+  flex:0 0 30px !important;
+  width:30px !important;
+  height:30px !important;
+  min-width:30px !important;
   padding:0 !important;
   line-height:1 !important;
   font-size:0 !important;
@@ -4785,5 +4788,90 @@ html[data-theme="light"] body[data-page] .theme-toggle::before{
     min-width:40px !important;
     margin-right:0 !important;
     overflow:hidden !important;
+  }
+}
+
+/* Final nav edge guard: keep the last round utility fully inside the glass bar. */
+body[data-page] .navright{
+  flex:0 0 auto !important;
+  min-width:max-content !important;
+  padding-right:0 !important;
+  overflow:visible !important;
+}
+
+body[data-page] .navright .theme-toggle{
+  flex:0 0 30px !important;
+  width:30px !important;
+  height:30px !important;
+  min-width:30px !important;
+  margin:0 !important;
+  transform:none !important;
+}
+
+@media (max-width: 1500px){
+  body[data-page] .topnav-inner{
+    padding-right:18px !important;
+    gap:18px !important;
+  }
+
+  body[data-page] .brand{
+    min-width:250px !important;
+    padding-right:20px !important;
+  }
+
+  body[data-page] .navlinks{
+    gap:14px !important;
+  }
+
+  body[data-page] .navbtn{
+    padding:0 3px !important;
+    font-size:13px !important;
+  }
+
+  body[data-page] .navright{
+    gap:10px !important;
+  }
+
+  body[data-page] .navright .chip,
+  body[data-page] .navright .chip::before,
+  body[data-page] .navright .chip::after,
+  body[data-page] .navright .pulse,
+  body[data-page] .navright .pulse::before,
+  body[data-page] .navright .pulse::after{
+    display:none !important;
+    visibility:hidden !important;
+    pointer-events:none !important;
+    animation:none !important;
+  }
+}
+
+@media (max-width: 900px) and (min-width: 621px){
+  body[data-page] .navright{
+    flex:0 0 auto !important;
+    gap:8px !important;
+    padding-right:0 !important;
+    overflow:visible !important;
+  }
+
+  body[data-page] .navright .theme-toggle{
+    flex:0 0 40px !important;
+    width:40px !important;
+    height:40px !important;
+    min-width:40px !important;
+  }
+}
+
+@media (max-width: 620px){
+  body[data-page] .navright{
+    min-width:40px !important;
+    flex:0 0 40px !important;
+    gap:0 !important;
+    padding-right:0 !important;
+  }
+
+  body[data-page] .navright .auth-logout,
+  body[data-page] .navright .nav-utility[aria-label="Help"],
+  body[data-page] .navright .theme-toggle{
+    display:none !important;
   }
 }
