@@ -4749,15 +4749,23 @@ body[data-page] .theme-toggle{
   padding:0 !important;
   line-height:1 !important;
   font-size:0 !important;
+  text-align:center !important;
   box-sizing:border-box !important;
 }
 
 body[data-page] .theme-toggle::before{
   content:"";
   display:block;
+  position:absolute;
+  left:50%;
+  top:50%;
   width:16px;
   height:16px;
+  margin:0;
   background:currentColor;
+  transform:translate(-50%, -50%);
+  transform-origin:center;
+  pointer-events:none;
   -webkit-mask-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='4'/%3E%3Cpath d='M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41'/%3E%3C/svg%3E");
   -webkit-mask-repeat:no-repeat;
   -webkit-mask-position:center;
