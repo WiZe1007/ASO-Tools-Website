@@ -62,6 +62,7 @@ TELEGRAM_SEND_EMPTY_SUMMARY = os.environ.get("TELEGRAM_SEND_EMPTY_SUMMARY", "1")
 TELEGRAM_PRIVATE_MENU_OPEN = os.environ.get("TELEGRAM_PRIVATE_MENU_OPEN", "1").strip() != "0"
 TELEGRAM_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
 TELEGRAM_LIVE_DB_MENU_LIMIT = env_int("TELEGRAM_LIVE_DB_MENU_LIMIT", 12, 1, 40)
+TELEGRAM_PIN_MENU_MESSAGE = os.environ.get("TELEGRAM_PIN_MENU_MESSAGE", "1").strip() != "0"
 
 check_lock = threading.Lock()
 last_scheduled_key = ""
@@ -241,7 +242,7 @@ def help_text(chat_id: str | int) -> str:
         "",
         "Команди:",
         "/menu - відкрити приватне меню інструментів",
-        "/postmenu - опублікувати меню в основний канал",
+        "/postmenu - опублікувати і закріпити меню в основний канал",
         "/status - показати стан бази",
         "/check - запустити бойову перевірку зараз",
         "/dryrun - перевірити без запису в Google Sheet і без повідомлень",
@@ -338,7 +339,7 @@ def channel_menu_markup() -> dict | None:
         return None
     return {
         "inline_keyboard": [
-            [{"text": "📋 Відкрити меню", "url": url}],
+            [{"text": "Перейти до бота", "url": url}],
         ],
     }
 
@@ -355,23 +356,53 @@ def send_private_menu(chat_id: str | int):
     )
 
 
-def send_channel_menu(chat_id: str | int):
+def pin_message(chat_id: str | int, message_id: int) -> tuple[bool, str]:
+    if not TELEGRAM_PIN_MENU_MESSAGE:
+        return False, "pin disabled"
+    try:
+        bot_api("pinChatMessage", {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "disable_notification": True,
+        }, timeout=10)
+        return True, ""
+    except Exception as e:
+        print(json.dumps({
+            "ok": False,
+            "event": "telegram_pin_failed",
+            "chat_id": str(chat_id),
+            "message_id": message_id,
+            "error": str(e),
+        }, ensure_ascii=False))
+        return False, str(e)
+
+
+def send_channel_menu(chat_id: str | int) -> dict:
     markup = channel_menu_markup()
     if not markup:
         send_message(
             chat_id,
             "Не можу створити меню: додай env <code>TELEGRAM_BOT_USERNAME</code> або дай боту доступ до getMe.",
         )
-        return
-    send_message(
+        return {"ok": False, "pinned": False, "error": "NO_BOT_USERNAME"}
+    response = send_message(
         chat_id,
         "\n".join([
-            "<b>WWA ASO Tools menu</b>",
+            "<b>WWA ASO Tools</b>",
             "",
-            "Натисни кнопку нижче. Бот відкриє приватний чат із меню інструментів і покаже результат тільки тобі.",
+            "<b>Меню інструментів доступне в боті.</b>",
+            "",
+            "Натисни кнопку нижче, щоб перейти до бота. Там можна запустити Availability, Overview, Geo Link, Indexing або Live DB без команд.",
+            "",
+            "Усі запити та результати відкриваються у приватному чаті, тому їх бачить тільки користувач, який зробив запит.",
         ]),
         reply_markup=markup,
     )
+    message_id = int(((response.get("result") or {}).get("message_id") or 0))
+    pinned, pin_error = (False, "")
+    if message_id:
+        pinned, pin_error = pin_message(chat_id, message_id)
+    return {"ok": True, "message_id": message_id, "pinned": pinned, "pin_error": pin_error}
 
 
 def set_user_session(chat_id: str | int, action: str):
@@ -945,9 +976,16 @@ def handle_message(message: dict):
 
     if command == "/postmenu":
         target_chat_id = TELEGRAM_CHAT_ID or chat_id
-        send_channel_menu(target_chat_id)
+        result = send_channel_menu(target_chat_id)
         if str(target_chat_id) != str(chat_id):
-            send_message(chat_id, f"Меню відправлено в канал <code>{escape(target_chat_id)}</code>.")
+            lines = [
+                f"Меню відправлено в канал <code>{escape(target_chat_id)}</code>.",
+            ]
+            if result.get("pinned"):
+                lines.append("Повідомлення закріплено.")
+            elif result.get("pin_error"):
+                lines.append("Повідомлення відправлено, але не закріплено. Перевір, чи бот є адміном каналу і має право Pin messages.")
+            send_message(chat_id, "\n".join(lines))
         return
 
     if command in {"/start", "/help"}:
@@ -1018,7 +1056,7 @@ def drop_pending_updates() -> int:
 def set_bot_commands():
     commands = [
         {"command": "menu", "description": "Відкрити меню інструментів"},
-        {"command": "postmenu", "description": "Опублікувати меню в канал"},
+        {"command": "postmenu", "description": "Опублікувати і закріпити меню в канал"},
         {"command": "status", "description": "Показати стан бази"},
         {"command": "check", "description": "Запустити бойову перевірку"},
         {"command": "dryrun", "description": "Перевірити без запису і повідомлень"},
