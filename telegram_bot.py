@@ -28,7 +28,6 @@ from app import (
     build_google_play_url,
     build_live_apps_database_payload,
     country_label,
-    extract_google_play_app_id,
     format_country_lines,
     normalize_android_package_input,
     normalize_indexing_countries,
@@ -69,6 +68,15 @@ last_scheduled_key = ""
 active_check_state: dict = {}
 user_sessions: dict[str, dict] = {}
 bot_username_cache = TELEGRAM_BOT_USERNAME
+
+MENU_BUTTON_ACTIONS = {
+    "🌍 Availability": "availability",
+    "📦 Overview": "overview",
+    "🔗 Geo Link": "geolink",
+    "🔎 Indexing": "indexing",
+    "📚 Live DB": "livedb",
+    "✅ Status": "status",
+}
 
 
 def parse_check_hours() -> set[int]:
@@ -309,24 +317,30 @@ def private_menu_markup() -> dict:
     }
 
 
+def private_reply_keyboard_markup() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "🌍 Availability"}, {"text": "📦 Overview"}],
+            [{"text": "🔗 Geo Link"}, {"text": "🔎 Indexing"}],
+            [{"text": "📚 Live DB"}, {"text": "✅ Status"}],
+            [{"text": "❌ Cancel"}],
+        ],
+        "resize_keyboard": True,
+        "is_persistent": True,
+        "one_time_keyboard": False,
+        "input_field_placeholder": "Обери інструмент або введи дані запиту",
+    }
+
+
 def channel_menu_markup() -> dict | None:
-    actions = [
-        ("🌍 Availability", "availability"),
-        ("📦 Overview", "overview"),
-        ("🔗 Geo Link", "geolink"),
-        ("🔎 Indexing", "indexing"),
-        ("📚 Live DB", "livedb"),
-    ]
-    rows = []
-    for idx in range(0, len(actions), 2):
-        row = []
-        for text, action in actions[idx:idx + 2]:
-            url = private_start_url(action)
-            if not url:
-                return None
-            row.append({"text": text, "url": url})
-        rows.append(row)
-    return {"inline_keyboard": rows}
+    url = private_start_url("menu")
+    if not url:
+        return None
+    return {
+        "inline_keyboard": [
+            [{"text": "📋 Відкрити меню", "url": url}],
+        ],
+    }
 
 
 def send_private_menu(chat_id: str | int):
@@ -335,9 +349,9 @@ def send_private_menu(chat_id: str | int):
         "\n".join([
             "<b>Меню WWA ASO Tools</b>",
             "",
-            "Обери інструмент. Результат прийде сюди, у приватний чат, тому його бачитимеш тільки ти.",
+            "Нижче увімкнена клавіатура інструментів. Обери потрібний пункт, введи дані, і результат прийде сюди, у приватний чат.",
         ]),
-        reply_markup=private_menu_markup(),
+        reply_markup=private_reply_keyboard_markup(),
     )
 
 
@@ -354,7 +368,7 @@ def send_channel_menu(chat_id: str | int):
         "\n".join([
             "<b>WWA ASO Tools menu</b>",
             "",
-            "Натисни потрібний інструмент. Бот відкриє приватний чат і покаже результат тільки тобі.",
+            "Натисни кнопку нижче. Бот відкриє приватний чат із меню інструментів і покаже результат тільки тобі.",
         ]),
         reply_markup=markup,
     )
@@ -422,7 +436,7 @@ def prompt_for_action(chat_id: str | int, action: str):
     if action not in prompts:
         return
     set_user_session(chat_id, action)
-    send_message(chat_id, prompts[action])
+    send_message(chat_id, prompts[action], reply_markup=private_reply_keyboard_markup())
 
 
 def remove_app_part(raw_text: str, app_id: str) -> str:
@@ -714,6 +728,31 @@ def handle_session_message(message: dict) -> bool:
     return True
 
 
+def handle_menu_button_message(message: dict) -> bool:
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    text = (message.get("text") or "").strip()
+    if not chat_id or str(chat.get("type") or "") != "private":
+        return False
+
+    if text == "❌ Cancel":
+        clear_user_session(chat_id)
+        send_message(chat_id, "Поточний запит скасовано.", reply_markup=private_reply_keyboard_markup())
+        return True
+
+    action = MENU_BUTTON_ACTIONS.get(text)
+    if not action:
+        return False
+    if not can_use_private_menu(chat):
+        send_message(chat_id, unauthorized_text(chat_id))
+        return True
+    if action == "status":
+        send_status(chat_id)
+        return True
+    prompt_for_action(chat_id, action)
+    return True
+
+
 def run_check_async(chat_id: str | int, dry_run: bool = False):
     def worker():
         if not check_lock.acquire(blocking=False):
@@ -862,6 +901,8 @@ def handle_message(message: dict):
         return
 
     if not text.startswith("/"):
+        if handle_menu_button_message(message):
+            return
         handle_session_message(message)
         return
 
