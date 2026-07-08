@@ -27,8 +27,10 @@ from app import (
     build_google_play_indexing_payload,
     build_google_play_url,
     build_live_apps_database_payload,
+    check_google_appmagic,
     country_label,
     format_country_lines,
+    format_number_plain,
     normalize_android_package_input,
     normalize_indexing_countries,
     normalize_indexing_keywords,
@@ -71,6 +73,7 @@ user_sessions: dict[str, dict] = {}
 bot_username_cache = TELEGRAM_BOT_USERNAME
 
 MENU_BUTTON_ACTIONS = {
+    "⭐ Rating": "rating",
     "🌍 Availability": "availability",
     "📦 Overview": "overview",
     "🔗 Geo Link": "geolink",
@@ -303,15 +306,18 @@ def private_menu_markup() -> dict:
     return {
         "inline_keyboard": [
             [
+                {"text": "⭐ Rating", "callback_data": "menu:rating"},
                 {"text": "🌍 Availability", "callback_data": "menu:availability"},
+            ],
+            [
                 {"text": "📦 Overview", "callback_data": "menu:overview"},
-            ],
-            [
                 {"text": "🔗 Geo Link", "callback_data": "menu:geolink"},
-                {"text": "🔎 Indexing", "callback_data": "menu:indexing"},
             ],
             [
+                {"text": "🔎 Indexing", "callback_data": "menu:indexing"},
                 {"text": "📚 Live DB", "callback_data": "menu:livedb"},
+            ],
+            [
                 {"text": "✅ Status", "callback_data": "menu:status"},
             ],
         ],
@@ -321,9 +327,10 @@ def private_menu_markup() -> dict:
 def private_reply_keyboard_markup() -> dict:
     return {
         "keyboard": [
-            [{"text": "🌍 Availability"}, {"text": "📦 Overview"}],
-            [{"text": "🔗 Geo Link"}, {"text": "🔎 Indexing"}],
-            [{"text": "📚 Live DB"}, {"text": "✅ Status"}],
+            [{"text": "⭐ Rating"}, {"text": "🌍 Availability"}],
+            [{"text": "📦 Overview"}, {"text": "🔗 Geo Link"}],
+            [{"text": "🔎 Indexing"}, {"text": "📚 Live DB"}],
+            [{"text": "✅ Status"}],
             [{"text": "❌ Cancel"}],
         ],
         "resize_keyboard": True,
@@ -392,7 +399,7 @@ def send_channel_menu(chat_id: str | int) -> dict:
             "",
             "<b>Меню інструментів доступне в боті.</b>",
             "",
-            "Натисни кнопку нижче, щоб перейти до бота. Там можна запустити Availability, Overview, Geo Link, Indexing або Live DB без команд.",
+            "Натисни кнопку нижче, щоб перейти до бота. Там можна запустити Rating, Availability, Overview, Geo Link, Indexing або Live DB без команд.",
             "",
             "Усі запити та результати відкриваються у приватному чаті, тому їх бачить тільки користувач, який зробив запит.",
         ]),
@@ -426,6 +433,15 @@ def truncate_text(value: str, max_len: int = 900) -> str:
 
 def prompt_for_action(chat_id: str | int, action: str):
     prompts = {
+        "rating": "\n".join([
+            "<b>Rating</b>",
+            "Встав Google Play URL або package name.",
+            "Поріг рейтингу можна додати другим рядком. Якщо не вказати, буде 4.0.",
+            "",
+            "Приклад:",
+            "<code>com.dragonplus.cookingfr",
+            "4.0</code>",
+        ]),
         "availability": "\n".join([
             "<b>Availability</b>",
             "Встав Google Play URL або package name.",
@@ -596,6 +612,113 @@ def format_geo_link_result(app_id: str, country_raw: str) -> str:
     ])
 
 
+def parse_rating_input(raw_text: str) -> tuple[str, float, list[str]]:
+    lines = [line.strip() for line in (raw_text or "").splitlines() if line.strip()]
+    app_source = lines[0] if lines else raw_text
+    url_match = re.search(r"https?://\S+", app_source or "")
+    if url_match:
+        app_source = url_match.group(0).rstrip(".,;")
+    elif len(lines) <= 1:
+        app_source = re.sub(r"(?<![\w.])([0-5](?:[.,]\d{1,2})?)(?![\w.])", " ", app_source or "", count=1)
+    app_id = parse_app_id_input(app_source or raw_text)
+    threshold = 4.0
+    errors = []
+
+    if not app_id:
+        errors.append("Не знайшов package name. Встав Google Play URL або bundle.")
+
+    threshold_source = lines[1] if len(lines) >= 2 else remove_app_part(raw_text, app_id)
+    threshold_match = re.search(r"(?<![\w.])([0-5](?:[.,]\d{1,2})?)(?![\w.])", threshold_source or "")
+    if threshold_match:
+        try:
+            threshold = float(threshold_match.group(1).replace(",", "."))
+        except Exception:
+            errors.append("Не зміг прочитати поріг рейтингу. Приклад: 4.0")
+
+    if not 0 <= threshold <= 5:
+        errors.append("Поріг рейтингу має бути від 0 до 5.")
+
+    return app_id, threshold, errors
+
+
+def format_rating_value(value) -> str:
+    try:
+        return f"{float(value):.1f}"
+    except Exception:
+        return "—"
+
+
+def format_share_label(share, installs=None) -> str:
+    try:
+        value = int(round(float(share)))
+    except Exception:
+        return "—"
+    if value <= 0 and installs:
+        return "<1%"
+    return f"{value}%"
+
+
+def format_rating_row(row: dict) -> str:
+    country = row.get("country") or country_label(row.get("gl") or "")
+    gl = row.get("gl") or ""
+    rating = format_rating_value(row.get("rating"))
+    installs = row.get("appmagic_estimated_installs") or row.get("appmagic_downloads")
+    installs_label = format_number_plain(installs)
+    share_label = format_share_label(row.get("appmagic_share"), installs)
+    bits = [
+        f"<b>{escape(country)}</b>",
+        f"({escape(gl)})" if gl else "",
+        f"rating <b>{escape(rating)}</b>",
+    ]
+    details = []
+    if share_label != "—":
+        details.append(f"share {share_label}")
+    if installs_label != "—":
+        details.append(f"≈ {installs_label}")
+    if details:
+        bits.append("· " + " · ".join(details))
+    return " ".join(part for part in bits if part)
+
+
+def format_rating_result(app_id: str, threshold: float, all_rows: list[dict], below_rows: list[dict], appmagic_meta: dict) -> str:
+    rated_rows = [row for row in all_rows if row.get("rating") is not None]
+    total_installs_label = appmagic_meta.get("app_total_installs_label") or appmagic_meta.get("downloads_label") or "—"
+    total_installs_source = appmagic_meta.get("app_total_installs_source_label") or appmagic_meta.get("estimate_source_label") or ""
+
+    lines = [
+        "<b>Rating result</b>",
+        "",
+        f"App ID: <code>{escape(app_id)}</code>",
+        f"Threshold: <b>{escape(format_rating_value(threshold))}</b>",
+        f"Countries: <b>{len(all_rows)}</b>",
+        f"With rating: <b>{len(rated_rows)}</b>",
+        f"Below threshold: <b>{len(below_rows)}</b>",
+        f"Total installs: <b>{escape(total_installs_label)}</b>",
+    ]
+    if total_installs_source:
+        lines.append(f"Installs source: {escape(total_installs_source)}")
+    lines.append("")
+
+    if not all_rows:
+        lines.append("App Magic не повернув країни для цього додатку.")
+        return "\n".join(lines)
+
+    if not rated_rows:
+        lines.append("Рейтингів по країнах не знайдено. Можливо, у Google Play/App Magic ще немає достатньо даних для цього додатку.")
+        return "\n".join(lines)
+
+    if not below_rows:
+        lines.append(f"Усі знайдені рейтинги не нижче {escape(format_rating_value(threshold))}.")
+        return "\n".join(lines)
+
+    lines.append("<b>Countries below threshold</b>")
+    for row in below_rows[:60]:
+        lines.append("• " + format_rating_row(row))
+    if len(below_rows) > 60:
+        lines.append(f"…and {len(below_rows) - 60} more")
+    return "\n".join(lines)
+
+
 def parse_indexing_input(raw_text: str) -> tuple[str, list[dict], list[str], int, list[str]]:
     lines = [line.strip() for line in (raw_text or "").splitlines() if line.strip()]
     if len(lines) < 3:
@@ -689,6 +812,27 @@ def format_live_db_search_result(query: str, payload: dict) -> str:
 def process_menu_request(chat_id: str | int, action: str, text: str):
     try:
         safe_send_message(chat_id, "Обробляю запит. Зазвичай це займає від кількох секунд до кількох хвилин.")
+
+        if action == "rating":
+            app_id, threshold, errors = parse_rating_input(text)
+            if errors:
+                send_message(chat_id, "\n".join(["<b>Rating input error</b>", *[f"• {escape(e)}" for e in errors]]))
+                return
+            try:
+                all_rows, below_rows, appmagic_meta = check_google_appmagic(app_id, threshold)
+            except Exception as e:
+                error = str(e)
+                if "APPMAGIC_EXACT_DATA_UNAVAILABLE" in error:
+                    send_message(
+                        chat_id,
+                        "App Magic зараз не віддає країни/завантаження для цього додатку. "
+                        "Спробуй інший додаток або повтори пізніше, коли у App Magic з'являться дані.",
+                    )
+                    return
+                send_message(chat_id, f"Rating error: <code>{escape(error)}</code>")
+                return
+            send_long_message(chat_id, format_rating_result(app_id, threshold, all_rows, below_rows, appmagic_meta))
+            return
 
         if action == "availability":
             app_id = parse_app_id_input(text)
@@ -952,7 +1096,7 @@ def handle_message(message: dict):
 
     if command == "/start" and chat_type == "private":
         action = command_arg.strip().lower()
-        if can_use_private_menu(chat) and action in {"availability", "overview", "geolink", "indexing", "livedb"}:
+        if can_use_private_menu(chat) and action in {"rating", "availability", "overview", "geolink", "indexing", "livedb"}:
             prompt_for_action(chat_id, action)
             return
         if can_use_private_menu(chat):
@@ -1033,7 +1177,7 @@ def handle_callback_query(query: dict):
     if action == "status":
         send_status(chat_id)
         return
-    if action in {"availability", "overview", "geolink", "indexing", "livedb"}:
+    if action in {"rating", "availability", "overview", "geolink", "indexing", "livedb"}:
         prompt_for_action(chat_id, action)
         return
     if action == "home":
