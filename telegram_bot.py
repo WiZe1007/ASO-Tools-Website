@@ -23,14 +23,17 @@ from app import (
     TELEGRAM_CHAT_ID,
     BotConfigError,
     GoogleSheetsAvailabilityStore,
+    build_app_total_installs_meta,
     build_app_overview_payload,
     build_google_play_indexing_payload,
     build_google_play_url,
     build_live_apps_database_payload,
+    check_google,
     check_google_appmagic,
     country_label,
     format_country_lines,
     format_number_plain,
+    get_countries_by_mode,
     normalize_android_package_input,
     normalize_indexing_countries,
     normalize_indexing_keywords,
@@ -80,6 +83,12 @@ MENU_BUTTON_ACTIONS = {
     "🔎 Indexing": "indexing",
     "📚 Live DB": "livedb",
     "✅ Status": "status",
+}
+
+RATING_MODE_LABELS = {
+    "toolbox": "ASO Toolbox",
+    "full": "Повне ASO",
+    "appmagic": "App Magic",
 }
 
 
@@ -324,6 +333,20 @@ def private_menu_markup() -> dict:
     }
 
 
+def rating_mode_markup() -> dict:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "ASO Toolbox", "callback_data": "ratingmode:toolbox"},
+                {"text": "Повне ASO", "callback_data": "ratingmode:full"},
+            ],
+            [
+                {"text": "App Magic", "callback_data": "ratingmode:appmagic"},
+            ],
+        ],
+    }
+
+
 def private_reply_keyboard_markup() -> dict:
     return {
         "keyboard": [
@@ -399,7 +422,7 @@ def send_channel_menu(chat_id: str | int) -> dict:
             "",
             "<b>Меню інструментів доступне в боті.</b>",
             "",
-            "Натисни кнопку нижче, щоб перейти до бота. Там можна запустити Rating, Availability, Overview, Geo Link, Indexing або Live DB без команд.",
+            "Натисни кнопку нижче, щоб перейти до бота. Там можна запустити Rating у 3 режимах, Availability, Overview, Geo Link, Indexing або Live DB без команд.",
             "",
             "Усі запити та результати відкриваються у приватному чаті, тому їх бачить тільки користувач, який зробив запит.",
         ]),
@@ -412,8 +435,10 @@ def send_channel_menu(chat_id: str | int) -> dict:
     return {"ok": True, "message_id": message_id, "pinned": pinned, "pin_error": pin_error}
 
 
-def set_user_session(chat_id: str | int, action: str):
-    user_sessions[str(chat_id)] = {"action": action, "created_at": time.time()}
+def set_user_session(chat_id: str | int, action: str, **extra):
+    state = {"action": action, "created_at": time.time()}
+    state.update(extra)
+    user_sessions[str(chat_id)] = state
 
 
 def clear_user_session(chat_id: str | int):
@@ -431,17 +456,41 @@ def truncate_text(value: str, max_len: int = 900) -> str:
     return value[:max_len].rstrip() + "…"
 
 
+def rating_input_prompt(mode: str) -> str:
+    mode_label = RATING_MODE_LABELS.get(mode, RATING_MODE_LABELS["appmagic"])
+    return "\n".join([
+        f"<b>Rating · {escape(mode_label)}</b>",
+        "Встав Google Play URL або package name.",
+        "Поріг рейтингу можна додати другим рядком. Якщо не вказати, буде 4.0.",
+        "Режим також можна написати текстом: toolbox, full або appmagic.",
+        "",
+        "Приклад:",
+        "<code>com.dragonplus.cookingfr",
+        "4.0</code>",
+    ])
+
+
 def prompt_for_action(chat_id: str | int, action: str):
+    if action == "rating":
+        set_user_session(chat_id, "rating", mode="appmagic")
+        send_message(
+            chat_id,
+            "\n".join([
+                "<b>Rating</b>",
+                "Обери режим перевірки:",
+                "",
+                "• <b>ASO Toolbox</b> — базовий список країн",
+                "• <b>Повне ASO</b> — повний список країн",
+                "• <b>App Magic</b> — країни та частки як в App Magic",
+                "",
+                "Після вибору режиму введи bundle/URL. Якщо просто введеш bundle без вибору, використаю App Magic.",
+                "Також можна написати режим текстом: <code>toolbox</code>, <code>full</code> або <code>appmagic</code>.",
+            ]),
+            reply_markup=rating_mode_markup(),
+        )
+        return
+
     prompts = {
-        "rating": "\n".join([
-            "<b>Rating</b>",
-            "Встав Google Play URL або package name.",
-            "Поріг рейтингу можна додати другим рядком. Якщо не вказати, буде 4.0.",
-            "",
-            "Приклад:",
-            "<code>com.dragonplus.cookingfr",
-            "4.0</code>",
-        ]),
         "availability": "\n".join([
             "<b>Availability</b>",
             "Встав Google Play URL або package name.",
@@ -612,13 +661,34 @@ def format_geo_link_result(app_id: str, country_raw: str) -> str:
     ])
 
 
-def parse_rating_input(raw_text: str) -> tuple[str, float, list[str]]:
+def normalize_rating_mode(raw_text: str, default_mode: str = "appmagic") -> str:
+    text = str(raw_text or "").casefold()
+    if re.search(r"\bapp\s*magic\b|\bappmagic\b", text):
+        return "appmagic"
+    if re.search(r"\bfull\b|\bfull\s*aso\b|повн", text):
+        return "full"
+    if re.search(r"\btoolbox\b|\baso\s*toolbox\b", text):
+        return "toolbox"
+    return default_mode if default_mode in RATING_MODE_LABELS else "appmagic"
+
+
+def strip_rating_mode_words(text: str) -> str:
+    value = str(text or "")
+    value = re.sub(r"\bapp\s*magic\b|\bappmagic\b", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"\bfull\s*aso\b|\bfull\b|повне\s*aso|повн[а-яіїєґ]*\s*aso", " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"\baso\s*toolbox\b|\btoolbox\b", " ", value, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def parse_rating_input(raw_text: str, default_mode: str = "appmagic") -> tuple[str, float, str, list[str]]:
     lines = [line.strip() for line in (raw_text or "").splitlines() if line.strip()]
     app_source = lines[0] if lines else raw_text
+    mode = normalize_rating_mode(raw_text, default_mode=default_mode)
     url_match = re.search(r"https?://\S+", app_source or "")
     if url_match:
         app_source = url_match.group(0).rstrip(".,;")
     elif len(lines) <= 1:
+        app_source = strip_rating_mode_words(app_source)
         app_source = re.sub(r"(?<![\w.])([0-5](?:[.,]\d{1,2})?)(?![\w.])", " ", app_source or "", count=1)
     app_id = parse_app_id_input(app_source or raw_text)
     threshold = 4.0
@@ -627,7 +697,8 @@ def parse_rating_input(raw_text: str) -> tuple[str, float, list[str]]:
     if not app_id:
         errors.append("Не знайшов package name. Встав Google Play URL або bundle.")
 
-    threshold_source = lines[1] if len(lines) >= 2 else remove_app_part(raw_text, app_id)
+    threshold_source = "\n".join(lines[1:]) if len(lines) >= 2 else remove_app_part(raw_text, app_id)
+    threshold_source = strip_rating_mode_words(threshold_source)
     threshold_match = re.search(r"(?<![\w.])([0-5](?:[.,]\d{1,2})?)(?![\w.])", threshold_source or "")
     if threshold_match:
         try:
@@ -638,7 +709,7 @@ def parse_rating_input(raw_text: str) -> tuple[str, float, list[str]]:
     if not 0 <= threshold <= 5:
         errors.append("Поріг рейтингу має бути від 0 до 5.")
 
-    return app_id, threshold, errors
+    return app_id, threshold, mode, errors
 
 
 def format_rating_value(value) -> str:
@@ -680,8 +751,19 @@ def format_rating_row(row: dict) -> str:
     return " ".join(part for part in bits if part)
 
 
-def format_rating_result(app_id: str, threshold: float, all_rows: list[dict], below_rows: list[dict], appmagic_meta: dict) -> str:
+def run_rating_check(app_id: str, threshold: float, mode: str) -> tuple[list[dict], list[dict], dict]:
+    if mode == "appmagic":
+        return check_google_appmagic(app_id, threshold)
+
+    countries = get_countries_by_mode(mode)
+    all_rows, below_rows = check_google(app_id, threshold, countries)
+    meta = build_app_total_installs_meta(app_id, prefer_appmagic=False)
+    return all_rows, below_rows, meta
+
+
+def format_rating_result(app_id: str, threshold: float, mode: str, all_rows: list[dict], below_rows: list[dict], appmagic_meta: dict) -> str:
     rated_rows = [row for row in all_rows if row.get("rating") is not None]
+    mode_label = RATING_MODE_LABELS.get(mode, mode)
     total_installs_label = appmagic_meta.get("app_total_installs_label") or appmagic_meta.get("downloads_label") or "—"
     total_installs_source = appmagic_meta.get("app_total_installs_source_label") or appmagic_meta.get("estimate_source_label") or ""
 
@@ -689,6 +771,7 @@ def format_rating_result(app_id: str, threshold: float, all_rows: list[dict], be
         "<b>Rating result</b>",
         "",
         f"App ID: <code>{escape(app_id)}</code>",
+        f"Mode: <b>{escape(mode_label)}</b>",
         f"Threshold: <b>{escape(format_rating_value(threshold))}</b>",
         f"Countries: <b>{len(all_rows)}</b>",
         f"With rating: <b>{len(rated_rows)}</b>",
@@ -700,7 +783,7 @@ def format_rating_result(app_id: str, threshold: float, all_rows: list[dict], be
     lines.append("")
 
     if not all_rows:
-        lines.append("App Magic не повернув країни для цього додатку.")
+        lines.append("Цей режим не повернув країни для цього додатку.")
         return "\n".join(lines)
 
     if not rated_rows:
@@ -809,20 +892,21 @@ def format_live_db_search_result(query: str, payload: dict) -> str:
     return "\n".join(lines).strip()
 
 
-def process_menu_request(chat_id: str | int, action: str, text: str):
+def process_menu_request(chat_id: str | int, action: str, text: str, session_options: dict | None = None):
     try:
         safe_send_message(chat_id, "Обробляю запит. Зазвичай це займає від кількох секунд до кількох хвилин.")
 
         if action == "rating":
-            app_id, threshold, errors = parse_rating_input(text)
+            default_mode = (session_options or {}).get("mode") or "appmagic"
+            app_id, threshold, mode, errors = parse_rating_input(text, default_mode=default_mode)
             if errors:
                 send_message(chat_id, "\n".join(["<b>Rating input error</b>", *[f"• {escape(e)}" for e in errors]]))
                 return
             try:
-                all_rows, below_rows, appmagic_meta = check_google_appmagic(app_id, threshold)
+                all_rows, below_rows, appmagic_meta = run_rating_check(app_id, threshold, mode)
             except Exception as e:
                 error = str(e)
-                if "APPMAGIC_EXACT_DATA_UNAVAILABLE" in error:
+                if mode == "appmagic" and "APPMAGIC_EXACT_DATA_UNAVAILABLE" in error:
                     send_message(
                         chat_id,
                         "App Magic зараз не віддає країни/завантаження для цього додатку. "
@@ -831,7 +915,7 @@ def process_menu_request(chat_id: str | int, action: str, text: str):
                     return
                 send_message(chat_id, f"Rating error: <code>{escape(error)}</code>")
                 return
-            send_long_message(chat_id, format_rating_result(app_id, threshold, all_rows, below_rows, appmagic_meta))
+            send_long_message(chat_id, format_rating_result(app_id, threshold, mode, all_rows, below_rows, appmagic_meta))
             return
 
         if action == "availability":
@@ -899,7 +983,7 @@ def handle_session_message(message: dict) -> bool:
     if not session_state:
         return False
     action = session_state.get("action") or ""
-    threading.Thread(target=process_menu_request, args=(chat_id, action, text), daemon=True).start()
+    threading.Thread(target=process_menu_request, args=(chat_id, action, text, dict(session_state)), daemon=True).start()
     return True
 
 
@@ -1167,6 +1251,15 @@ def handle_callback_query(query: dict):
 
     if not can_use_private_menu(chat):
         safe_send_message(chat_id, unauthorized_text(chat_id))
+        return
+
+    if data.startswith("ratingmode:"):
+        mode = data.split(":", 1)[1]
+        if mode not in RATING_MODE_LABELS:
+            safe_send_message(chat_id, "Невідомий режим Rating. Натисни /menu.")
+            return
+        set_user_session(chat_id, "rating", mode=mode)
+        safe_send_message(chat_id, rating_input_prompt(mode), reply_markup=private_reply_keyboard_markup())
         return
 
     if not data.startswith("menu:"):
