@@ -751,6 +751,43 @@ def format_rating_row(row: dict) -> str:
     return " ".join(part for part in bits if part)
 
 
+def format_appmagic_country_data_unavailable(app_id: str, appmagic_meta: dict) -> str:
+    total_installs_label = appmagic_meta.get("app_total_installs_label") or appmagic_meta.get("downloads_label") or "—"
+    data_error = appmagic_meta.get("appmagic_data_countries_error") or appmagic_meta.get("appmagic_exact_required_reason") or "unknown"
+    auth_source = appmagic_meta.get("appmagic_auth_source") or "none"
+
+    if appmagic_meta.get("appmagic_auth_required"):
+        lines = [
+            "<b>App Magic authorization required</b>",
+            "",
+            f"App ID: <code>{escape(app_id)}</code>",
+            f"Total installs: <b>{escape(total_installs_label)}</b>",
+            "",
+            "Бот зміг отримати загальні інстали, але не зміг отримати країни з App Magic <code>data-countries</code>.",
+            "Для цього endpoint потрібен App Magic token саме в Render service цього Telegram bot.",
+            "",
+            f"Причина: <code>{escape(data_error)}</code>",
+            f"Auth source: <code>{escape(auth_source)}</code>",
+            "",
+            "Додай або онови env <code>APPMAGIC_BEARER_TOKEN</code> у Render для цього бота і зроби redeploy.",
+        ]
+        return "\n".join(lines)
+
+    if appmagic_meta.get("appmagic_no_rating_data"):
+        lines = [
+            "<b>App Magic country data unavailable</b>",
+            "",
+            f"App ID: <code>{escape(app_id)}</code>",
+            f"Total installs: <b>{escape(total_installs_label)}</b>",
+            "",
+            "App Magic не повернув країни/частки для цього додатку.",
+            f"Причина: <code>{escape(data_error)}</code>",
+        ]
+        return "\n".join(lines)
+
+    return ""
+
+
 def run_rating_check(app_id: str, threshold: float, mode: str) -> tuple[list[dict], list[dict], dict]:
     if mode == "appmagic":
         return check_google_appmagic(app_id, threshold)
@@ -915,6 +952,11 @@ def process_menu_request(chat_id: str | int, action: str, text: str, session_opt
                     return
                 send_message(chat_id, f"Rating error: <code>{escape(error)}</code>")
                 return
+            if mode == "appmagic" and not all_rows:
+                unavailable_message = format_appmagic_country_data_unavailable(app_id, appmagic_meta)
+                if unavailable_message:
+                    send_long_message(chat_id, unavailable_message)
+                    return
             send_long_message(chat_id, format_rating_result(app_id, threshold, mode, all_rows, below_rows, appmagic_meta))
             return
 
