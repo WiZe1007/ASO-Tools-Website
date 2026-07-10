@@ -378,7 +378,7 @@ def send_private_menu(chat_id: str | int):
     return send_message(
         chat_id,
         "\n".join([
-            "<b>Меню WWA ASO Tools</b>",
+            "<b>Меню WWA Tools</b>",
             "",
             "Нижче увімкнена клавіатура інструментів. Обери потрібний пункт, введи дані, і результат прийде сюди, у приватний чат.",
         ]),
@@ -418,7 +418,7 @@ def send_channel_menu(chat_id: str | int) -> dict:
     response = send_message(
         chat_id,
         "\n".join([
-            "<b>WWA ASO Tools</b>",
+            "<b>WWA Tools</b>",
             "",
             "<b>Меню інструментів доступне в боті.</b>",
             "",

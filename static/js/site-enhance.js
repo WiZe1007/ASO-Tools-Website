@@ -76,7 +76,7 @@
       <div class="contact-modal__backdrop" data-contact-close></div>
       <section class="contact-modal__panel" role="dialog" aria-modal="true" aria-labelledby="contactModalTitle">
         <button class="contact-modal__close" type="button" aria-label="Закрити" data-contact-close>×</button>
-        <p class="contact-modal__eyebrow">WWA ASO Tools</p>
+        <p class="contact-modal__eyebrow">WWA Tools</p>
         <h2 id="contactModalTitle">Контакти</h2>
         <p class="contact-modal__text">Пропозиції та допомогу можна дізнатися за цими контактами</p>
         <div class="contact-modal__list">

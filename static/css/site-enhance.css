@@ -1,5 +1,5 @@
 /* ============================================================
-   WWA ASO Tools — site enhancement layer
+   WWA Tools — site enhancement layer
    Loaded AFTER each page's inline <style>, so these rules win ties.
    Goal: fast (no external image), smooth, premium-animated.
    All motion is transform/opacity only (GPU-friendly) and is
@@ -2825,6 +2825,19 @@ body[data-page] .brand{
   min-width:284px !important;
   padding-right:28px !important;
   border-right:1px solid rgba(255,255,255,.16) !important;
+  color:inherit !important;
+  text-decoration:none !important;
+  cursor:pointer !important;
+}
+
+body[data-page] .brand:hover .name{
+  color:#fff !important;
+}
+
+body[data-page] .brand:focus-visible{
+  outline:2px solid rgba(255,195,66,.85) !important;
+  outline-offset:4px !important;
+  border-radius:12px !important;
 }
 
 body[data-page] .brand .logo{
