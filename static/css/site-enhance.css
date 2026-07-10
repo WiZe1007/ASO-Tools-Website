@@ -2824,7 +2824,9 @@ body[data-page] .topnav-inner::before{
 body[data-page] .brand{
   min-width:284px !important;
   padding-right:28px !important;
+  padding-bottom:0 !important;
   border-right:1px solid rgba(255,255,255,.16) !important;
+  border-bottom:0 !important;
   color:inherit !important;
   text-decoration:none !important;
   cursor:pointer !important;
