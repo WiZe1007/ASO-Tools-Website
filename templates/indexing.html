@@ -92,13 +92,13 @@
     .indexing-search-panel{padding:24px}
     .indexing-form-grid{
       display:grid;
-      grid-template-columns:minmax(0,1.4fr) minmax(220px,.55fr) minmax(150px,.28fr);
+      grid-template-columns:minmax(0,1.35fr) minmax(180px,.48fr) minmax(190px,.52fr) minmax(130px,.25fr);
       gap:14px;
       align-items:end;
     }
     .indexing-field{display:flex;flex-direction:column;gap:8px;min-width:0}
     .indexing-field span{color:var(--muted);font-size:13px;font-weight:850;letter-spacing:.2px}
-    .indexing-input,.indexing-textarea{
+    .indexing-input,.indexing-select,.indexing-textarea{
       width:100%;
       border:1px solid rgba(161,181,204,.24);
       border-radius:12px;
@@ -109,7 +109,8 @@
       font-weight:720;
       box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
     }
-    .indexing-input{height:54px;padding:0 16px}
+    .indexing-input,.indexing-select{height:54px;padding:0 16px}
+    .indexing-select{appearance:auto;cursor:pointer}
     .indexing-textarea{
       margin-top:14px;
       min-height:142px;
@@ -133,7 +134,7 @@
     .indexing-status{margin-top:14px;min-height:22px;color:var(--muted);font-weight:800}
     .indexing-summary{
       display:grid;
-      grid-template-columns:repeat(5,minmax(0,1fr));
+      grid-template-columns:repeat(6,minmax(0,1fr));
       gap:12px;
       margin:18px 0;
     }
@@ -194,6 +195,7 @@
     html[data-theme="light"] .indexing-hint,
     html[data-theme="light"] .indexing-metric span{color:#51647d}
     html[data-theme="light"] .indexing-input,
+    html[data-theme="light"] .indexing-select,
     html[data-theme="light"] .indexing-textarea{
       background:rgba(255,255,255,.86);
       border-color:rgba(83,111,142,.26);
@@ -276,6 +278,7 @@
       <p class="indexing-subtitle">
         Введи Google Play package name або URL, GEO і список ключів. Сторінка покаже,
         чи знаходиться апка у Google Play search по кожному ключу і на якій позиції.
+        Android mobile web перевіряє мобільну веб-видачу, а не застосунок Play Store на пристрої.
       </p>
     </header>
 
@@ -294,6 +297,13 @@
             <option value="{{ country.name }}">{{ country.name }} ({{ country.code }})</option>
             {% endfor %}
           </datalist>
+        </label>
+        <label class="indexing-field">
+          <span>Видача</span>
+          <select id="clientInput" class="indexing-select" aria-label="Google Play search profile">
+            <option value="desktop">Desktop web</option>
+            <option value="android">Android mobile web</option>
+          </select>
         </label>
         <label class="indexing-field">
           <span>Search top</span>
@@ -315,7 +325,7 @@
     <section id="resultsPanel" class="indexing-panel indexing-results" hidden>
       <div class="indexing-results-head">
         <h2>Результати</h2>
-        <p class="indexing-hint">Позиція рахується серед результатів, які Google Play повернув у HTML видачі.</p>
+        <p id="resultsHint" class="indexing-hint">Позиція рахується серед результатів, які Google Play повернув у HTML видачі.</p>
       </div>
       <div class="indexing-table-scroll">
         <table class="indexing-table">
@@ -342,12 +352,14 @@
     const countriesInput = document.getElementById("countriesInput");
     const keywordsInput = document.getElementById("keywordsInput");
     const limitInput = document.getElementById("limitInput");
+    const clientInput = document.getElementById("clientInput");
     const runButton = document.getElementById("runButton");
     const statusText = document.getElementById("statusText");
     const summary = document.getElementById("summary");
     const resultsPanel = document.getElementById("resultsPanel");
     const resultsBody = document.getElementById("resultsBody");
     const emptyState = document.getElementById("emptyState");
+    const resultsHint = document.getElementById("resultsHint");
 
     (function setupMobileMenu(){
       const hamb = document.getElementById("hamb");
@@ -400,10 +412,16 @@
       summary.innerHTML = [
         metric("App ID", data.app_id || "—"),
         metric("GEO", (data.countries || []).map(c => c.gl).join(", ") || "—"),
+        metric("Видача", data.client_label || "Desktop web"),
         metric("Keywords", (data.keywords || []).length),
         metric("Indexed", `${stats.indexed || 0} / ${stats.total_checks || 0}`),
         metric("Best position", stats.best_rank ? `#${stats.best_rank}` : "—")
       ].join("");
+
+      const isAndroidMobile = data.client === "android";
+      resultsHint.textContent = isAndroidMobile
+        ? "Позиція рахується серед результатів, які Google Play повернув у мобільній HTML-видачі Android. Це не результат застосунку Play Store на телефоні."
+        : "Позиція рахується серед результатів, які Google Play повернув у desktop HTML-видачі.";
 
       resultsPanel.hidden = false;
       const rows = data.rows || [];
@@ -429,6 +447,7 @@
       const appId = appInput.value.trim();
       const keywords = keywordsInput.value.trim();
       const countries = countriesInput.value.trim() || "US";
+      const client = clientInput.value;
       if (!appId){
         statusText.textContent = "Введи package name або Google Play URL.";
         return;
@@ -439,7 +458,7 @@
       }
 
       runButton.disabled = true;
-      statusText.textContent = "Перевіряю Google Play search. Це може зайняти кілька секунд...";
+      statusText.textContent = `Перевіряю ${client === "android" ? "Android mobile web" : "Desktop web"} Google Play search. Це може зайняти кілька секунд...`;
       try{
         const response = await fetch("/api/indexing/check", {
           method:"POST",
@@ -448,6 +467,7 @@
             app_id: appId,
             keywords,
             countries,
+            client,
             limit: Number(limitInput.value || 100)
           })
         });
@@ -478,6 +498,7 @@
       appInput.value = params.get("app_id") || params.get("url") || "";
     }
     if (params.get("country")) countriesInput.value = params.get("country");
+    if (["desktop", "android"].includes(params.get("client"))) clientInput.value = params.get("client");
     if (params.get("keywords")) keywordsInput.value = params.get("keywords").replace(/,/g, "\n");
     if (appInput.value && keywordsInput.value) runCheck();
   </script>

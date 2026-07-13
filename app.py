@@ -5217,6 +5217,41 @@ def normalize_indexing_limit(raw_limit) -> int:
     return max(20, min(250, limit))
 
 
+INDEXING_CLIENT_LABELS = {
+    "desktop": "Desktop web",
+    "android": "Android mobile web",
+}
+
+
+def normalize_indexing_client(raw_client) -> str:
+    value = str(raw_client or "desktop").strip().lower().replace("-", "_")
+    if value in {"android", "mobile", "mobile_web", "android_mobile"}:
+        return "android"
+    return "desktop"
+
+
+def build_google_play_search_headers(hl: str, client: str) -> dict[str, str]:
+    client = normalize_indexing_client(client)
+    user_agent = (
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Mobile Safari/537.36"
+        if client == "android"
+        else (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    )
+    return {
+        "User-Agent": user_agent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": f"{hl},{hl.split('-')[0]};q=0.9,en;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+
+
 def build_google_play_search_url(keyword: str, gl: str, hl: str) -> str:
     return (
         "https://play.google.com/store/search"
@@ -5252,12 +5287,14 @@ def parse_google_play_search_app_ids(raw_html: str) -> list[str]:
     return app_ids
 
 
-def fetch_google_play_search_results(keyword: str, gl: str, hl: str, limit: int) -> dict:
+def fetch_google_play_search_results(keyword: str, gl: str, hl: str, limit: int, client: str = "desktop") -> dict:
     normalized_keyword = re.sub(r"\s+", " ", keyword or "").strip()
     gl = (gl or "US").upper()
     hl = (hl or "en").strip() or "en"
     limit = normalize_indexing_limit(limit)
-    cache_key = ("google_play_search", normalized_keyword.casefold(), gl, hl, limit)
+    client = normalize_indexing_client(client)
+    client_label = INDEXING_CLIENT_LABELS[client]
+    cache_key = ("google_play_search", normalized_keyword.casefold(), gl, hl, limit, client)
     cached = GOOGLE_PLAY_SEARCH_CACHE.get(cache_key)
     if cached is not CACHE_MISS:
         cached_result = copy.deepcopy(cached)
@@ -5266,17 +5303,7 @@ def fetch_google_play_search_results(keyword: str, gl: str, hl: str, limit: int)
 
     time.sleep(random.uniform(GOOGLE_JITTER_MIN, GOOGLE_JITTER_MAX))
     url = build_google_play_search_url(normalized_keyword, gl, hl)
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": f"{hl},{hl.split('-')[0]};q=0.9,en;q=0.8",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-    }
+    headers = build_google_play_search_headers(hl, client)
 
     try:
         response = session.get(url, headers=headers, timeout=30, allow_redirects=True)
@@ -5286,6 +5313,8 @@ def fetch_google_play_search_results(keyword: str, gl: str, hl: str, limit: int)
             "keyword": normalized_keyword,
             "gl": gl,
             "hl": hl,
+            "client": client,
+            "client_label": client_label,
             "url": url,
             "error": f"REQUEST_ERROR:{e}",
             "cached": False,
@@ -5297,6 +5326,8 @@ def fetch_google_play_search_results(keyword: str, gl: str, hl: str, limit: int)
             "keyword": normalized_keyword,
             "gl": gl,
             "hl": hl,
+            "client": client,
+            "client_label": client_label,
             "url": url,
             "error": f"BLOCKED_HTTP_{response.status_code}",
             "cached": False,
@@ -5307,6 +5338,8 @@ def fetch_google_play_search_results(keyword: str, gl: str, hl: str, limit: int)
             "keyword": normalized_keyword,
             "gl": gl,
             "hl": hl,
+            "client": client,
+            "client_label": client_label,
             "url": url,
             "error": f"HTTP_{response.status_code}",
             "cached": False,
@@ -5319,6 +5352,8 @@ def fetch_google_play_search_results(keyword: str, gl: str, hl: str, limit: int)
             "keyword": normalized_keyword,
             "gl": gl,
             "hl": hl,
+            "client": client,
+            "client_label": client_label,
             "url": url,
             "error": "CONSENT_OR_UNUSUAL_TRAFFIC",
             "cached": False,
@@ -5330,6 +5365,8 @@ def fetch_google_play_search_results(keyword: str, gl: str, hl: str, limit: int)
         "keyword": normalized_keyword,
         "gl": gl,
         "hl": hl,
+        "client": client,
+        "client_label": client_label,
         "url": url,
         "app_ids": app_ids,
         "result_count": len(app_ids),
@@ -5339,13 +5376,16 @@ def fetch_google_play_search_results(keyword: str, gl: str, hl: str, limit: int)
     return result
 
 
-def check_google_play_keyword_indexing(app_id: str, keyword: str, country: dict, limit: int) -> dict:
-    search = fetch_google_play_search_results(keyword, country["gl"], country["hl"], limit)
+def check_google_play_keyword_indexing(app_id: str, keyword: str, country: dict, limit: int, client: str = "desktop") -> dict:
+    client = normalize_indexing_client(client)
+    search = fetch_google_play_search_results(keyword, country["gl"], country["hl"], limit, client)
     row = {
         "keyword": keyword,
         "country": country["name"],
         "gl": country["gl"],
         "hl": country["hl"],
+        "client": client,
+        "client_label": INDEXING_CLIENT_LABELS[client],
         "indexed": False,
         "rank": None,
         "status": "error",
@@ -5373,7 +5413,14 @@ def check_google_play_keyword_indexing(app_id: str, keyword: str, country: dict,
     return row
 
 
-def build_google_play_indexing_payload(app_id: str, keywords: list[str], countries: list[dict], limit: int) -> dict:
+def build_google_play_indexing_payload(
+    app_id: str,
+    keywords: list[str],
+    countries: list[dict],
+    limit: int,
+    client: str = "desktop",
+) -> dict:
+    client = normalize_indexing_client(client)
     checks = [(country_idx, keyword_idx, country, keyword)
               for country_idx, country in enumerate(countries)
               for keyword_idx, keyword in enumerate(keywords)]
@@ -5382,7 +5429,7 @@ def build_google_play_indexing_payload(app_id: str, keywords: list[str], countri
     rows_by_order: dict[tuple[int, int], dict] = {}
     with ThreadPoolExecutor(max_workers=min(MAX_WORKERS_INDEXING, max(1, len(checks)))) as executor:
         future_map = {
-            executor.submit(check_google_play_keyword_indexing, app_id, keyword, country, limit): (country_idx, keyword_idx)
+            executor.submit(check_google_play_keyword_indexing, app_id, keyword, country, limit, client): (country_idx, keyword_idx)
             for country_idx, keyword_idx, country, keyword in checks
         }
         for future in as_completed(future_map):
@@ -5396,6 +5443,8 @@ def build_google_play_indexing_payload(app_id: str, keywords: list[str], countri
                     "country": countries[country_idx]["name"],
                     "gl": countries[country_idx]["gl"],
                     "hl": countries[country_idx]["hl"],
+                    "client": client,
+                    "client_label": INDEXING_CLIENT_LABELS[client],
                     "indexed": False,
                     "rank": None,
                     "status": "error",
@@ -5419,6 +5468,8 @@ def build_google_play_indexing_payload(app_id: str, keywords: list[str], countri
         "keywords": keywords,
         "countries": countries,
         "limit": normalize_indexing_limit(limit),
+        "client": client,
+        "client_label": INDEXING_CLIENT_LABELS[client],
         "limited": len(countries) * len(keywords) > len(checks),
         "max_checks": INDEXING_MAX_CHECKS,
         "rows": rows,
@@ -5642,7 +5693,8 @@ def api_indexing_check():
         return jsonify({"ok": False, "error": " ".join(errors), "errors": errors}), 400
 
     limit = normalize_indexing_limit(payload.get("limit") or payload.get("search_limit"))
-    data = build_google_play_indexing_payload(app_id, keywords, countries, limit)
+    client = normalize_indexing_client(payload.get("client") or payload.get("device"))
+    data = build_google_play_indexing_payload(app_id, keywords, countries, limit, client)
     return jsonify(data)
 
 
