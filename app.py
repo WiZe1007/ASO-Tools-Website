@@ -90,7 +90,10 @@ GOOGLE_JITTER_MIN = 0.08
 GOOGLE_JITTER_MAX = 0.35
 GOOGLE_PLAY_DEFAULT_INSTALL_COUNTRY = "US"
 GOOGLE_PLAY_DEFAULT_INSTALL_LANG = "en"
-GOOGLE_AVAILABILITY_CLOSED_ERRORS = {"NO_INSTALL_SIGNALS", "NOT_FOUND"}
+# Only explicit Google Play responses can change a country to Closed. A page
+# without a familiar install marker is often a temporary markup variation, not
+# proof that the app cannot be installed in that country.
+GOOGLE_AVAILABILITY_CLOSED_ERRORS = {"NOT_FOUND", "GEO_BLOCKED_TEXT"}
 AVAILABILITY_CONFIRM_ALL_COUNTRIES = env_bool("WWA_AVAILABILITY_CONFIRM_ALL_COUNTRIES", True)
 
 APPMAGIC_SEARCH_BY_IDS_URL = "https://appmagic.rocks/api/v2/united-applications/search-by-ids"
@@ -3720,7 +3723,8 @@ def fetch_google_play_availability_confirmed(app_id: str, gl: str, primary_hl: s
 
     # Any clear open signal wins. Google Play can sometimes return incomplete
     # markup for a country, so a country is closed only after both checks agree
-    # with one of the strict closed signals we trust.
+    # with an explicit unavailable-country or not-found signal. In particular,
+    # NO_INSTALL_SIGNALS is inconclusive and must never produce a Closed alert.
     if first_available is True:
         return True, first_error
     if second_available is True:
