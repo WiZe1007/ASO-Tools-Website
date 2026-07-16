@@ -90,10 +90,7 @@ GOOGLE_JITTER_MIN = 0.08
 GOOGLE_JITTER_MAX = 0.35
 GOOGLE_PLAY_DEFAULT_INSTALL_COUNTRY = "US"
 GOOGLE_PLAY_DEFAULT_INSTALL_LANG = "en"
-# Only explicit Google Play responses can change a country to Closed. A page
-# without a familiar install marker is often a temporary markup variation, not
-# proof that the app cannot be installed in that country.
-GOOGLE_AVAILABILITY_CLOSED_ERRORS = {"NOT_FOUND", "GEO_BLOCKED_TEXT"}
+GOOGLE_AVAILABILITY_CLOSED_ERRORS = {"NO_INSTALL_SIGNALS", "NOT_FOUND"}
 AVAILABILITY_CONFIRM_ALL_COUNTRIES = env_bool("WWA_AVAILABILITY_CONFIRM_ALL_COUNTRIES", True)
 
 APPMAGIC_SEARCH_BY_IDS_URL = "https://appmagic.rocks/api/v2/united-applications/search-by-ids"
@@ -3722,13 +3719,33 @@ def fetch_google_play_availability_confirmed(app_id: str, gl: str, primary_hl: s
     )
 
     # Any clear open signal wins. Google Play can sometimes return incomplete
-    # markup for a country, so a country is closed only after both checks agree
-    # with an explicit unavailable-country or not-found signal. In particular,
-    # NO_INSTALL_SIGNALS is inconclusive and must never produce a Closed alert.
+    # markup for a country. When a no-install signal appears, make two further
+    # uncached requests before allowing it to change the country to Closed.
     if first_available is True:
         return True, first_error
     if second_available is True:
         return True, second_error
+
+    if (
+        google_availability_error_code(first_error) == "NO_INSTALL_SIGNALS"
+        or google_availability_error_code(second_error) == "NO_INSTALL_SIGNALS"
+    ):
+        retry_errors: list[str | None] = []
+        for retry_hl in (primary_hl, confirm_hl):
+            retry_available, retry_error = fetch_google_play_availability(
+                app_id,
+                gl,
+                hl=retry_hl,
+                force_refresh=True,
+            )
+            if retry_available is True:
+                return True, retry_error
+            retry_errors.append(retry_error)
+
+        if all(google_availability_is_closed_error(error) for error in retry_errors):
+            return False, retry_errors[-1] or second_error or first_error
+        return None, retry_errors[-1] or second_error or first_error
+
     if google_availability_is_closed_error(first_error) and google_availability_is_closed_error(second_error):
         return False, second_error or first_error
     return None, second_error or first_error
