@@ -15,6 +15,7 @@ import requests
 # defaults before importing app.py, because app.py reads these env values at
 # import time.
 os.environ.setdefault("WWA_BOT_MAX_WORKERS_AVAILABILITY", "3")
+os.environ.setdefault("WWA_BOT_MAX_WORKERS_LIVE_STATUS", "6")
 os.environ.setdefault("WWA_CACHE_MAX_ITEMS", "240")
 
 from app import (
@@ -40,6 +41,7 @@ from app import (
     normalize_indexing_limit,
     resolve_country_for_geo_link,
     run_availability_bot_check,
+    run_live_status_bot_check,
     session,
     summarize_google_availability,
     telegram_chunk_text,
@@ -61,6 +63,8 @@ BOT_POLL_TIMEOUT = env_int("BOT_POLL_TIMEOUT", 25, 5, 50)
 BOT_DROP_PENDING_UPDATES = os.environ.get("BOT_DROP_PENDING_UPDATES", "1").strip() != "0"
 BOT_MAX_COMMAND_CHECKS = env_int("BOT_MAX_COMMAND_CHECKS", AVAILABILITY_CHECK_LIMIT, 1, 1000)
 BOT_SCHEDULE_GRACE_MINUTES = env_int("BOT_SCHEDULE_GRACE_MINUTES", 10, 1, 59)
+BOT_LIVE_STATUS_ENABLED = os.environ.get("BOT_LIVE_STATUS_ENABLED", "1").strip() != "0"
+BOT_LIVE_STATUS_INTERVAL_MINUTES = env_int("BOT_LIVE_STATUS_INTERVAL_MINUTES", 20, 5, 180)
 BOT_API_RETRIES = env_int("BOT_API_RETRIES", 4, 1, 8)
 BOT_PROGRESS_EVERY_APPS = env_int("BOT_PROGRESS_EVERY_APPS", 10, 1, 100)
 TELEGRAM_SEND_EMPTY_SUMMARY = os.environ.get("TELEGRAM_SEND_EMPTY_SUMMARY", "1").strip() != "0"
@@ -71,6 +75,7 @@ TELEGRAM_PIN_MENU_MESSAGE = os.environ.get("TELEGRAM_PIN_MENU_MESSAGE", "1").str
 
 check_lock = threading.Lock()
 last_scheduled_key = ""
+last_live_status_key = ""
 active_check_state: dict = {}
 user_sessions: dict[str, dict] = {}
 bot_username_cache = TELEGRAM_BOT_USERNAME
@@ -197,6 +202,8 @@ def escape(value) -> str:
 def event_label(event: str) -> str:
     return {
         "new_live": "новий Live",
+        "app_restored": "додаток знову в Live",
+        "app_banned": "додаток заблоковано",
         "new_closed": "країни закрилися",
         "new_opened": "країни відкрилися",
     }.get(str(event or ""), str(event or "event"))
@@ -1139,6 +1146,35 @@ def run_scheduled_check():
         check_lock.release()
 
 
+def run_scheduled_live_status_check():
+    if not check_lock.acquire(blocking=False):
+        return
+
+    try:
+        result = run_live_status_bot_check(
+            send_messages=True,
+            write_changes=True,
+            limit=AVAILABILITY_CHECK_LIMIT,
+        )
+        print(json.dumps({
+            "ok": True,
+            "event": "scheduled_live_status_finished",
+            "apps_checked": result.get("apps_checked", 0),
+            "apps_total": result.get("apps_total", 0),
+            "notifications": len(result.get("notifications") or []),
+            "errors": len(result.get("errors") or []),
+            "full_confirmations": result.get("full_confirmations", 0),
+        }, ensure_ascii=False))
+    except Exception:
+        print(json.dumps({
+            "ok": False,
+            "event": "scheduled_live_status_failed",
+            "error": traceback.format_exc()[-2500:],
+        }, ensure_ascii=False))
+    finally:
+        check_lock.release()
+
+
 def send_status(chat_id: str | int):
     try:
         store = GoogleSheetsAvailabilityStore()
@@ -1154,6 +1190,7 @@ def send_status(chat_id: str | int):
                 f"Live: <b>{live}</b>",
                 f"Watch: <b>{watch}</b>",
                 f"Check hours: <b>{escape(BOT_CHECK_HOURS)}</b>",
+                f"Live/ban interval: <b>{BOT_LIVE_STATUS_INTERVAL_MINUTES} min</b>",
                 f"Timezone: <b>{escape(BOT_TIMEZONE)}</b>",
                 "",
                 (
@@ -1191,6 +1228,24 @@ def maybe_run_schedule():
 
     last_scheduled_key = key
     threading.Thread(target=run_scheduled_check, daemon=True).start()
+
+
+def maybe_run_live_status_schedule():
+    global last_live_status_key
+
+    if not BOT_LIVE_STATUS_ENABLED:
+        return
+    try:
+        now = datetime.now(ZoneInfo(BOT_TIMEZONE))
+    except Exception:
+        now = datetime.now(ZoneInfo("UTC"))
+
+    slot = int(now.timestamp() // (BOT_LIVE_STATUS_INTERVAL_MINUTES * 60))
+    key = str(slot)
+    if key == last_live_status_key:
+        return
+    last_live_status_key = key
+    threading.Thread(target=run_scheduled_live_status_check, daemon=True).start()
 
 
 def handle_message(message: dict):
@@ -1362,11 +1417,13 @@ def polling_loop():
         "bot": BOT_DISPLAY_NAME,
         "timezone": BOT_TIMEZONE,
         "check_hours": sorted(parse_check_hours()),
+        "live_status_interval_minutes": BOT_LIVE_STATUS_INTERVAL_MINUTES if BOT_LIVE_STATUS_ENABLED else 0,
         "allowed_chats": sorted(allowed_chat_ids()),
     }, ensure_ascii=False))
 
     while True:
         maybe_run_schedule()
+        maybe_run_live_status_schedule()
         try:
             data = bot_api("getUpdates", {
                 "offset": offset,

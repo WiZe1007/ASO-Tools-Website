@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="uk" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#071624">
+  <title>WWA Apps Database</title>
+  <link rel="icon" href="{{ url_for('static', filename='img/WWA_icon_1024.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css') }}">
+</head>
+<body class="database-page">
+  <div class="page-background" aria-hidden="true"></div>
+
+  <header class="app-header">
+    <a class="brand" href="/" aria-label="WWA Apps Database">
+      <img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" alt="">
+      <span>
+        <strong>WWA Apps Database</strong>
+        <small>Google Play workspace</small>
+      </span>
+    </a>
+
+    <div class="header-actions">
+      <span class="connection-state {{ '' if spreadsheet_configured else 'is-warning' }}" id="connectionState">
+        <i></i><span id="connectionStateLabel">{{ "Google Sheets connected" if spreadsheet_configured else "Configuration required" }}</span>
+      </span>
+      <span class="user-email" title="Поточний користувач">{{ current_user_email }}</span>
+      <button class="icon-button" id="themeButton" type="button" title="Змінити тему" aria-label="Змінити тему">
+        <svg aria-hidden="true"><use href="#icon-sun"></use></svg>
+      </button>
+      <a class="icon-button" href="/logout" title="Вийти" aria-label="Вийти">
+        <svg aria-hidden="true"><use href="#icon-log-out"></use></svg>
+      </a>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <section class="hero-row">
+      <div>
+        <span class="eyebrow">Company workspace</span>
+        <h1 id="databaseTitle">WWA Apps Database</h1>
+        <p id="databaseDescription">Додавай Google Play застосунки, призначай відповідальних і контролюй стан перевірок команди WWA.</p>
+      </div>
+      <button class="primary-button add-button" id="addAppButton" type="button">
+        <svg aria-hidden="true"><use href="#icon-plus"></use></svg>
+        Додати додаток
+      </button>
+    </section>
+
+    {% if databases|length > 1 %}
+    <nav class="database-switcher" id="databaseSwitcher" aria-label="Вибір бази даних">
+      {% for database in databases %}
+      <button class="database-tab {{ 'is-active' if database.key == 'wwa' else '' }}" type="button" data-database-key="{{ database.key }}" aria-pressed="{{ 'true' if database.key == 'wwa' else 'false' }}">
+        <svg aria-hidden="true"><use href="#icon-database"></use></svg>
+        <span>
+          <strong>{{ database.label }}</strong>
+          <small>{{ "Основна база" if database.key == "wwa" else "Друга команда" }}</small>
+        </span>
+      </button>
+      {% endfor %}
+    </nav>
+    {% endif %}
+
+    <section class="stats-grid" aria-label="Статистика бази">
+      <article class="stat-item">
+        <span class="stat-icon cyan"><svg><use href="#icon-database"></use></svg></span>
+        <div><small>Усього</small><strong id="statTotal">0</strong></div>
+      </article>
+      <article class="stat-item">
+        <span class="stat-icon green"><svg><use href="#icon-radio"></use></svg></span>
+        <div><small>Live</small><strong id="statLive">0</strong></div>
+      </article>
+      <article class="stat-item">
+        <span class="stat-icon amber"><svg><use href="#icon-eye"></use></svg></span>
+        <div><small>Watch</small><strong id="statWatch">0</strong></div>
+      </article>
+      <article class="stat-item">
+        <span class="stat-icon red"><svg><use href="#icon-alert"></use></svg></span>
+        <div><small>З помилками</small><strong id="statErrors">0</strong></div>
+      </article>
+      <article class="stat-item">
+        <span class="stat-icon slate"><svg><use href="#icon-archive"></use></svg></span>
+        <div><small>Вимкнено</small><strong id="statDisabled">0</strong></div>
+      </article>
+    </section>
+
+    <section class="workspace-panel">
+      <div class="toolbar">
+        <label class="search-field">
+          <svg aria-hidden="true"><use href="#icon-search"></use></svg>
+          <input id="searchInput" type="search" placeholder="Пошук за назвою, bundle, власником або нотатками" autocomplete="off">
+        </label>
+        <label class="select-field">
+          <span>Статус</span>
+          <select id="statusFilter">
+            <option value="all">Усі статуси</option>
+            <option value="live">Live</option>
+            <option value="watch">Watch</option>
+            <option value="banned">Banned</option>
+            <option value="paused">Paused</option>
+          </select>
+        </label>
+        <label class="select-field">
+          <span>Доступність</span>
+          <select id="enabledFilter">
+            <option value="active">Активні</option>
+            <option value="all">Усі записи</option>
+            <option value="disabled">Вимкнені</option>
+          </select>
+        </label>
+        <button class="secondary-button refresh-button" id="refreshButton" type="button">
+          <svg aria-hidden="true"><use href="#icon-refresh"></use></svg>
+          Оновити
+        </button>
+      </div>
+
+      <div class="table-summary">
+        <span id="resultCount">Завантаження даних...</span>
+        <span id="lastUpdated"></span>
+      </div>
+
+      <div class="table-wrap">
+        <table class="apps-table">
+          <thead>
+            <tr>
+              <th>Додаток</th>
+              <th>Статус</th>
+              <th>Власник</th>
+              <th>Закриті GEO</th>
+              <th>Остання перевірка</th>
+              <th>Моніторинг</th>
+              <th><span class="sr-only">Дії</span></th>
+            </tr>
+          </thead>
+          <tbody id="appsTableBody"></tbody>
+        </table>
+        <div class="loading-state" id="loadingState">
+          <span class="spinner"></span>
+          <strong>Синхронізую Google Sheets</strong>
+          <small>Зазвичай це займає кілька секунд</small>
+        </div>
+        <div class="empty-state" id="emptyState" hidden>
+          <span><svg><use href="#icon-search"></use></svg></span>
+          <strong>Нічого не знайдено</strong>
+          <small>Зміни пошуковий запит або фільтри.</small>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-backdrop" id="appModal" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header class="modal-header">
+        <div>
+          <span class="eyebrow" id="modalEyebrow">Новий запис</span>
+          <h2 id="modalTitle">Додати додаток</h2>
+        </div>
+        <button class="icon-button" id="closeModalButton" type="button" aria-label="Закрити">
+          <svg aria-hidden="true"><use href="#icon-x"></use></svg>
+        </button>
+      </header>
+
+      <form id="appForm">
+        <input id="editRowIndex" type="hidden">
+        <input id="expectedAppId" type="hidden">
+
+        <label class="form-field" id="appInputField">
+          <span>Google Play URL або package name <b>*</b></span>
+          <input id="appInput" type="text" placeholder="com.example.app або https://play.google.com/..." autocomplete="off">
+          <small>Bundle буде збережений у стандартному Google Play URL.</small>
+        </label>
+
+        <div class="readonly-bundle" id="readonlyBundle" hidden>
+          <span>Package name</span>
+          <code id="readonlyBundleValue"></code>
+        </div>
+
+        <div class="form-grid">
+          <label class="form-field">
+            <span>Назва додатка</span>
+            <input id="appName" type="text" maxlength="160" placeholder="Можна залишити package name">
+          </label>
+          <label class="form-field">
+            <span>Власник</span>
+            <input id="appOwner" type="email" maxlength="160" placeholder="name@wildwildgroup.com">
+          </label>
+          <label class="form-field">
+            <span>Статус</span>
+            <select id="appStatus">
+              <option value="watch">Watch</option>
+              <option value="live">Live</option>
+              <option value="banned">Banned</option>
+              <option value="paused">Paused</option>
+            </select>
+          </label>
+          <label class="toggle-field">
+            <span>
+              <strong>Моніторинг увімкнено</strong>
+              <small>Бот включатиме запис у перевірки</small>
+            </span>
+            <input id="appEnabled" type="checkbox" checked>
+            <i aria-hidden="true"></i>
+          </label>
+        </div>
+
+        <label class="form-field">
+          <span>Нотатки</span>
+          <textarea id="appNotes" maxlength="1200" rows="4" placeholder="Команда, джерело, важливий контекст..."></textarea>
+        </label>
+
+        <div class="form-alert" id="formError" role="alert" hidden></div>
+
+        <footer class="modal-footer">
+          <button class="secondary-button" id="cancelModalButton" type="button">Скасувати</button>
+          <button class="primary-button" id="saveAppButton" type="submit">
+            <span class="button-label">Зберегти</span>
+            <span class="button-loading" hidden><i class="spinner small"></i> Зберігаю...</span>
+          </button>
+        </footer>
+      </form>
+    </section>
+  </div>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+
+  <svg class="svg-sprite" aria-hidden="true">
+    <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="icon-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+    <symbol id="icon-radio" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4M7.8 16.2a6 6 0 0 1 0-8.4M19.1 4.9a10 10 0 0 1 0 14.2M4.9 19.1a10 10 0 0 1 0-14.2"/></symbol>
+    <symbol id="icon-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/></symbol>
+    <symbol id="icon-alert" viewBox="0 0 24 24"><path d="m12 3 9 17H3L12 3Z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="icon-archive" viewBox="0 0 24 24"><path d="M3 6h18M5 6v14h14V6M9 10h6"/><path d="M4 3h16v3H4z"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 8A7 7 0 0 1 18 6l2 6M18 16a7 7 0 0 1-12 2l-2-6"/></symbol>
+    <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="icon-log-out" viewBox="0 0 24 24"><path d="M10 17l5-5-5-5M15 12H3M14 3h7v18h-7"/></symbol>
+    <symbol id="icon-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="icon-edit" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="icon-external" viewBox="0 0 24 24"><path d="M14 3h7v7M21 3l-9 9M18 13v7H4V6h7"/></symbol>
+  </svg>
+
+  <script>
+    window.DATABASE_CONFIG = {{ {
+      "csrfToken": csrf_token,
+      "currentUserEmail": current_user_email,
+      "databases": databases
+    } | tojson }};
+  </script>
+  <script src="{{ url_for('static', filename='db/database-site.js') }}"></script>
+</body>
+</html>

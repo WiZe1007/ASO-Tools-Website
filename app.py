@@ -69,6 +69,7 @@ MAX_WORKERS_APPMAGIC = env_int("WWA_MAX_WORKERS_APPMAGIC", 14, 6, 32)
 MAX_WORKERS_AVAIL_GOOGLE = env_int("WWA_MAX_WORKERS_AVAIL_GOOGLE", 12, 6, 28)
 MAX_WORKERS_AVAIL_APPLE = env_int("WWA_MAX_WORKERS_AVAIL_APPLE", 25, 8, 48)
 MAX_WORKERS_BOT_AVAILABILITY = env_int("WWA_BOT_MAX_WORKERS_AVAILABILITY", 3, 1, 8)
+MAX_WORKERS_BOT_LIVE_STATUS = env_int("WWA_BOT_MAX_WORKERS_LIVE_STATUS", 6, 1, 12)
 OVERVIEW_AVAILABILITY_CACHE_TTL = 15 * 60
 CACHE_TTL_RATINGS = env_int("WWA_CACHE_TTL_RATINGS", 6 * 60 * 60, 60, 24 * 60 * 60)
 CACHE_TTL_INSTALL_RANGE = env_int("WWA_CACHE_TTL_INSTALL_RANGE", 12 * 60 * 60, 60, 24 * 60 * 60)
@@ -92,6 +93,14 @@ GOOGLE_PLAY_DEFAULT_INSTALL_COUNTRY = "US"
 GOOGLE_PLAY_DEFAULT_INSTALL_LANG = "en"
 GOOGLE_AVAILABILITY_CLOSED_ERRORS = {"NO_INSTALL_SIGNALS", "NOT_FOUND"}
 AVAILABILITY_CONFIRM_ALL_COUNTRIES = env_bool("WWA_AVAILABILITY_CONFIRM_ALL_COUNTRIES", True)
+BOT_LIVE_STATUS_PROBE_COUNTRIES = tuple(
+    code.strip().upper()
+    for code in os.environ.get(
+        "BOT_LIVE_STATUS_PROBE_COUNTRIES",
+        "US,GB,DE,CA,AU,BR,IN,JP,UA",
+    ).split(",")
+    if re.fullmatch(r"[A-Za-z]{2}", code.strip())
+)
 
 APPMAGIC_SEARCH_BY_IDS_URL = "https://appmagic.rocks/api/v2/united-applications/search-by-ids"
 APPMAGIC_DATA_COUNTRIES_URL = "https://appmagic.rocks/api/v2/united-applications/data-countries"
@@ -226,6 +235,8 @@ APPLE_RATING_CACHE = TTLCache(CACHE_TTL_RATINGS)
 GOOGLE_INSTALL_RANGE_CACHE = TTLCache(CACHE_TTL_INSTALL_RANGE)
 GOOGLE_AVAILABILITY_CACHE = TTLCache(CACHE_TTL_AVAILABILITY)
 APPLE_AVAILABILITY_CACHE = TTLCache(CACHE_TTL_AVAILABILITY)
+LIVE_STATUS_PROBE_CACHE: dict[str, str] = {}
+LIVE_STATUS_PROBE_CACHE_LOCK = threading.Lock()
 APPMAGIC_SEARCH_CACHE = TTLCache(CACHE_TTL_APPMAGIC)
 APPMAGIC_INFO_CACHE = TTLCache(CACHE_TTL_APPMAGIC)
 APPMAGIC_DATA_COUNTRIES_CACHE = TTLCache(CACHE_TTL_APPMAGIC)
@@ -4214,6 +4225,32 @@ class GoogleSheetsAvailabilityStore:
         row = [row_dict.get(header, "") for header in APPS_SHEET_HEADERS]
         self.update_values(self.apps_sheet, f"A{row_index}:M{row_index}", [row])
 
+    def batch_update_apps(self, app_updates: list[tuple[dict, dict]]):
+        if not app_updates:
+            return
+
+        data = []
+        for app, updates in app_updates:
+            row_index = int(app.get("row_index") or 0)
+            if row_index < 2:
+                continue
+            for header, value in updates.items():
+                if header not in APPS_SHEET_HEADERS:
+                    continue
+                column = chr(ord("A") + APPS_SHEET_HEADERS.index(header))
+                data.append({
+                    "range": sheets_range(self.apps_sheet, f"{column}{row_index}"),
+                    "values": [[value]],
+                })
+
+        if not data:
+            return
+        self._request(
+            "POST",
+            "/values:batchUpdate",
+            json={"valueInputOption": "RAW", "data": data},
+        )
+
     def append_log(self, event: str, app: dict, countries: list[str] | set[str], details: str = ""):
         codes = sorted({str(code).strip().upper() for code in countries if str(code).strip()})
         self.append_values(self.log_sheet, [[
@@ -4256,7 +4293,7 @@ def availability_app_payload(app: dict) -> dict:
     closed_codes = split_country_codes(app.get("last_closed_countries"))
     saved_closed_count = safe_int(app.get("last_closed_count"), len(closed_codes))
     closed_count = max(len(closed_codes), saved_closed_count)
-    is_live = status == "live" or bool(open_codes)
+    is_live = status not in {"ban", "banned"} and (status == "live" or bool(open_codes))
 
     return {
         "enabled": boolish(app.get("enabled"), default=True),
@@ -4341,6 +4378,8 @@ def summarize_google_availability(app_id: str) -> dict:
     countries_en = get_geo_countries_en()
     open_codes: set[str] = set()
     closed_codes: set[str] = set()
+    not_found_codes: set[str] = set()
+    no_install_codes: set[str] = set()
     transient_codes: set[str] = set()
     max_workers = max(1, min(MAX_WORKERS_BOT_AVAILABILITY, len(countries_en) or 1))
 
@@ -4353,6 +4392,11 @@ def summarize_google_availability(app_id: str) -> dict:
             open_codes.add(iso2)
         elif available is False and google_availability_is_closed_error(error):
             closed_codes.add(iso2)
+            error_code = google_availability_error_code(error)
+            if error_code == "NOT_FOUND":
+                not_found_codes.add(iso2)
+            elif error_code == "NO_INSTALL_SIGNALS":
+                no_install_codes.add(iso2)
         else:
             transient_codes.add(iso2)
 
@@ -4386,8 +4430,82 @@ def summarize_google_availability(app_id: str) -> dict:
         "total": len(countries_en),
         "open_codes": sorted(open_codes),
         "closed_codes": sorted(closed_codes),
+        "not_found_codes": sorted(not_found_codes),
+        "no_install_codes": sorted(no_install_codes),
         "transient_codes": sorted(transient_codes),
         "is_live": bool(open_codes),
+    }
+
+
+def availability_app_is_live(app: dict) -> bool:
+    status = str(app.get("status") or "watch").strip().lower()
+    if status in {"ban", "banned"}:
+        return False
+    return status == "live" or bool(split_country_codes(app.get("last_open_countries")))
+
+
+def availability_snapshot_is_reliable(snapshot: dict) -> bool:
+    total = int(snapshot.get("total") or 0)
+    transient_count = len(snapshot.get("transient_codes") or [])
+    return transient_count <= max(8, int((total or 1) * 0.35))
+
+
+def availability_snapshot_is_app_not_found(snapshot: dict) -> bool:
+    total = int(snapshot.get("total") or 0)
+    not_found_codes = set(snapshot.get("not_found_codes") or [])
+    transient_codes = set(snapshot.get("transient_codes") or [])
+    open_codes = set(snapshot.get("open_codes") or [])
+    return bool(total) and not open_codes and not transient_codes and len(not_found_codes) == total
+
+
+def live_status_probe_codes(app: dict, max_codes: int = 2) -> list[str]:
+    app_id = str(app.get("app_id") or "").strip().lower()
+    open_codes = split_country_codes(app.get("last_open_countries"))
+    configured_codes = list(dict.fromkeys(BOT_LIVE_STATUS_PROBE_COUNTRIES))
+    ordered: list[str] = list(configured_codes)
+
+    with LIVE_STATUS_PROBE_CACHE_LOCK:
+        cached_code = LIVE_STATUS_PROBE_CACHE.get(app_id, "")
+    if cached_code in open_codes and cached_code not in configured_codes:
+        ordered.append(cached_code)
+
+    ordered.extend(sorted(open_codes))
+
+    unique: list[str] = []
+    for code in ordered:
+        if code and code not in unique:
+            unique.append(code)
+        if len(unique) >= max_codes:
+            break
+    return unique or [GOOGLE_PLAY_DEFAULT_INSTALL_COUNTRY]
+
+
+def probe_google_play_live_status(app: dict, max_codes: int = 2) -> dict:
+    app_id = str(app.get("app_id") or "").strip()
+    closed_codes: list[str] = []
+    transient_codes: list[str] = []
+
+    for code in live_status_probe_codes(app, max_codes=max_codes):
+        available, error = fetch_google_play_availability(
+            app_id,
+            code,
+            hl="en",
+            force_refresh=True,
+        )
+        if available is True:
+            with LIVE_STATUS_PROBE_CACHE_LOCK:
+                LIVE_STATUS_PROBE_CACHE[app_id.lower()] = code
+            return {"state": "live", "country": code, "error": ""}
+        if available is False and google_availability_is_closed_error(error):
+            closed_codes.append(code)
+        else:
+            transient_codes.append(code)
+
+    return {
+        "state": "candidate_closed" if closed_codes else "unknown",
+        "closed_codes": closed_codes,
+        "transient_codes": transient_codes,
+        "error": "QUICK_PROBE_NO_OPEN_SIGNAL",
     }
 
 
@@ -4933,6 +5051,12 @@ def build_bot_message(event: str, app: dict, snapshot: dict, changed_codes: list
     if event == "new_live":
         title = "🟢 Новий додаток вийшов у Live"
         country_intro = "Закриті країни зараз"
+    elif event == "app_restored":
+        title = "🟢 Додаток знову вийшов у Live"
+        country_intro = "Відкриті країни після відновлення"
+    elif event == "app_banned":
+        title = "🔴 Додаток більше не доступний у Google Play"
+        country_intro = "Результат перевірки"
     elif event == "new_opened":
         title = "🔵 Availability змінився: країни відкрилися"
         country_intro = "Нові відкриті країни"
@@ -4940,6 +5064,11 @@ def build_bot_message(event: str, app: dict, snapshot: dict, changed_codes: list
         title = "🔴 Availability змінився: країни закрилися"
         country_intro = "Нові закриті країни"
 
+    country_text = (
+        "Додаток не знайдено відкритим у жодній перевіреній країні."
+        if event == "app_banned"
+        else html_lib.escape(format_country_lines(changed_codes))
+    )
     return "\n".join([
         f"<b>{title}</b>",
         "",
@@ -4951,8 +5080,168 @@ def build_bot_message(event: str, app: dict, snapshot: dict, changed_codes: list
         f"Closed: <b>{closed_count}</b>",
         "",
         f"<b>{country_intro}:</b>",
-        html_lib.escape(format_country_lines(changed_codes)),
+        country_text,
     ])
+
+
+def run_live_status_bot_check(
+    send_messages: bool = True,
+    limit: int = AVAILABILITY_CHECK_LIMIT,
+    write_changes: bool = True,
+    store: GoogleSheetsAvailabilityStore | None = None,
+) -> dict:
+    store = store or GoogleSheetsAvailabilityStore()
+    apps = store.load_apps()
+    apps_to_check = apps[:limit]
+    now = utc_now_iso()
+    result = {
+        "ok": True,
+        "checked_at": now,
+        "apps_total": len(apps),
+        "apps_checked": 0,
+        "notifications": [],
+        "skipped": [],
+        "errors": [],
+        "full_confirmations": 0,
+    }
+    updates: list[tuple[dict, dict]] = []
+    pending_events: list[tuple[str, dict, dict, set[str]]] = []
+    probe_apps: list[dict] = []
+    full_check_apps: list[dict] = []
+
+    for app in apps_to_check:
+        if not str(app.get("app_id") or "").strip():
+            result["skipped"].append({"row": app.get("row_index"), "reason": "missing_app_id"})
+        else:
+            probe_apps.append(app)
+
+    max_workers = max(1, min(MAX_WORKERS_BOT_LIVE_STATUS, len(probe_apps) or 1))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_app = {
+            executor.submit(
+                probe_google_play_live_status,
+                app,
+                max(1, len(BOT_LIVE_STATUS_PROBE_COUNTRIES)),
+            ): app
+            for app in probe_apps
+        }
+        for future in as_completed(future_to_app):
+            app = future_to_app[future]
+            app_id = app.get("app_id") or ""
+            prev_live = availability_app_is_live(app)
+            try:
+                probe = future.result()
+            except Exception as e:
+                probe = {"state": "unknown", "error": f"QUICK_PROBE_ERROR:{e}"}
+
+            if probe.get("state") == "live":
+                if prev_live:
+                    # Existing live apps are checked against the same configured
+                    # GEO set every 20 minutes. One open signal proves the app is
+                    # not globally banned, so no full scan is needed.
+                    result["apps_checked"] += 1
+                    updates.append((app, {"last_checked_at": now, "last_error": ""}))
+                else:
+                    # A watch/banned app found in one of the selected probe GEOs
+                    # gets a full scan before its Live/restored alert is sent.
+                    full_check_apps.append(app)
+            elif prev_live:
+                # A live app without a quick open signal needs a full scan before
+                # it can be marked as banned.
+                full_check_apps.append(app)
+            else:
+                # No selected probe GEO is open. Leave watch/banned unchanged;
+                # the scheduled 9/15/21 full scan still checks every GEO.
+                result["apps_checked"] += 1
+                updates.append((app, {"last_checked_at": now, "last_error": ""}))
+
+    # Full scans are deliberately serial and only follow a possible status
+    # transition. This prevents false alerts and protects a small Render worker.
+    for app in full_check_apps:
+        app_id = str(app.get("app_id") or "").strip()
+        result["full_confirmations"] += 1
+        try:
+            snapshot = summarize_google_availability(app_id)
+        except Exception as e:
+            error = f"AVAILABILITY_CONFIRM_ERROR:{e}"
+            updates.append((app, {"last_checked_at": now, "last_error": error}))
+            result["errors"].append({"app_id": app_id, "error": error})
+            continue
+
+        if not availability_snapshot_is_reliable(snapshot):
+            error = f"TOO_MANY_TRANSIENT_ERRORS:{len(snapshot.get('transient_codes') or [])}"
+            updates.append((app, {"last_checked_at": now, "last_error": error}))
+            result["errors"].append({"app_id": app_id, "error": error})
+            continue
+
+        result["apps_checked"] += 1
+        prev_status = str(app.get("status") or "watch").strip().lower()
+        prev_live = availability_app_is_live(app)
+        current_open = set(snapshot.get("open_codes") or [])
+        current_closed = set(snapshot.get("closed_codes") or [])
+        current_live = bool(current_open)
+        current_banned = availability_snapshot_is_app_not_found(snapshot)
+        event = ""
+        changed_codes: set[str] = set()
+
+        if prev_live and current_banned:
+            event = "app_banned"
+            changed_codes = current_closed
+        elif not prev_live and current_live:
+            event = "app_restored" if prev_status in {"ban", "banned"} else "new_live"
+            changed_codes = current_open if event == "app_restored" else current_closed
+
+        if current_live:
+            next_status = "live"
+        elif current_banned and (prev_live or prev_status in {"ban", "banned"}):
+            next_status = "banned"
+        elif prev_status in {"ban", "banned"}:
+            next_status = "banned"
+        elif prev_live:
+            # NO_INSTALL_SIGNALS means GEO availability is closed, not that the
+            # Google Play page was removed. Do not turn that into an app ban.
+            next_status = "live"
+        else:
+            next_status = "watch"
+
+        update_payload = {
+            "status": next_status,
+            "last_checked_at": now,
+            "last_live_at": now if current_live else app.get("last_live_at") or "",
+            "last_open_countries": join_country_codes(current_open),
+            "last_closed_countries": join_country_codes(current_closed),
+            "last_closed_count": len(current_closed),
+            "last_error": "",
+        }
+        updates.append((app, update_payload))
+
+        if event:
+            app_for_message = {**app, **update_payload}
+            pending_events.append((event, app_for_message, snapshot, changed_codes))
+            result["notifications"].append({
+                "event": event,
+                "app_id": app_id,
+                "countries_count": len(changed_codes),
+                "countries": sorted(changed_codes),
+            })
+
+    if write_changes:
+        store.batch_update_apps(updates)
+    for event, app_for_message, snapshot, changed_codes in pending_events:
+        message = build_bot_message(event, app_for_message, snapshot, changed_codes)
+        if send_messages:
+            send_telegram_event_message(message, app_for_message)
+        if write_changes:
+            store.append_log(
+                event,
+                app_for_message,
+                changed_codes,
+                (
+                    f"open={len(snapshot.get('open_codes') or [])} "
+                    f"closed={len(snapshot.get('closed_codes') or [])} source=20m_live_status"
+                ),
+            )
+    return result
 
 
 def run_availability_bot_check(
@@ -4974,6 +5263,8 @@ def run_availability_bot_check(
         "skipped": [],
         "errors": [],
     }
+    updates: list[tuple[dict, dict]] = []
+    pending_events: list[tuple[str, dict, dict, set[str]]] = []
 
     def emit_progress(app_index: int, app_id: str):
         if not progress_callback:
@@ -5002,18 +5293,16 @@ def run_availability_bot_check(
             snapshot = summarize_google_availability(app_id)
         except Exception as e:
             error = f"AVAILABILITY_CHECK_ERROR:{e}"
-            if write_changes:
-                store.update_app(app["row_index"], {"last_checked_at": now, "last_error": error})
+            updates.append((app, {"last_checked_at": now, "last_error": error}))
             result["errors"].append({"app_id": app_id, "error": error})
             emit_progress(app_index, app_id)
             continue
 
         result["apps_checked"] += 1
         transient_count = len(snapshot["transient_codes"])
-        if transient_count > max(8, int((snapshot["total"] or 1) * 0.35)):
+        if not availability_snapshot_is_reliable(snapshot):
             error = f"TOO_MANY_TRANSIENT_ERRORS:{transient_count}"
-            if write_changes:
-                store.update_app(app["row_index"], {"last_checked_at": now, "last_error": error})
+            updates.append((app, {"last_checked_at": now, "last_error": error}))
             result["errors"].append({"app_id": app_id, "error": error})
             emit_progress(app_index, app_id)
             continue
@@ -5021,14 +5310,18 @@ def run_availability_bot_check(
         prev_open = split_country_codes(app.get("last_open_countries"))
         prev_closed = split_country_codes(app.get("last_closed_countries"))
         prev_status = str(app.get("status") or "").strip().lower()
-        prev_live = prev_status == "live" or bool(prev_open)
+        prev_live = availability_app_is_live(app)
         current_open = set(snapshot["open_codes"])
         current_closed = set(snapshot["closed_codes"])
         current_live = bool(current_open)
+        current_banned = availability_snapshot_is_app_not_found(snapshot)
 
         events: list[tuple[str, set[str]]] = []
         if current_live and not prev_live:
-            events.append(("new_live", current_closed))
+            event = "app_restored" if prev_status in {"ban", "banned"} else "new_live"
+            events.append((event, current_open if event == "app_restored" else current_closed))
+        elif prev_live and current_banned:
+            events.append(("app_banned", current_closed))
         elif current_live and prev_live:
             newly_closed = prev_open & current_closed
             newly_opened = prev_closed & current_open
@@ -5037,9 +5330,20 @@ def run_availability_bot_check(
             if newly_opened:
                 events.append(("new_opened", newly_opened))
 
+        if current_live:
+            next_status = "live"
+        elif current_banned and (prev_live or prev_status in {"ban", "banned"}):
+            next_status = "banned"
+        elif prev_status in {"ban", "banned"}:
+            next_status = "banned"
+        elif prev_live:
+            next_status = "live"
+        else:
+            next_status = "watch"
+
         update_payload = {
             "enabled": app.get("enabled") if str(app.get("enabled") or "").strip() else "TRUE",
-            "status": "live" if current_live else "watch",
+            "status": next_status,
             "app_url": app.get("app_url") or build_google_play_url(app_id, "US", "en"),
             "app_id": app_id,
             "app_name": app.get("app_name") or app_id,
@@ -5052,16 +5356,11 @@ def run_availability_bot_check(
             "last_closed_count": len(current_closed),
             "last_error": "",
         }
-        if write_changes:
-            store.update_app(app["row_index"], update_payload)
+        updates.append((app, update_payload))
 
         for event, changed_codes in events:
             app_for_message = {**app, **update_payload}
-            message = build_bot_message(event, app_for_message, snapshot, changed_codes)
-            if send_messages:
-                send_telegram_event_message(message, app_for_message)
-            if write_changes:
-                store.append_log(event, app_for_message, changed_codes, f"open={len(current_open)} closed={len(current_closed)}")
+            pending_events.append((event, app_for_message, snapshot, changed_codes))
             result["notifications"].append({
                 "event": event,
                 "app_id": app_id,
@@ -5071,6 +5370,22 @@ def run_availability_bot_check(
 
         emit_progress(app_index, app_id)
 
+    if write_changes:
+        store.batch_update_apps(updates)
+    for event, app_for_message, snapshot, changed_codes in pending_events:
+        message = build_bot_message(event, app_for_message, snapshot, changed_codes)
+        if send_messages:
+            send_telegram_event_message(message, app_for_message)
+        if write_changes:
+            store.append_log(
+                event,
+                app_for_message,
+                changed_codes,
+                (
+                    f"open={len(snapshot.get('open_codes') or [])} "
+                    f"closed={len(snapshot.get('closed_codes') or [])}"
+                ),
+            )
     return result
 
 

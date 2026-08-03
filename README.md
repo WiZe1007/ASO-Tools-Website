@@ -123,6 +123,10 @@ BOT_CHECK_HOURS=9,15,21
 TELEGRAM_ALLOWED_CHAT_IDS=<optional comma-separated chat ids for commands>
 AVAILABILITY_TASK_SECRET=<only needed if you also use the HTTP task endpoint>
 WWA_BOT_MAX_WORKERS_AVAILABILITY=3
+BOT_LIVE_STATUS_ENABLED=1
+BOT_LIVE_STATUS_INTERVAL_MINUTES=20
+WWA_BOT_MAX_WORKERS_LIVE_STATUS=6
+BOT_LIVE_STATUS_PROBE_COUNTRIES=US,GB,DE,CA,AU,BR,IN,JP,UA
 BOT_SCHEDULE_GRACE_MINUTES=10
 TELEGRAM_SEND_EMPTY_SUMMARY=1
 ```
@@ -139,6 +143,20 @@ It sends Telegram messages when:
 - a scheduled check finishes without changes, if `TELEGRAM_SEND_EMPTY_SUMMARY=1`.
 
 For already live apps, set `status=live` before the first bot run. Then the first run creates a baseline without sending a "new live" notification.
+
+In addition to the full GEO checks at `BOT_CHECK_HOURS`, each bot performs a
+lightweight Live/ban check every `BOT_LIVE_STATUS_INTERVAL_MINUTES` minutes.
+Every `live`, `watch`, and `banned` app is checked against the countries from
+`BOT_LIVE_STATUS_PROBE_COUNTRIES`. For `watch`/`banned`, a full 176-country scan
+runs after one probe country becomes open. For `live`, a full scan runs when no
+probe country remains open so a possible global ban is confirmed before an
+alert. The regular full GEO checks at `BOT_CHECK_HOURS` remain unchanged.
+Google Sheet status updates are written in one batch, and Telegram alerts are
+sent only when the app status actually changes.
+
+An app is marked `banned` only when the full check confirms `NOT_FOUND` for the
+Google Play page. `NO_INSTALL_SIGNALS` only closes the affected GEO and never
+marks the whole app as banned.
 
 ### Second Team Bot
 
@@ -171,8 +189,11 @@ AVAILABILITY_DB_SPREADSHEET_ID=<second team spreadsheet id>
 GOOGLE_SERVICE_ACCOUNT_JSON=<same or separate service account JSON>
 BOT_TIMEZONE=Europe/Kiev
 BOT_CHECK_HOURS=9,15,21
+BOT_LIVE_STATUS_ENABLED=1
+BOT_LIVE_STATUS_INTERVAL_MINUTES=20
 TELEGRAM_SEND_EMPTY_SUMMARY=1
 WWA_BOT_MAX_WORKERS_AVAILABILITY=3
+WWA_BOT_MAX_WORKERS_LIVE_STATUS=6
 ```
 
 If both teams use one spreadsheet, separate them by sheet names instead:
