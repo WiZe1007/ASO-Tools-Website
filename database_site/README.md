@@ -19,7 +19,7 @@ Open `http://127.0.0.1:8090`.
 Create a new Web Service from the same repository. This service is separate from `wwa-aso-checker`.
 
 - Build command: `pip install -r requirements.txt`
-- Start command: `gunicorn database_site.app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120`
+- Start command for Render Free: `gunicorn database_site.app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120`
 - Health check path: `/health`
 
 Required environment variables for the WWA database:
@@ -28,8 +28,19 @@ Required environment variables for the WWA database:
 - `DATABASE_SITE_SERVICE_ACCOUNT_JSON` - the complete service account JSON.
 - `DATABASE_SITE_SECRET_KEY` - a stable random string, at least 32 characters.
 - `DATABASE_SITE_ALLOWED_EMAIL_DOMAIN` - `@wildwildgroup.com`.
-- `DATABASE_SITE_AUTH_DB` - `/var/data/database-site-users.db` when a Render Disk is mounted at `/var/data`.
+- `DATABASE_SITE_AUTH_STORAGE` - `google_sheets` for the Render Free plan.
+- `DATABASE_SITE_USERS_SHEET` - optional users sheet name, defaults to `Users`.
 - `DATABASE_SITE_SECURE_COOKIES` - `1` on Render.
+
+With `DATABASE_SITE_AUTH_STORAGE=google_sheets`, the site automatically creates
+the `Users` sheet in the WWA spreadsheet. Email addresses, password hashes,
+account status, and login timestamps are stored there. Plain-text passwords are
+never written to Google Sheets. This mode does not require a Render Disk and is
+recommended for the Free plan.
+
+For local-only development, `DATABASE_SITE_AUTH_STORAGE=sqlite` remains
+available. `DATABASE_SITE_AUTH_DB` then controls the SQLite file path, but that
+file is not persistent on Render Free.
 
 The WWA database is available to every registered user whose email ends with
 `@wildwildgroup.com`.

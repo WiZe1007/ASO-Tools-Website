@@ -42,6 +42,33 @@ class FakeStore:
         self._logs().append((event, dict(app_data), details))
 
 
+class FakeUserStore:
+    def __init__(self):
+        self.users = {}
+
+    def get_user(self, identifier):
+        user = self.users.get(database_app.normalize_email(identifier))
+        return dict(user) if user else None
+
+    def create_user(self, email, password_hash):
+        normalized = database_app.normalize_email(email)
+        if normalized in self.users:
+            raise ValueError("USER_ALREADY_EXISTS")
+        user = {
+            "id": normalized,
+            "email": normalized,
+            "password_hash": password_hash,
+            "active": 1,
+            "created_at": database_app.utc_now_iso(),
+            "last_login_at": "",
+        }
+        self.users[normalized] = user
+        return dict(user)
+
+    def update_last_login(self, email, last_login_at):
+        self.users[database_app.normalize_email(email)]["last_login_at"] = last_login_at
+
+
 class DatabaseSiteTests(unittest.TestCase):
     def setUp(self):
         self.original_auth_required = database_app.AUTH_REQUIRED
@@ -176,9 +203,14 @@ class DatabaseSiteAuthTests(unittest.TestCase):
     def setUp(self):
         self.original_auth_required = database_app.AUTH_REQUIRED
         self.original_auth_db_path = database_app.AUTH_DB_PATH
+        self.original_auth_storage = database_app.AUTH_STORAGE
+        self.original_auth_user_store = database_app.AUTH_USER_STORE
         self.original_allowed_domain = database_app.AUTH_ALLOWED_EMAIL_DOMAIN
         self.temp_directory = tempfile.TemporaryDirectory()
         database_app.AUTH_REQUIRED = True
+        database_app.AUTH_STORAGE = "sqlite"
+        database_app.AUTH_USER_STORE = None
+        database_app.AUTH_USER_CACHE.clear()
         database_app.AUTH_DB_PATH = Path(self.temp_directory.name) / "users.sqlite"
         database_app.AUTH_ALLOWED_EMAIL_DOMAIN = "@wildwildgroup.com"
         database_app.app.config.update(TESTING=True, SESSION_COOKIE_SECURE=False)
@@ -187,6 +219,9 @@ class DatabaseSiteAuthTests(unittest.TestCase):
     def tearDown(self):
         database_app.AUTH_REQUIRED = self.original_auth_required
         database_app.AUTH_DB_PATH = self.original_auth_db_path
+        database_app.AUTH_STORAGE = self.original_auth_storage
+        database_app.AUTH_USER_STORE = self.original_auth_user_store
+        database_app.AUTH_USER_CACHE.clear()
         database_app.AUTH_ALLOWED_EMAIL_DOMAIN = self.original_allowed_domain
         self.temp_directory.cleanup()
 
@@ -236,6 +271,53 @@ class DatabaseSiteAuthTests(unittest.TestCase):
         )
         self.assertEqual(logged_in.status_code, 302)
         self.assertEqual(logged_in.headers["Location"], "/")
+
+
+class DatabaseSiteGoogleSheetsAuthTests(unittest.TestCase):
+    def setUp(self):
+        self.original_auth_required = database_app.AUTH_REQUIRED
+        self.original_auth_storage = database_app.AUTH_STORAGE
+        self.original_auth_user_store = database_app.AUTH_USER_STORE
+        self.original_allowed_domain = database_app.AUTH_ALLOWED_EMAIL_DOMAIN
+        self.user_store = FakeUserStore()
+        database_app.AUTH_REQUIRED = True
+        database_app.AUTH_STORAGE = "google_sheets"
+        database_app.AUTH_USER_STORE = self.user_store
+        database_app.AUTH_USER_CACHE.clear()
+        database_app.AUTH_ALLOWED_EMAIL_DOMAIN = "@wildwildgroup.com"
+        database_app.app.config.update(TESTING=True, SESSION_COOKIE_SECURE=False)
+        self.client = database_app.app.test_client()
+
+    def tearDown(self):
+        database_app.AUTH_REQUIRED = self.original_auth_required
+        database_app.AUTH_STORAGE = self.original_auth_storage
+        database_app.AUTH_USER_STORE = self.original_auth_user_store
+        database_app.AUTH_USER_CACHE.clear()
+        database_app.AUTH_ALLOWED_EMAIL_DOMAIN = self.original_allowed_domain
+
+    def test_google_sheets_user_survives_cache_clear_and_can_login(self):
+        email = "free-user@wildwildgroup.com"
+        registered = self.client.post(
+            "/register",
+            data={
+                "email": email,
+                "password": "correct-password",
+                "password_confirm": "correct-password",
+            },
+        )
+        self.assertEqual(registered.status_code, 302)
+        self.assertIn(email, self.user_store.users)
+        self.assertNotEqual(self.user_store.users[email]["password_hash"], "correct-password")
+
+        self.client.get("/logout")
+        database_app.AUTH_USER_CACHE.clear()
+        logged_in = self.client.post(
+            "/login",
+            data={"email": email, "password": "correct-password"},
+        )
+        self.assertEqual(logged_in.status_code, 302)
+        self.assertEqual(logged_in.headers["Location"], "/")
+        self.assertTrue(self.user_store.users[email]["last_login_at"])
 
 
 if __name__ == "__main__":

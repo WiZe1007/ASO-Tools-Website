@@ -49,6 +49,12 @@ AUTH_DB_PATH = Path(
         or str(PROJECT_ROOT / "instance" / "database-site-users.db")
     )
 )
+AUTH_STORAGE = (os.environ.get("DATABASE_SITE_AUTH_STORAGE") or "google_sheets").strip().lower()
+AUTH_USERS_SHEET = (os.environ.get("DATABASE_SITE_USERS_SHEET") or "Users").strip()
+AUTH_CACHE_TTL_SECONDS = max(
+    5,
+    int(os.environ.get("DATABASE_SITE_AUTH_CACHE_TTL_SECONDS") or "60"),
+)
 
 SPREADSHEET_ID = (
     os.environ.get("DATABASE_SITE_SPREADSHEET_ID")
@@ -122,11 +128,23 @@ CHECKS_SHEET_HEADERS = [
     "details",
 ]
 
+USERS_SHEET_HEADERS = [
+    "email",
+    "password_hash",
+    "active",
+    "created_at",
+    "last_login_at",
+]
+
 ALLOWED_STATUSES = {"watch", "live", "banned", "paused"}
 HTTP = requests.Session()
 HTTP.headers.update({"User-Agent": "WWA-Apps-Database/1.0"})
 AUTH_DB_LOCK = threading.Lock()
+AUTH_CACHE_LOCK = threading.Lock()
+AUTH_STORE_LOCK = threading.Lock()
 SHEET_WRITE_LOCK = threading.Lock()
+AUTH_USER_CACHE: dict[str, tuple[float, dict | None]] = {}
+AUTH_USER_STORE = None
 
 
 class DatabaseConfigError(RuntimeError):
@@ -355,6 +373,88 @@ class GoogleSheetsStore:
         ]])
 
 
+class GoogleSheetsUserStore:
+    def __init__(self, sheets_store: GoogleSheetsStore, users_sheet: str = AUTH_USERS_SHEET):
+        self.sheets_store = sheets_store
+        self.users_sheet = users_sheet
+        self._ready = False
+
+    def ensure_ready(self):
+        if self._ready:
+            return
+        titles = self.sheets_store.get_sheet_titles()
+        if self.users_sheet not in titles:
+            self.sheets_store.add_sheet(self.users_sheet)
+        headers = self.sheets_store.get_values(self.users_sheet, "A1:E1")
+        if not headers:
+            self.sheets_store.update_values(self.users_sheet, "A1:E1", [USERS_SHEET_HEADERS])
+        elif [str(item).strip() for item in headers[0]] != USERS_SHEET_HEADERS:
+            raise DatabaseConfigError(
+                f"Заголовки аркуша {self.users_sheet} не відповідають очікуваній схемі A:E."
+            )
+        self._ready = True
+
+    def load_users(self) -> list[dict]:
+        self.ensure_ready()
+        rows = self.sheets_store.get_values(self.users_sheet, "A2:E")
+        users = []
+        for row in rows:
+            item = {
+                header: row[index] if index < len(row) else ""
+                for index, header in enumerate(USERS_SHEET_HEADERS)
+            }
+            email = normalize_email(item.get("email"))
+            if not email:
+                continue
+            item.update({
+                "id": email,
+                "email": email,
+                "active": 1 if boolish(item.get("active"), default=True) else 0,
+            })
+            users.append(item)
+        return users
+
+    def get_user(self, identifier) -> dict | None:
+        normalized = normalize_email(identifier)
+        return next((user for user in self.load_users() if user["email"] == normalized), None)
+
+    def create_user(self, email: str, password_hash: str) -> dict:
+        normalized = normalize_email(email)
+        created_at = utc_now_iso()
+        with AUTH_DB_LOCK:
+            if self.get_user(normalized):
+                raise ValueError("USER_ALREADY_EXISTS")
+            self.sheets_store.append_values(self.users_sheet, [[
+                normalized,
+                password_hash,
+                "TRUE",
+                created_at,
+                "",
+            ]])
+        return {
+            "id": normalized,
+            "email": normalized,
+            "password_hash": password_hash,
+            "active": 1,
+            "created_at": created_at,
+            "last_login_at": "",
+        }
+
+    def update_last_login(self, email: str, last_login_at: str):
+        normalized = normalize_email(email)
+        with AUTH_DB_LOCK:
+            self.ensure_ready()
+            rows = self.sheets_store.get_values(self.users_sheet, "A2:A")
+            for row_index, row in enumerate(rows, start=2):
+                if row and normalize_email(row[0]) == normalized:
+                    self.sheets_store.update_values(
+                        self.users_sheet,
+                        f"E{row_index}:E{row_index}",
+                        [[last_login_at]],
+                    )
+                    return
+
+
 @contextmanager
 def auth_db_connect():
     AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -442,16 +542,69 @@ def build_store(database_key: str) -> GoogleSheetsStore:
     raise DatabaseConfigError("Невідома база даних.")
 
 
+def auth_uses_google_sheets() -> bool:
+    if AUTH_STORAGE not in {"google_sheets", "sqlite"}:
+        raise DatabaseConfigError(
+            "DATABASE_SITE_AUTH_STORAGE має бути google_sheets або sqlite."
+        )
+    return AUTH_STORAGE == "google_sheets"
+
+
+def build_user_store() -> GoogleSheetsUserStore:
+    global AUTH_USER_STORE
+    with AUTH_STORE_LOCK:
+        if AUTH_USER_STORE is None:
+            AUTH_USER_STORE = GoogleSheetsUserStore(build_store("wwa"), AUTH_USERS_SHEET)
+        return AUTH_USER_STORE
+
+
+def get_cached_user(identifier) -> tuple[bool, dict | None]:
+    key = normalize_email(identifier)
+    if not key:
+        return True, None
+    with AUTH_CACHE_LOCK:
+        cached = AUTH_USER_CACHE.get(key)
+        if not cached or cached[0] <= time.monotonic():
+            AUTH_USER_CACHE.pop(key, None)
+            return False, None
+        return True, dict(cached[1]) if cached[1] else None
+
+
+def cache_user(identifier, user: dict | None):
+    key = normalize_email(identifier)
+    if not key:
+        return
+    cached_user = dict(user) if user else None
+    with AUTH_CACHE_LOCK:
+        AUTH_USER_CACHE[key] = (time.monotonic() + AUTH_CACHE_TTL_SECONDS, cached_user)
+
+
+def clear_cached_user(identifier):
+    key = normalize_email(identifier)
+    with AUTH_CACHE_LOCK:
+        AUTH_USER_CACHE.pop(key, None)
+
+
 def get_user_by_email(email: str):
+    normalized = normalize_email(email)
+    if auth_uses_google_sheets():
+        found, user = get_cached_user(normalized)
+        if found:
+            return user
+        user = build_user_store().get_user(normalized)
+        cache_user(normalized, user)
+        return user
     ensure_auth_db()
     with auth_db_connect() as connection:
-        row = connection.execute("SELECT * FROM users WHERE email = ?", (normalize_email(email),)).fetchone()
+        row = connection.execute("SELECT * FROM users WHERE email = ?", (normalized,)).fetchone()
     return dict(row) if row else None
 
 
 def get_user_by_id(user_id):
     if not user_id:
         return None
+    if auth_uses_google_sheets():
+        return get_user_by_email(user_id)
     ensure_auth_db()
     with auth_db_connect() as connection:
         row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -459,11 +612,18 @@ def get_user_by_id(user_id):
 
 
 def create_user(email: str, password: str):
+    normalized = normalize_email(email)
+    password_hash = generate_password_hash(password)
+    if auth_uses_google_sheets():
+        user = build_user_store().create_user(normalized, password_hash)
+        cache_user(normalized, user)
+        return user
     with AUTH_DB_LOCK, auth_db_connect() as connection:
         connection.execute(
             "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
-            (normalize_email(email), generate_password_hash(password), utc_now_iso()),
+            (normalized, password_hash, utc_now_iso()),
         )
+    return get_user_by_email(normalized)
 
 
 def login_user(user: dict):
@@ -471,6 +631,16 @@ def login_user(user: dict):
     session["user_id"] = user["id"]
     session["user_email"] = user["email"]
     session["csrf_token"] = secrets.token_urlsafe(24)
+    if auth_uses_google_sheets():
+        last_login_at = utc_now_iso()
+        updated_user = dict(user)
+        updated_user["last_login_at"] = last_login_at
+        cache_user(user["email"], updated_user)
+        try:
+            build_user_store().update_last_login(user["email"], last_login_at)
+        except DatabaseConfigError:
+            pass
+        return
     with AUTH_DB_LOCK, auth_db_connect() as connection:
         connection.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (utc_now_iso(), user["id"]))
 
@@ -551,13 +721,16 @@ def login():
     error = ""
     email = normalize_email(request.form.get("email") or "")
     if request.method == "POST":
-        user = get_user_by_email(email)
         password = request.form.get("password") or ""
-        if not user or int(user.get("active") or 0) != 1 or not check_password_hash(user["password_hash"], password):
-            error = "Невірна корпоративна пошта або пароль."
-        else:
-            login_user(user)
-            return redirect(url_for("dashboard"))
+        try:
+            user = get_user_by_email(email)
+            if not user or int(user.get("active") or 0) != 1 or not check_password_hash(user["password_hash"], password):
+                error = "Невірна корпоративна пошта або пароль."
+            else:
+                login_user(user)
+                return redirect(url_for("dashboard"))
+        except DatabaseConfigError as exc:
+            error = f"Сховище користувачів тимчасово недоступне: {exc}"
     return render_template("auth.html", mode="login", email=email, error=error, domain=AUTH_ALLOWED_EMAIL_DOMAIN)
 
 
@@ -576,12 +749,21 @@ def register():
             error = "Пароль має містити щонайменше 8 символів."
         elif password != confirm:
             error = "Паролі не співпадають."
-        elif get_user_by_email(email):
-            error = "Користувач із такою поштою вже зареєстрований."
         else:
-            create_user(email, password)
-            login_user(get_user_by_email(email))
-            return redirect(url_for("dashboard"))
+            try:
+                if get_user_by_email(email):
+                    error = "Користувач із такою поштою вже зареєстрований."
+                else:
+                    user = create_user(email, password)
+                    login_user(user)
+                    return redirect(url_for("dashboard"))
+            except ValueError as exc:
+                if str(exc) == "USER_ALREADY_EXISTS":
+                    error = "Користувач із такою поштою вже зареєстрований."
+                else:
+                    raise
+            except DatabaseConfigError as exc:
+                error = f"Сховище користувачів тимчасово недоступне: {exc}"
     return render_template("auth.html", mode="register", email=email, error=error, domain=AUTH_ALLOWED_EMAIL_DOMAIN)
 
 
