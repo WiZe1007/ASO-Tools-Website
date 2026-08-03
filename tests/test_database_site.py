@@ -108,6 +108,11 @@ class DatabaseSiteTests(unittest.TestCase):
         self.assertEqual(database_app.normalize_package_input("com.example.game"), "com.example.game")
         self.assertEqual(database_app.normalize_package_input("not a package"), "")
 
+    def test_dashboard_uses_database_favicon(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"/static/db/data-base-favicon.png?v=20260804", response.data)
+
     def test_add_app_and_write_audit_log(self):
         response = self.client.post(
             "/api/apps",
@@ -229,6 +234,11 @@ class DatabaseSiteAuthTests(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 302)
         self.assertIn("/login", response.headers["Location"])
+
+    def test_login_uses_database_favicon(self):
+        response = self.client.get("/login")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"/static/db/data-base-favicon.png?v=20260804", response.data)
 
     def test_registration_rejects_external_email_domain(self):
         response = self.client.post(
