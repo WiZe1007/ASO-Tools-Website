@@ -245,6 +245,7 @@ SENSOR_TOWER_PUBLISHER_METADATA_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
 SENSOR_TOWER_PUBLISHER_APPS_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
 APP_OVERVIEW_PAYLOAD_CACHE = TTLCache(CACHE_TTL_APP_OVERVIEW)
 PUBLISHER_PAYLOAD_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
+GOOGLE_PLAY_CARD_META_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
 TELEGRAM_APP_CARD_CACHE = TTLCache(CACHE_TTL_SENSOR_TOWER)
 GOOGLE_PLAY_SEARCH_CACHE = TTLCache(CACHE_TTL_INDEXING)
 
@@ -4709,6 +4710,100 @@ def sensor_tower_app_card_meta(app: dict) -> dict:
     return meta
 
 
+def google_play_app_card_meta(app: dict) -> dict:
+    app_id = str(app.get("app_id") or "").strip()
+    fallback_name = str(app.get("app_name") or app_id or "Untitled app").strip()
+    meta = {
+        "app_id": app_id,
+        "name": fallback_name,
+        "category": "—",
+        "content_rating": "—",
+        "icon_url": "",
+        "screenshots": [],
+    }
+    if not app_id:
+        return meta
+
+    cache_key = ("google_play_card_meta", app_id.lower())
+    cached = GOOGLE_PLAY_CARD_META_CACHE.get(cache_key)
+    if cached is not CACHE_MISS:
+        return cached
+
+    url = build_google_play_url(app_id, "US", "en")
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    try:
+        response = session.get(url, headers=headers, timeout=30)
+    except requests.RequestException:
+        return meta
+    if response.status_code != 200:
+        return meta
+
+    html = response.text or ""
+    if "consent.google.com" in html.lower() or "unusual traffic" in html.lower():
+        return meta
+
+    soup = BeautifulSoup(html, "lxml")
+    app_schema = None
+    for script in soup.find_all("script", {"type": "application/ld+json"}):
+        raw = (script.string or script.get_text() or "").strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        candidates = payload if isinstance(payload, list) else [payload]
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            nested = candidate.get("@graph")
+            if isinstance(nested, list):
+                candidates.extend(item for item in nested if isinstance(item, dict))
+            if candidate.get("@type") in {"SoftwareApplication", "MobileApplication"}:
+                app_schema = candidate
+                break
+        if app_schema:
+            break
+
+    if isinstance(app_schema, dict):
+        category_raw = str(app_schema.get("applicationCategory") or "").strip()
+        category = format_sensor_tower_category(
+            category_raw.lower() if category_raw.upper().startswith("GAME_") else category_raw
+        )
+        meta.update({
+            "name": app_schema.get("name") or fallback_name,
+            "category": category or "—",
+            "content_rating": normalize_content_rating_label(app_schema.get("contentRating") or "—"),
+            "icon_url": app_schema.get("image") or "",
+        })
+
+    if not meta["icon_url"]:
+        og_image = soup.find("meta", attrs={"property": "og:image"})
+        if og_image:
+            meta["icon_url"] = str(og_image.get("content") or "").strip()
+
+    screenshots: list[str] = []
+    for image in soup.find_all("img"):
+        alt = str(image.get("alt") or "").strip().lower()
+        if "screenshot" not in alt:
+            continue
+        source = str(image.get("src") or image.get("data-src") or "").strip()
+        if source.startswith(("http://", "https://")) and source not in screenshots:
+            screenshots.append(source)
+        if len(screenshots) >= 3:
+            break
+    meta["screenshots"] = screenshots
+
+    GOOGLE_PLAY_CARD_META_CACHE.set(cache_key, meta)
+    return meta
+
+
 def rounded_image(image, radius: int):
     if Image is None or ImageOps is None:
         return image
@@ -4770,12 +4865,13 @@ def draw_card_pill(draw, xy: tuple[int, int], label: str, font, fill, outline=No
     return width, height
 
 
-def build_telegram_app_card(app: dict) -> bytes | None:
+def build_telegram_app_card(app: dict, event: str = "") -> bytes | None:
     if not TELEGRAM_SEND_APP_CARD or Image is None or ImageDraw is None:
         return None
 
     app_id = str(app.get("app_id") or "").strip().lower()
-    cache_key = ("telegram_app_card", app_id)
+    media_source = "google_play" if event in {"new_live", "app_restored"} else "sensor_tower"
+    cache_key = ("telegram_app_card", media_source, app_id)
     cached = TELEGRAM_APP_CARD_CACHE.get(cache_key)
     if cached is not CACHE_MISS:
         return cached
@@ -4790,7 +4886,11 @@ def build_telegram_app_card(app: dict) -> bytes | None:
         return None
 
     draw = ImageDraw.Draw(card)
-    meta = sensor_tower_app_card_meta(app)
+    meta = (
+        google_play_app_card_meta(app)
+        if media_source == "google_play"
+        else sensor_tower_app_card_meta(app)
+    )
     width, height = card.size
 
     title_font = load_card_font(74, bold=True)
@@ -5016,9 +5116,9 @@ def send_telegram_photo(photo_bytes: bytes, caption: str = ""):
     return [response.json()]
 
 
-def send_telegram_event_message(text: str, app: dict):
+def send_telegram_event_message(text: str, app: dict, event: str = ""):
     try:
-        card = build_telegram_app_card(app)
+        card = build_telegram_app_card(app, event=event)
     except Exception:
         card = None
 
@@ -5230,7 +5330,7 @@ def run_live_status_bot_check(
     for event, app_for_message, snapshot, changed_codes in pending_events:
         message = build_bot_message(event, app_for_message, snapshot, changed_codes)
         if send_messages:
-            send_telegram_event_message(message, app_for_message)
+            send_telegram_event_message(message, app_for_message, event=event)
         if write_changes:
             store.append_log(
                 event,
@@ -5375,7 +5475,7 @@ def run_availability_bot_check(
     for event, app_for_message, snapshot, changed_codes in pending_events:
         message = build_bot_message(event, app_for_message, snapshot, changed_codes)
         if send_messages:
-            send_telegram_event_message(message, app_for_message)
+            send_telegram_event_message(message, app_for_message, event=event)
         if write_changes:
             store.append_log(
                 event,
