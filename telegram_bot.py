@@ -74,8 +74,11 @@ TELEGRAM_LIVE_DB_MENU_LIMIT = env_int("TELEGRAM_LIVE_DB_MENU_LIMIT", 12, 1, 40)
 TELEGRAM_PIN_MENU_MESSAGE = os.environ.get("TELEGRAM_PIN_MENU_MESSAGE", "1").strip() != "0"
 
 check_lock = threading.Lock()
+schedule_state_lock = threading.Lock()
 last_scheduled_key = ""
 last_live_status_key = ""
+scheduled_check_pending = False
+live_status_check_pending = False
 active_check_state: dict = {}
 user_sessions: dict[str, dict] = {}
 bot_username_cache = TELEGRAM_BOT_USERNAME
@@ -1124,8 +1127,11 @@ def run_check_async(chat_id: str | int, dry_run: bool = False):
 
 
 def run_scheduled_check():
-    if not check_lock.acquire(blocking=False):
-        return
+    global scheduled_check_pending
+
+    # A scheduled pass must wait for a colliding manual/20-minute pass instead
+    # of silently losing its only 9/15/21 execution window.
+    check_lock.acquire()
 
     try:
         result = run_availability_bot_check(send_messages=True, write_changes=True, limit=AVAILABILITY_CHECK_LIMIT)
@@ -1144,11 +1150,16 @@ def run_scheduled_check():
             )
     finally:
         check_lock.release()
+        with schedule_state_lock:
+            scheduled_check_pending = False
 
 
 def run_scheduled_live_status_check():
-    if not check_lock.acquire(blocking=False):
-        return
+    global live_status_check_pending
+
+    # Keep at most one pending 20-minute pass and serialize it with the full
+    # GEO scan. It will run as soon as the current check releases the lock.
+    check_lock.acquire()
 
     try:
         result = run_live_status_bot_check(
@@ -1173,6 +1184,8 @@ def run_scheduled_live_status_check():
         }, ensure_ascii=False))
     finally:
         check_lock.release()
+        with schedule_state_lock:
+            live_status_check_pending = False
 
 
 def send_status(chat_id: str | int):
@@ -1205,7 +1218,7 @@ def send_status(chat_id: str | int):
 
 
 def maybe_run_schedule():
-    global last_scheduled_key
+    global last_scheduled_key, scheduled_check_pending
 
     try:
         now = datetime.now(ZoneInfo(BOT_TIMEZONE))
@@ -1223,15 +1236,24 @@ def maybe_run_schedule():
         return
 
     key = f"{now.date().isoformat()}-{now.hour}"
-    if key == last_scheduled_key:
-        return
+    with schedule_state_lock:
+        if key == last_scheduled_key or scheduled_check_pending:
+            return
+        last_scheduled_key = key
+        scheduled_check_pending = True
 
-    last_scheduled_key = key
-    threading.Thread(target=run_scheduled_check, daemon=True).start()
+    try:
+        threading.Thread(target=run_scheduled_check, daemon=True).start()
+    except Exception:
+        with schedule_state_lock:
+            scheduled_check_pending = False
+            if last_scheduled_key == key:
+                last_scheduled_key = ""
+        raise
 
 
 def maybe_run_live_status_schedule():
-    global last_live_status_key
+    global last_live_status_key, live_status_check_pending
 
     if not BOT_LIVE_STATUS_ENABLED:
         return
@@ -1242,10 +1264,20 @@ def maybe_run_live_status_schedule():
 
     slot = int(now.timestamp() // (BOT_LIVE_STATUS_INTERVAL_MINUTES * 60))
     key = str(slot)
-    if key == last_live_status_key:
-        return
-    last_live_status_key = key
-    threading.Thread(target=run_scheduled_live_status_check, daemon=True).start()
+    with schedule_state_lock:
+        if key == last_live_status_key or live_status_check_pending:
+            return
+        last_live_status_key = key
+        live_status_check_pending = True
+
+    try:
+        threading.Thread(target=run_scheduled_live_status_check, daemon=True).start()
+    except Exception:
+        with schedule_state_lock:
+            live_status_check_pending = False
+            if last_live_status_key == key:
+                last_live_status_key = ""
+        raise
 
 
 def handle_message(message: dict):

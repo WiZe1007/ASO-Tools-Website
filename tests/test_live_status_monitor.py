@@ -261,6 +261,61 @@ class LiveStatusMonitorTests(unittest.TestCase):
         send_event.assert_called_once()
         summarize.assert_not_called()
 
+    @patch("app.send_telegram_event_message", side_effect=RuntimeError("telegram unavailable"))
+    @patch("app.fetch_google_play_update_state")
+    @patch("app.summarize_google_availability")
+    @patch("app.probe_google_play_live_status")
+    def test_failed_update_alert_is_not_marked_as_delivered(
+        self,
+        probe,
+        summarize,
+        fetch_state,
+        send_event,
+    ):
+        probe.return_value = {"state": "live", "country": "US", "error": ""}
+        fetch_state.return_value = update_state(version="1.1.0", fingerprint="design-v1")
+        row = app_row()
+        row["last_store_version"] = "1.0.0"
+        row["last_design_fingerprint"] = "design-v1"
+        store = FakeStore([row])
+
+        with self.assertRaisesRegex(RuntimeError, "telegram unavailable"):
+            app.run_live_status_bot_check(store=store, send_messages=True, write_changes=True)
+
+        self.assertEqual(store.updates, [])
+        self.assertEqual(store.logs, [])
+        send_event.assert_called_once()
+        summarize.assert_not_called()
+
+    @patch("app.send_telegram_event_message", side_effect=RuntimeError("telegram unavailable"))
+    @patch("app.summarize_google_availability")
+    @patch("app.GoogleSheetsAvailabilityStore")
+    def test_failed_geo_alert_is_not_marked_as_delivered(
+        self,
+        store_factory,
+        summarize,
+        send_event,
+    ):
+        row = app_row(open_codes="US,CA", closed_codes="")
+        store = FakeStore([row])
+        store_factory.return_value = store
+        summarize.return_value = {
+            "total": 2,
+            "open_codes": ["US"],
+            "closed_codes": ["CA"],
+            "not_found_codes": [],
+            "no_install_codes": ["CA"],
+            "transient_codes": [],
+            "is_live": True,
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "telegram unavailable"):
+            app.run_availability_bot_check(send_messages=True, write_changes=True)
+
+        self.assertEqual(store.updates, [])
+        self.assertEqual(store.logs, [])
+        send_event.assert_called_once()
+
     @patch("app.send_telegram_event_message")
     @patch("app.fetch_google_play_update_state")
     @patch("app.summarize_google_availability")
