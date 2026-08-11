@@ -1190,7 +1190,7 @@ def send_status(chat_id: str | int):
                 f"Live: <b>{live}</b>",
                 f"Watch: <b>{watch}</b>",
                 f"Check hours: <b>{escape(BOT_CHECK_HOURS)}</b>",
-                f"Live/ban interval: <b>{BOT_LIVE_STATUS_INTERVAL_MINUTES} min</b>",
+                f"Live/ban/update interval: <b>{BOT_LIVE_STATUS_INTERVAL_MINUTES} min</b>",
                 f"Timezone: <b>{escape(BOT_TIMEZONE)}</b>",
                 "",
                 (

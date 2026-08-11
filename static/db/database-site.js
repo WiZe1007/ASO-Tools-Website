@@ -38,6 +38,7 @@
     appName: $("#appName"),
     appOwner: $("#appOwner"),
     appStatus: $("#appStatus"),
+    appTypeInputs: [...document.querySelectorAll('input[name="appType"]')],
     appEnabled: $("#appEnabled"),
     appNotes: $("#appNotes"),
     editRowIndex: $("#editRowIndex"),
@@ -66,6 +67,21 @@
     banned: "Banned",
     paused: "Paused",
   };
+  const appTypeLabels = {
+    placeholder: "Заглушка",
+    full: "Повноцінна",
+  };
+
+  function selectedAppType() {
+    return elements.appTypeInputs.find((input) => input.checked)?.value || "full";
+  }
+
+  function setSelectedAppType(value) {
+    const normalized = appTypeLabels[value] ? value : "full";
+    elements.appTypeInputs.forEach((input) => {
+      input.checked = input.value === normalized;
+    });
+  }
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -244,6 +260,7 @@
             <span class="app-copy">
               <strong title="${escapeHtml(app.app_name)}">${escapeHtml(app.app_name)}</strong>
               <code title="${escapeHtml(app.app_id)}">${escapeHtml(app.app_id)}</code>
+              <span class="app-type-chip ${escapeHtml(app.app_type || "unknown")}">${escapeHtml(app.app_type_label || appTypeLabels[app.app_type] || "Не вказано")}</span>
             </span>
             <a class="external-link" href="${escapeHtml(app.app_url)}" target="_blank" rel="noopener" title="Відкрити Google Play">${icon("external")}</a>
           </div>
@@ -322,6 +339,7 @@
     elements.appEnabled.checked = true;
     elements.appOwner.value = config.currentUserEmail || "";
     elements.appStatus.value = "watch";
+    setSelectedAppType("full");
     elements.editRowIndex.value = "";
     elements.expectedAppId.value = "";
 
@@ -336,6 +354,7 @@
       elements.appName.value = app.app_name || "";
       elements.appOwner.value = app.owner || "";
       elements.appStatus.value = statusLabels[app.status] ? app.status : "watch";
+      setSelectedAppType(app.app_type);
       elements.appEnabled.checked = Boolean(app.enabled);
       elements.appNotes.value = app.notes || "";
     } else {
@@ -370,6 +389,7 @@
       app_name: elements.appName.value.trim(),
       owner: elements.appOwner.value.trim(),
       status: elements.appStatus.value,
+      app_type: selectedAppType(),
       enabled: elements.appEnabled.checked,
       notes: elements.appNotes.value.trim(),
     };

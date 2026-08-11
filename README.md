@@ -140,17 +140,20 @@ It sends Telegram messages when:
 - an app first becomes live in at least one country;
 - a country that was previously open becomes closed.
 - a country that was previously closed becomes open.
+- a live app changes its Google Play version or store design (icon, feature graphic, or screenshots).
 - a scheduled check finishes without changes, if `TELEGRAM_SEND_EMPTY_SUMMARY=1`.
 
 For already live apps, set `status=live` before the first bot run. Then the first run creates a baseline without sending a "new live" notification.
 
 In addition to the full GEO checks at `BOT_CHECK_HOURS`, each bot performs a
-lightweight Live/ban check every `BOT_LIVE_STATUS_INTERVAL_MINUTES` minutes.
+lightweight Live/ban/update check every `BOT_LIVE_STATUS_INTERVAL_MINUTES` minutes.
 Every `live`, `watch`, and `banned` app is checked against the countries from
 `BOT_LIVE_STATUS_PROBE_COUNTRIES`. For `watch`/`banned`, a full 176-country scan
 runs after one probe country becomes open. For `live`, a full scan runs when no
 probe country remains open so a possible global ban is confirmed before an
-alert. The regular full GEO checks at `BOT_CHECK_HOURS` remain unchanged.
+alert. Live apps also store a baseline of the public Google Play version and
+design fingerprint. Later changes send a `Додаток Оновився` notification. The
+regular full GEO checks at `BOT_CHECK_HOURS` remain unchanged.
 Google Sheet status updates are written in one batch, and Telegram alerts are
 sent only when the app status actually changes.
 

@@ -124,7 +124,30 @@ class DatabaseSiteTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["app"]["app_id"], "com.example.game")
         self.assertEqual(payload["app"]["owner"], "editor@wildwildgroup.com")
+        self.assertEqual(payload["app"]["app_type"], "full")
+        self.assertEqual(payload["app"]["app_type_label"], "Повноцінна")
         self.assertEqual(FakeStore.logs[0][0], "database_add")
+
+    def test_add_placeholder_app(self):
+        response = self.client.post(
+            "/api/apps",
+            json={"app_input": "com.example.placeholder", "app_type": "placeholder"},
+            headers=self.headers(),
+        )
+        self.assertEqual(response.status_code, 201)
+        payload = response.get_json()["app"]
+        self.assertEqual(payload["app_type"], "placeholder")
+        self.assertEqual(payload["app_type_label"], "Заглушка")
+        self.assertEqual(FakeStore.apps[0]["app_type"], "placeholder")
+
+    def test_invalid_app_type_is_rejected(self):
+        response = self.client.post(
+            "/api/apps",
+            json={"app_input": "com.example.invalid", "app_type": "demo"},
+            headers=self.headers(),
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.get_json()["error"], "INVALID_APP_TYPE")
 
     def test_duplicate_app_is_rejected(self):
         FakeStore.apps = [{
@@ -161,12 +184,13 @@ class DatabaseSiteTests(unittest.TestCase):
 
         updated = self.client.patch(
             "/api/apps/2",
-            json={"expected_app_id": "com.example.game", "status": "live", "notes": "Ready"},
+            json={"expected_app_id": "com.example.game", "status": "live", "notes": "Ready", "app_type": "placeholder"},
             headers=self.headers(),
         )
         self.assertEqual(updated.status_code, 200)
         self.assertEqual(updated.get_json()["app"]["status"], "live")
         self.assertEqual(FakeStore.apps[0]["notes"], "Ready")
+        self.assertEqual(FakeStore.apps[0]["app_type"], "placeholder")
 
     def test_mutation_requires_csrf(self):
         response = self.client.post("/api/apps", json={"app_input": "com.example.game"})

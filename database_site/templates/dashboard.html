@@ -8,7 +8,7 @@
   <title>WWA Apps Database</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='db/data-base-favicon.png', v='20260804') }}">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='db/data-base-favicon.png', v='20260804') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css', v='20260811a') }}">
 </head>
 <body class="database-page">
   <div class="page-background" aria-hidden="true"></div>
@@ -195,6 +195,25 @@
               <option value="paused">Paused</option>
             </select>
           </label>
+          <fieldset class="app-type-field">
+            <legend>Тип додатка <b>*</b></legend>
+            <div class="app-type-options">
+              <label class="app-type-option">
+                <input type="radio" name="appType" value="placeholder">
+                <span>
+                  <strong>Заглушка</strong>
+                  <small>Тимчасова версія додатка</small>
+                </span>
+              </label>
+              <label class="app-type-option">
+                <input type="radio" name="appType" value="full" checked>
+                <span>
+                  <strong>Повноцінна</strong>
+                  <small>Основний повний реліз</small>
+                </span>
+              </label>
+            </div>
+          </fieldset>
           <label class="toggle-field">
             <span>
               <strong>Моніторинг увімкнено</strong>
@@ -249,6 +268,6 @@
       "databases": databases
     } | tojson }};
   </script>
-  <script src="{{ url_for('static', filename='db/database-site.js') }}"></script>
+  <script src="{{ url_for('static', filename='db/database-site.js', v='20260811a') }}"></script>
 </body>
 </html>

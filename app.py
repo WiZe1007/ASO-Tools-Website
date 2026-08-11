@@ -14,6 +14,7 @@ import io
 import html as html_lib
 import secrets
 import sqlite3
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
@@ -39,6 +40,11 @@ try:
 except Exception:
     service_account = None
     GoogleAuthRequest = None
+
+try:
+    from google_play_scraper import app as scrape_google_play_app
+except Exception:
+    scrape_google_play_app = None
 
 # ---------------- CONFIG ----------------
 
@@ -3983,7 +3989,30 @@ APPS_SHEET_HEADERS = [
     "last_closed_countries",
     "last_closed_count",
     "last_error",
+    "app_type",
+    "last_store_version",
+    "last_design_fingerprint",
 ]
+LEGACY_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:-3]
+PREVIOUS_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:-2]
+APP_TYPE_LABELS = {
+    "placeholder": "Заглушка",
+    "full": "Повноцінна",
+}
+
+
+def normalize_app_type(value) -> str:
+    text = str(value or "").strip().lower()
+    aliases = {
+        "placeholder": "placeholder",
+        "stub": "placeholder",
+        "заглушка": "placeholder",
+        "full": "full",
+        "full_app": "full",
+        "повноцінна": "full",
+        "повноцінний": "full",
+    }
+    return aliases.get(text, "")
 
 CHECKS_SHEET_HEADERS = [
     "created_at",
@@ -4178,9 +4207,25 @@ class GoogleSheetsAvailabilityStore:
         if self.log_sheet not in titles:
             self.add_sheet(self.log_sheet)
 
-        app_values = self.get_values(self.apps_sheet, "A1:M1")
-        if not app_values or [str(v).strip() for v in app_values[0]] != APPS_SHEET_HEADERS:
-            self.update_values(self.apps_sheet, "A1:M1", [APPS_SHEET_HEADERS])
+        app_values = self.get_values(self.apps_sheet, "A1:P1")
+        if not app_values:
+            self.update_values(self.apps_sheet, "A1:P1", [APPS_SHEET_HEADERS])
+        else:
+            normalized_headers = [str(v).strip() for v in app_values[0]]
+            if normalized_headers == LEGACY_APPS_SHEET_HEADERS:
+                self.update_values(
+                    self.apps_sheet,
+                    "N1:P1",
+                    [["app_type", "last_store_version", "last_design_fingerprint"]],
+                )
+            elif normalized_headers == PREVIOUS_APPS_SHEET_HEADERS:
+                self.update_values(
+                    self.apps_sheet,
+                    "O1:P1",
+                    [["last_store_version", "last_design_fingerprint"]],
+                )
+            elif normalized_headers != APPS_SHEET_HEADERS:
+                raise BotConfigError("Заголовки аркуша Apps не відповідають очікуваній схемі A:P.")
 
         log_values = self.get_values(self.log_sheet, "A1:H1")
         if not log_values or [str(v).strip() for v in log_values[0]] != CHECKS_SHEET_HEADERS:
@@ -4188,7 +4233,7 @@ class GoogleSheetsAvailabilityStore:
 
     def load_apps(self) -> list[dict]:
         self.ensure_ready()
-        values = self.get_values(self.apps_sheet, "A2:M")
+        values = self.get_values(self.apps_sheet, "A2:P")
         apps = []
         for offset, row in enumerate(values, start=2):
             row_dict = {
@@ -4211,12 +4256,13 @@ class GoogleSheetsAvailabilityStore:
                 "app_url": app_url,
                 "app_id": app_id,
                 "status": status or "watch",
+                "app_type": normalize_app_type(row_dict.get("app_type")),
             })
             apps.append(row_dict)
         return apps
 
     def update_app(self, row_index: int, updates: dict):
-        values = self.get_values(self.apps_sheet, f"A{row_index}:M{row_index}")
+        values = self.get_values(self.apps_sheet, f"A{row_index}:P{row_index}")
         current_row = values[0] if values else []
         row_dict = {
             header: current_row[idx] if idx < len(current_row) else ""
@@ -4224,7 +4270,7 @@ class GoogleSheetsAvailabilityStore:
         }
         row_dict.update(updates)
         row = [row_dict.get(header, "") for header in APPS_SHEET_HEADERS]
-        self.update_values(self.apps_sheet, f"A{row_index}:M{row_index}", [row])
+        self.update_values(self.apps_sheet, f"A{row_index}:P{row_index}", [row])
 
     def batch_update_apps(self, app_updates: list[tuple[dict, dict]]):
         if not app_updates:
@@ -4720,8 +4766,14 @@ def google_play_app_card_meta(app: dict) -> dict:
         "content_rating": "—",
         "icon_url": "",
         "screenshots": [],
+        "feature_graphic_url": "",
     }
     if not app_id:
+        return meta
+
+    preloaded = app.get("_google_play_card_meta")
+    if isinstance(preloaded, dict):
+        meta.update({key: value for key, value in preloaded.items() if value not in (None, "")})
         return meta
 
     cache_key = ("google_play_card_meta", app_id.lower())
@@ -4804,6 +4856,120 @@ def google_play_app_card_meta(app: dict) -> dict:
     return meta
 
 
+def canonical_google_play_asset_url(value) -> str:
+    url = str(value or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return ""
+    clean = url.split("?", 1)[0]
+    return re.sub(r"=(?:w|s)\d+(?:-[^/?#]+)*$", "", clean)
+
+
+def google_play_design_fingerprint(icon_url, feature_graphic_url, screenshots) -> str:
+    payload = {
+        "icon": canonical_google_play_asset_url(icon_url),
+        "feature_graphic": canonical_google_play_asset_url(feature_graphic_url),
+        "screenshots": [
+            normalized
+            for normalized in (
+                canonical_google_play_asset_url(url)
+                for url in (screenshots or [])
+            )
+            if normalized
+        ],
+    }
+    if not payload["icon"] and not payload["feature_graphic"] and not payload["screenshots"]:
+        return ""
+    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def fetch_google_play_update_state(app_id: str, country: str = "US") -> dict:
+    result = {
+        "ok": False,
+        "version": "",
+        "design_fingerprint": "",
+        "card_meta": {},
+        "error": "",
+    }
+    if not app_id:
+        result["error"] = "MISSING_APP_ID"
+        return result
+    if scrape_google_play_app is None:
+        result["error"] = "GOOGLE_PLAY_SCRAPER_UNAVAILABLE"
+        return result
+
+    try:
+        data = scrape_google_play_app(
+            app_id,
+            lang="en",
+            country=(country or "US").strip().lower(),
+        )
+    except Exception as exc:
+        result["error"] = f"GOOGLE_PLAY_METADATA_ERROR:{exc}"
+        return result
+
+    raw_version = str(data.get("version") or "").strip()
+    version = "" if raw_version.lower() == "varies with device" else raw_version
+    if not version:
+        # Google Play intentionally hides the concrete version for some apps.
+        # Its public "Updated on" timestamp is the closest stable release
+        # marker and changes when a new Play release becomes visible.
+        updated_marker = data.get("updated")
+        if updated_marker not in (None, ""):
+            version = f"updated:{updated_marker}"
+    screenshots = [
+        str(url).strip()
+        for url in (data.get("screenshots") or [])
+        if str(url).strip().startswith(("http://", "https://"))
+    ]
+    icon_url = str(data.get("icon") or "").strip()
+    feature_graphic_url = str(data.get("headerImage") or "").strip()
+    # A partial Play response must not look like a design change. The feature
+    # graphic is optional, but a reliable visual snapshot always has an icon
+    # and at least one screenshot.
+    fingerprint = (
+        google_play_design_fingerprint(icon_url, feature_graphic_url, screenshots)
+        if icon_url and screenshots
+        else ""
+    )
+    card_meta = {
+        "app_id": app_id,
+        "name": str(data.get("title") or app_id).strip(),
+        "category": str(data.get("genre") or "—").strip(),
+        "content_rating": normalize_content_rating_label(data.get("contentRating") or "—"),
+        "icon_url": icon_url,
+        "screenshots": screenshots[:3],
+        "feature_graphic_url": feature_graphic_url,
+    }
+    result.update({
+        "ok": bool(version or fingerprint),
+        "version": version,
+        "design_fingerprint": fingerprint,
+        "card_meta": card_meta,
+    })
+    if not result["ok"]:
+        result["error"] = "GOOGLE_PLAY_METADATA_EMPTY"
+    return result
+
+
+def apply_google_play_update_state(app: dict, update_payload: dict, state: dict) -> list[str]:
+    changes: list[str] = []
+    previous_version = str(app.get("last_store_version") or "").strip()
+    previous_design = str(app.get("last_design_fingerprint") or "").strip()
+    current_version = str(state.get("version") or "").strip()
+    current_design = str(state.get("design_fingerprint") or "").strip()
+
+    if current_version:
+        update_payload["last_store_version"] = current_version
+        if previous_version and previous_version != current_version:
+            changes.append("version")
+    if current_design:
+        update_payload["last_design_fingerprint"] = current_design
+        if previous_design and previous_design != current_design:
+            changes.append("design")
+    return changes
+
+
 def rounded_image(image, radius: int):
     if Image is None or ImageOps is None:
         return image
@@ -4870,8 +5036,14 @@ def build_telegram_app_card(app: dict, event: str = "") -> bytes | None:
         return None
 
     app_id = str(app.get("app_id") or "").strip().lower()
-    media_source = "google_play" if event in {"new_live", "app_restored"} else "sensor_tower"
-    cache_key = ("telegram_app_card", media_source, app_id)
+    media_source = "google_play" if event in {"new_live", "app_restored", "app_updated"} else "sensor_tower"
+    cache_key = (
+        "telegram_app_card",
+        media_source,
+        app_id,
+        str(app.get("last_store_version") or ""),
+        str(app.get("last_design_fingerprint") or ""),
+    )
     cached = TELEGRAM_APP_CARD_CACHE.get(cache_key)
     if cached is not CACHE_MISS:
         return cached
@@ -5147,6 +5319,17 @@ def build_bot_message(event: str, app: dict, snapshot: dict, changed_codes: list
     open_count = len(snapshot.get("open_codes") or [])
     closed_count = len(snapshot.get("closed_codes") or [])
     total = snapshot.get("total") or 0
+    app_type = normalize_app_type(app.get("app_type"))
+    app_type_line = APP_TYPE_LABELS.get(app_type, "")
+
+    if event == "app_updated":
+        return "\n".join([
+            "<b>Додаток Оновився</b>",
+            "",
+            f"<b>{escaped_name}</b>",
+            f"<code>{escaped_id}</code>",
+            f'<a href="{escaped_url}">Google Play</a>',
+        ])
 
     if event == "new_live":
         title = "🟢 Новий додаток вийшов у Live"
@@ -5169,12 +5352,18 @@ def build_bot_message(event: str, app: dict, snapshot: dict, changed_codes: list
         if event == "app_banned"
         else html_lib.escape(format_country_lines(changed_codes))
     )
+    identity_lines = [
+        f"<b>{escaped_name}</b>",
+        f"<code>{escaped_id}</code>",
+    ]
+    if event in {"new_live", "app_restored"} and app_type_line:
+        identity_lines.append(f"Тип: <b>{html_lib.escape(app_type_line)}</b>")
+    identity_lines.append(f'<a href="{escaped_url}">Google Play</a>')
+
     return "\n".join([
         f"<b>{title}</b>",
         "",
-        f"<b>{escaped_name}</b>",
-        f"<code>{escaped_id}</code>",
-        f'<a href="{escaped_url}">Google Play</a>',
+        *identity_lines,
         "",
         f"Open: <b>{open_count}</b> / {total}",
         f"Closed: <b>{closed_count}</b>",
@@ -5208,6 +5397,7 @@ def run_live_status_bot_check(
     pending_events: list[tuple[str, dict, dict, set[str]]] = []
     probe_apps: list[dict] = []
     full_check_apps: list[dict] = []
+    metadata_check_apps: list[tuple[dict, str]] = []
 
     for app in apps_to_check:
         if not str(app.get("app_id") or "").strip():
@@ -5238,9 +5428,9 @@ def run_live_status_bot_check(
                 if prev_live:
                     # Existing live apps are checked against the same configured
                     # GEO set every 20 minutes. One open signal proves the app is
-                    # not globally banned, so no full scan is needed.
-                    result["apps_checked"] += 1
-                    updates.append((app, {"last_checked_at": now, "last_error": ""}))
+                    # not globally banned, so no full scan is needed. Reuse that
+                    # country for one lightweight Play metadata request.
+                    metadata_check_apps.append((app, probe.get("country") or "US"))
                 else:
                     # A watch/banned app found in one of the selected probe GEOs
                     # gets a full scan before its Live/restored alert is sent.
@@ -5254,6 +5444,56 @@ def run_live_status_bot_check(
                 # the scheduled 9/15/21 full scan still checks every GEO.
                 result["apps_checked"] += 1
                 updates.append((app, {"last_checked_at": now, "last_error": ""}))
+
+    # Stable Live apps only need one metadata request. This is kept separate
+    # from the GEO probe so a temporary metadata failure cannot affect the
+    # availability state or generate a false update alert.
+    metadata_workers = max(1, min(MAX_WORKERS_BOT_LIVE_STATUS, len(metadata_check_apps) or 1))
+    with ThreadPoolExecutor(max_workers=metadata_workers) as executor:
+        future_to_item = {
+            executor.submit(
+                fetch_google_play_update_state,
+                str(app.get("app_id") or "").strip(),
+                country,
+            ): (app, country)
+            for app, country in metadata_check_apps
+        }
+        for future in as_completed(future_to_item):
+            app, _country = future_to_item[future]
+            app_id = str(app.get("app_id") or "").strip()
+            try:
+                state = future.result()
+            except Exception as exc:
+                state = {"ok": False, "error": f"GOOGLE_PLAY_METADATA_ERROR:{exc}"}
+
+            result["apps_checked"] += 1
+            update_payload = {"last_checked_at": now, "last_error": ""}
+            changes = apply_google_play_update_state(app, update_payload, state) if state.get("ok") else []
+            updates.append((app, update_payload))
+
+            if not changes:
+                continue
+            current_open = split_country_codes(app.get("last_open_countries"))
+            current_closed = split_country_codes(app.get("last_closed_countries"))
+            snapshot = {
+                "total": len(current_open | current_closed),
+                "open_codes": sorted(current_open),
+                "closed_codes": sorted(current_closed),
+            }
+            app_for_message = {
+                **app,
+                **update_payload,
+                "_google_play_card_meta": state.get("card_meta") or {},
+                "_update_changes": changes,
+            }
+            pending_events.append(("app_updated", app_for_message, snapshot, set()))
+            result["notifications"].append({
+                "event": "app_updated",
+                "app_id": app_id,
+                "changes": list(changes),
+                "countries_count": 0,
+                "countries": [],
+            })
 
     # Full scans are deliberately serial and only follow a possible status
     # transition. This prevents false alerts and protects a small Render worker.
@@ -5313,17 +5553,41 @@ def run_live_status_bot_check(
             "last_closed_count": len(current_closed),
             "last_error": "",
         }
+
+        metadata_state = {}
+        metadata_changes: list[str] = []
+        if current_live:
+            metadata_state = fetch_google_play_update_state(
+                app_id,
+                (sorted(current_open) or ["US"])[0],
+            )
+            if metadata_state.get("ok"):
+                metadata_changes = apply_google_play_update_state(app, update_payload, metadata_state)
+                # A Live/restored transition is the more important event. The
+                # new metadata is still persisted and used in its visual card,
+                # but no second update notification is sent in the same pass.
+                if not event and metadata_changes:
+                    event = "app_updated"
+                    changed_codes = set()
         updates.append((app, update_payload))
 
         if event:
-            app_for_message = {**app, **update_payload}
+            app_for_message = {
+                **app,
+                **update_payload,
+                "_google_play_card_meta": metadata_state.get("card_meta") or {},
+                "_update_changes": metadata_changes,
+            }
             pending_events.append((event, app_for_message, snapshot, changed_codes))
-            result["notifications"].append({
+            notification = {
                 "event": event,
                 "app_id": app_id,
                 "countries_count": len(changed_codes),
                 "countries": sorted(changed_codes),
-            })
+            }
+            if event == "app_updated":
+                notification["changes"] = list(metadata_changes)
+            result["notifications"].append(notification)
 
     if write_changes:
         store.batch_update_apps(updates)
@@ -5332,13 +5596,20 @@ def run_live_status_bot_check(
         if send_messages:
             send_telegram_event_message(message, app_for_message, event=event)
         if write_changes:
+            update_changes = app_for_message.get("_update_changes") or []
+            update_details = (
+                f" changes={','.join(update_changes)}"
+                if event == "app_updated" and update_changes
+                else ""
+            )
             store.append_log(
                 event,
                 app_for_message,
                 changed_codes,
                 (
                     f"open={len(snapshot.get('open_codes') or [])} "
-                    f"closed={len(snapshot.get('closed_codes') or [])} source=20m_live_status"
+                    f"closed={len(snapshot.get('closed_codes') or [])} "
+                    f"source=20m_live_status{update_details}"
                 ),
             )
     return result

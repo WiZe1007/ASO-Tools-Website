@@ -115,7 +115,12 @@ APPS_SHEET_HEADERS = [
     "last_closed_countries",
     "last_closed_count",
     "last_error",
+    "app_type",
+    "last_store_version",
+    "last_design_fingerprint",
 ]
+LEGACY_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:-3]
+PREVIOUS_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:-2]
 
 CHECKS_SHEET_HEADERS = [
     "created_at",
@@ -137,6 +142,11 @@ USERS_SHEET_HEADERS = [
 ]
 
 ALLOWED_STATUSES = {"watch", "live", "banned", "paused"}
+APP_TYPE_LABELS = {
+    "placeholder": "Заглушка",
+    "full": "Повноцінна",
+}
+ALLOWED_APP_TYPES = set(APP_TYPE_LABELS)
 HTTP = requests.Session()
 HTTP.headers.update({"User-Agent": "WWA-Apps-Database/1.0"})
 AUTH_DB_LOCK = threading.Lock()
@@ -195,6 +205,22 @@ def google_play_url(app_id: str) -> str:
 def clean_text(value, max_length: int) -> str:
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", str(value or "")).strip()
     return text[:max_length]
+
+
+def normalize_app_type(value, default: str = "") -> str:
+    text = clean_text(value, 40).lower()
+    if not text:
+        return default
+    aliases = {
+        "placeholder": "placeholder",
+        "stub": "placeholder",
+        "заглушка": "placeholder",
+        "full": "full",
+        "full_app": "full",
+        "повноцінна": "full",
+        "повноцінний": "full",
+    }
+    return aliases.get(text, "")
 
 
 def decode_service_account_info(raw: str, file_path: str, variable_name: str) -> dict:
@@ -318,18 +344,32 @@ class GoogleSheetsStore:
             self.add_sheet(self.apps_sheet)
         if self.log_sheet not in titles:
             self.add_sheet(self.log_sheet)
-        app_headers = self.get_values(self.apps_sheet, "A1:M1")
+        app_headers = self.get_values(self.apps_sheet, "A1:P1")
         if not app_headers:
-            self.update_values(self.apps_sheet, "A1:M1", [APPS_SHEET_HEADERS])
-        elif [str(item).strip() for item in app_headers[0]] != APPS_SHEET_HEADERS:
-            raise DatabaseConfigError("Заголовки аркуша Apps не відповідають очікуваній схемі A:M.")
+            self.update_values(self.apps_sheet, "A1:P1", [APPS_SHEET_HEADERS])
+        else:
+            normalized_headers = [str(item).strip() for item in app_headers[0]]
+            if normalized_headers == LEGACY_APPS_SHEET_HEADERS:
+                self.update_values(
+                    self.apps_sheet,
+                    "N1:P1",
+                    [["app_type", "last_store_version", "last_design_fingerprint"]],
+                )
+            elif normalized_headers == PREVIOUS_APPS_SHEET_HEADERS:
+                self.update_values(
+                    self.apps_sheet,
+                    "O1:P1",
+                    [["last_store_version", "last_design_fingerprint"]],
+                )
+            elif normalized_headers != APPS_SHEET_HEADERS:
+                raise DatabaseConfigError("Заголовки аркуша Apps не відповідають очікуваній схемі A:P.")
         log_headers = self.get_values(self.log_sheet, "A1:H1")
         if not log_headers:
             self.update_values(self.log_sheet, "A1:H1", [CHECKS_SHEET_HEADERS])
 
     def load_all_apps(self) -> list[dict]:
         self.ensure_ready()
-        rows = self.get_values(self.apps_sheet, "A2:M")
+        rows = self.get_values(self.apps_sheet, "A2:P")
         apps = []
         for row_index, row in enumerate(rows, start=2):
             item = {
@@ -346,6 +386,7 @@ class GoogleSheetsStore:
                 "app_name": str(item.get("app_name") or app_id).strip(),
                 "enabled": boolish(item.get("enabled"), default=True),
                 "status": str(item.get("status") or "watch").strip().lower(),
+                "app_type": normalize_app_type(item.get("app_type")),
             })
             apps.append(item)
         return apps
@@ -357,7 +398,7 @@ class GoogleSheetsStore:
         row = dict(current)
         row.update(updates)
         values = [row.get(header, "") for header in APPS_SHEET_HEADERS]
-        self.update_values(self.apps_sheet, f"A{row_index}:M{row_index}", [values])
+        self.update_values(self.apps_sheet, f"A{row_index}:P{row_index}", [values])
 
     def append_log(self, event: str, app_data: dict, details: str):
         countries = split_country_codes(app_data.get("last_closed_countries"))
@@ -672,6 +713,7 @@ def require_database_access(database_key: str):
 def app_payload(item: dict) -> dict:
     closed = split_country_codes(item.get("last_closed_countries"))
     opened = split_country_codes(item.get("last_open_countries"))
+    app_type = normalize_app_type(item.get("app_type"))
     return {
         "row_index": int(item.get("row_index") or 0),
         "enabled": boolish(item.get("enabled"), default=True),
@@ -687,6 +729,8 @@ def app_payload(item: dict) -> dict:
         "closed_countries": closed,
         "closed_count": len(closed),
         "last_error": str(item.get("last_error") or ""),
+        "app_type": app_type,
+        "app_type_label": APP_TYPE_LABELS.get(app_type, "Не вказано"),
     }
 
 
@@ -821,6 +865,9 @@ def add_app(database_key: str = "wwa"):
     status = clean_text(payload.get("status") or "watch", 20).lower()
     if status not in ALLOWED_STATUSES:
         return api_error("Некоректний статус додатка.", 422, "INVALID_STATUS")
+    app_type = normalize_app_type(payload.get("app_type"), default="full")
+    if app_type not in ALLOWED_APP_TYPES:
+        return api_error("Обери тип додатка: Заглушка або Повноцінна.", 422, "INVALID_APP_TYPE")
     enabled = bool(payload.get("enabled", True))
     item = {
         "enabled": enabled,
@@ -836,6 +883,7 @@ def add_app(database_key: str = "wwa"):
         "last_closed_countries": "",
         "last_closed_count": "",
         "last_error": "",
+        "app_type": app_type,
     }
     store = build_store(database_key)
     try:
@@ -849,6 +897,7 @@ def add_app(database_key: str = "wwa"):
                 "database": database_key,
                 "status": status,
                 "enabled": enabled,
+                "app_type": app_type,
             }, ensure_ascii=False))
             refreshed = store.load_all_apps()
         created = next((row for row in reversed(refreshed) if row.get("app_id") == app_id), item)
@@ -884,6 +933,11 @@ def update_app(row_index: int, database_key: str = "wwa"):
         if status not in ALLOWED_STATUSES:
             return api_error("Некоректний статус додатка.", 422, "INVALID_STATUS")
         updates["status"] = status
+    if "app_type" in payload:
+        app_type = normalize_app_type(payload.get("app_type"))
+        if app_type not in ALLOWED_APP_TYPES:
+            return api_error("Обери тип додатка: Заглушка або Повноцінна.", 422, "INVALID_APP_TYPE")
+        updates["app_type"] = app_type
     if not updates:
         return api_error("Немає змін для збереження.", 422, "NO_CHANGES")
 

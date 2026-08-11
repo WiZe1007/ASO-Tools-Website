@@ -31,14 +31,79 @@ def app_row(status="live", open_codes="US", closed_codes="CA"):
         "last_open_countries": open_codes,
         "last_closed_countries": closed_codes,
         "last_closed_count": 1 if closed_codes else 0,
+        "last_store_version": "",
+        "last_design_fingerprint": "",
+    }
+
+
+def update_state(version="1.0.0", fingerprint="design-v1"):
+    return {
+        "ok": True,
+        "version": version,
+        "design_fingerprint": fingerprint,
+        "card_meta": {
+            "app_id": "com.example.game",
+            "name": "Example Game",
+            "category": "Game",
+            "content_rating": "Everyone",
+            "icon_url": "https://example.com/icon.png",
+            "screenshots": ["https://example.com/screen.png"],
+        },
+        "error": "",
     }
 
 
 class LiveStatusMonitorTests(unittest.TestCase):
+    @patch("app.scrape_google_play_app")
+    def test_update_state_uses_updated_date_when_version_varies(self, scrape):
+        scrape.return_value = {
+            "title": "Example Game",
+            "version": "Varies with device",
+            "updated": 1786348525,
+            "genre": "Game",
+            "contentRating": "Everyone",
+            "icon": "https://example.com/icon=w240-rw",
+            "headerImage": "https://example.com/header=w1024-rw",
+            "screenshots": ["https://example.com/screen=w720-rw"],
+        }
+
+        state = app.fetch_google_play_update_state("com.example.game", "US")
+
+        self.assertTrue(state["ok"])
+        self.assertEqual(state["version"], "updated:1786348525")
+        self.assertTrue(state["design_fingerprint"])
+
+    def test_new_live_message_includes_app_type(self):
+        row = app_row(status="watch", open_codes="", closed_codes="")
+        row["app_type"] = "placeholder"
+        snapshot = {
+            "total": 2,
+            "open_codes": ["US"],
+            "closed_codes": ["CA"],
+        }
+
+        message = app.build_bot_message("new_live", row, snapshot, ["CA"])
+
+        self.assertIn("Тип: <b>Заглушка</b>", message)
+
+    def test_new_live_message_keeps_legacy_rows_without_type(self):
+        row = app_row(status="watch", open_codes="", closed_codes="")
+        snapshot = {
+            "total": 2,
+            "open_codes": ["US"],
+            "closed_codes": ["CA"],
+        }
+
+        message = app.build_bot_message("new_live", row, snapshot, ["CA"])
+
+        self.assertNotIn("Тип:", message)
+
+    @patch("app.fetch_google_play_update_state")
     @patch("app.summarize_google_availability")
     @patch("app.probe_google_play_live_status")
-    def test_unchanged_live_app_uses_only_quick_probe(self, probe, summarize):
+    def test_unchanged_live_app_uses_only_quick_probe(self, probe, summarize, fetch_state):
         probe.return_value = {"state": "live", "country": "US", "error": ""}
+        fetch_state.return_value = update_state()
         store = FakeStore([app_row()])
 
         result = app.run_live_status_bot_check(
@@ -56,7 +121,94 @@ class LiveStatusMonitorTests(unittest.TestCase):
             len(app.BOT_LIVE_STATUS_PROBE_COUNTRIES),
         )
         self.assertEqual(len(store.updates), 1)
+        self.assertEqual(store.updates[0][1]["last_store_version"], "1.0.0")
+        self.assertEqual(store.updates[0][1]["last_design_fingerprint"], "design-v1")
         self.assertEqual(store.logs, [])
+
+    @patch("app.send_telegram_event_message")
+    @patch("app.fetch_google_play_update_state")
+    @patch("app.summarize_google_availability")
+    @patch("app.probe_google_play_live_status")
+    def test_version_change_sends_one_update_alert(
+        self,
+        probe,
+        summarize,
+        fetch_state,
+        send_event,
+    ):
+        probe.return_value = {"state": "live", "country": "US", "error": ""}
+        fetch_state.return_value = update_state(version="1.1.0", fingerprint="design-v1")
+        row = app_row()
+        row["last_store_version"] = "1.0.0"
+        row["last_design_fingerprint"] = "design-v1"
+        store = FakeStore([row])
+
+        result = app.run_live_status_bot_check(store=store, send_messages=True, write_changes=True)
+
+        self.assertEqual(len(result["notifications"]), 1)
+        self.assertEqual(result["notifications"][0]["event"], "app_updated")
+        self.assertEqual(result["notifications"][0]["changes"], ["version"])
+        self.assertEqual(store.updates[0][1]["last_store_version"], "1.1.0")
+        self.assertEqual(store.logs[0][0], "app_updated")
+        self.assertIn("changes=version", store.logs[0][3])
+        message = send_event.call_args.args[0]
+        self.assertIn("Додаток Оновився", message)
+        send_event.assert_called_once()
+        summarize.assert_not_called()
+
+    @patch("app.send_telegram_event_message")
+    @patch("app.fetch_google_play_update_state")
+    @patch("app.summarize_google_availability")
+    @patch("app.probe_google_play_live_status")
+    def test_design_change_sends_one_update_alert(
+        self,
+        probe,
+        summarize,
+        fetch_state,
+        send_event,
+    ):
+        probe.return_value = {"state": "live", "country": "US", "error": ""}
+        fetch_state.return_value = update_state(version="1.0.0", fingerprint="design-v2")
+        row = app_row()
+        row["last_store_version"] = "1.0.0"
+        row["last_design_fingerprint"] = "design-v1"
+        store = FakeStore([row])
+
+        result = app.run_live_status_bot_check(store=store, send_messages=True, write_changes=True)
+
+        self.assertEqual(result["notifications"][0]["event"], "app_updated")
+        self.assertEqual(result["notifications"][0]["changes"], ["design"])
+        self.assertEqual(store.updates[0][1]["last_design_fingerprint"], "design-v2")
+        self.assertIn("changes=design", store.logs[0][3])
+        send_event.assert_called_once()
+        summarize.assert_not_called()
+
+    @patch("app.send_telegram_event_message")
+    @patch("app.fetch_google_play_update_state")
+    @patch("app.summarize_google_availability")
+    @patch("app.probe_google_play_live_status")
+    def test_metadata_failure_keeps_previous_state_without_alert(
+        self,
+        probe,
+        summarize,
+        fetch_state,
+        send_event,
+    ):
+        probe.return_value = {"state": "live", "country": "US", "error": ""}
+        fetch_state.return_value = {"ok": False, "error": "TEMPORARY_ERROR"}
+        row = app_row()
+        row["last_store_version"] = "1.0.0"
+        row["last_design_fingerprint"] = "design-v1"
+        store = FakeStore([row])
+
+        result = app.run_live_status_bot_check(store=store, send_messages=True, write_changes=True)
+
+        self.assertEqual(result["notifications"], [])
+        self.assertNotIn("last_store_version", store.updates[0][1])
+        self.assertNotIn("last_design_fingerprint", store.updates[0][1])
+        self.assertEqual(store.logs, [])
+        send_event.assert_not_called()
+        summarize.assert_not_called()
 
     @patch("app.send_telegram_event_message")
     @patch("app.summarize_google_availability")
@@ -106,11 +258,13 @@ class LiveStatusMonitorTests(unittest.TestCase):
         self.assertEqual(store.logs, [])
         send_event.assert_not_called()
 
+    @patch("app.fetch_google_play_update_state")
     @patch("app.send_telegram_event_message")
     @patch("app.summarize_google_availability")
     @patch("app.probe_google_play_live_status")
-    def test_banned_app_restored_to_live(self, probe, summarize, send_event):
+    def test_banned_app_restored_to_live(self, probe, summarize, send_event, fetch_state):
         probe.return_value = {"state": "live", "country": "UA", "error": ""}
+        fetch_state.return_value = update_state()
         summarize.return_value = {
             "total": 3,
             "open_codes": ["US", "GB"],
@@ -143,11 +297,13 @@ class LiveStatusMonitorTests(unittest.TestCase):
         send_event.assert_not_called()
         summarize.assert_not_called()
 
+    @patch("app.fetch_google_play_update_state")
     @patch("app.send_telegram_event_message")
     @patch("app.summarize_google_availability")
     @patch("app.probe_google_play_live_status")
-    def test_watch_app_live_probe_triggers_full_scan(self, probe, summarize, send_event):
+    def test_watch_app_live_probe_triggers_full_scan(self, probe, summarize, send_event, fetch_state):
         probe.return_value = {"state": "live", "country": "UA", "error": ""}
+        fetch_state.return_value = update_state()
         summarize.return_value = {
             "total": 3,
             "open_codes": ["UA", "US"],
