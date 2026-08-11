@@ -4883,10 +4883,116 @@ def google_play_design_fingerprint(icon_url, feature_graphic_url, screenshots) -
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def normalize_google_play_updated_marker(value) -> str:
+    """Normalize scraper timestamps and the English Play date to one value."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        timestamp = float(text)
+        if timestamp > 0:
+            return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError, OverflowError):
+        pass
+    for date_format in ("%b %d, %Y", "%B %d, %Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, date_format).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return text
+
+
+def google_play_release_marker(version, updated) -> str:
+    """Build a stable marker from every public Google Play release signal."""
+    clean_version = str(version or "").strip()
+    if clean_version.lower() == "varies with device":
+        clean_version = ""
+    clean_updated = normalize_google_play_updated_marker(updated)
+    parts = []
+    if clean_version:
+        parts.append(f"version:{clean_version}")
+    if clean_updated:
+        parts.append(f"updated:{clean_updated}")
+    return "|".join(parts)
+
+
+def parse_google_play_release_marker(value) -> dict[str, str]:
+    """Read both the current marker and legacy plain-version Sheet values."""
+    text = str(value or "").strip()
+    parsed = {"version": "", "updated": ""}
+    if not text:
+        return parsed
+
+    if text.startswith(("version:", "updated:")):
+        for part in text.split("|"):
+            key, separator, raw_value = part.partition(":")
+            if separator and key in parsed:
+                parsed[key] = raw_value.strip()
+        parsed["updated"] = normalize_google_play_updated_marker(parsed["updated"])
+        return parsed
+
+    # Rows created before release markers stored a plain version number.
+    parsed["version"] = text
+    return parsed
+
+
+def google_play_release_changed(previous, current) -> bool:
+    """Compare only signals available in both snapshots to avoid migration alerts."""
+    previous_parts = parse_google_play_release_marker(previous)
+    current_parts = parse_google_play_release_marker(current)
+
+    previous_version = previous_parts["version"]
+    current_version = current_parts["version"]
+    if previous_version and current_version and previous_version != current_version:
+        return True
+
+    previous_updated = previous_parts["updated"]
+    current_updated = current_parts["updated"]
+    if previous_updated and current_updated and previous_updated != current_updated:
+        return True
+
+    # With no overlapping public signal, the current value becomes a baseline.
+    return False
+
+
+def parse_google_play_public_updated_marker(page_html: str) -> str:
+    """Extract the public English `Updated on` value from a Play page."""
+    if not page_html:
+        return ""
+
+    soup = BeautifulSoup(page_html, "lxml")
+    for label in soup.find_all(["div", "span"]):
+        if label.get_text(" ", strip=True) != "Updated on":
+            continue
+        value = label.find_next_sibling(["div", "span"])
+        if value:
+            return value.get_text(" ", strip=True)
+    return ""
+
+
+def fetch_google_play_public_updated_marker(app_id: str, country: str = "US") -> str:
+    """Read the update date when google-play-scraper omits it."""
+    url = build_google_play_url(app_id, (country or "US").upper(), "en")
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    response = session.get(url, headers=headers, timeout=20)
+    response.raise_for_status()
+    page_html = response.text or ""
+    if "consent.google.com" in page_html.lower() or "unusual traffic" in page_html.lower():
+        return ""
+    return parse_google_play_public_updated_marker(page_html)
+
+
 def fetch_google_play_update_state(app_id: str, country: str = "US") -> dict:
     result = {
         "ok": False,
         "version": "",
+        "release_marker": "",
         "design_fingerprint": "",
         "card_meta": {},
         "error": "",
@@ -4910,13 +5016,16 @@ def fetch_google_play_update_state(app_id: str, country: str = "US") -> dict:
 
     raw_version = str(data.get("version") or "").strip()
     version = "" if raw_version.lower() == "varies with device" else raw_version
-    if not version:
-        # Google Play intentionally hides the concrete version for some apps.
-        # Its public "Updated on" timestamp is the closest stable release
-        # marker and changes when a new Play release becomes visible.
-        updated_marker = data.get("updated")
-        if updated_marker not in (None, ""):
-            version = f"updated:{updated_marker}"
+    updated_marker = data.get("updated")
+    if updated_marker in (None, ""):
+        try:
+            updated_marker = fetch_google_play_public_updated_marker(app_id, country)
+        except requests.RequestException:
+            updated_marker = ""
+    # The public update timestamp is tracked even when a version exists. Play
+    # can keep the same visible version during staged releases or expose it
+    # later than the updated date, so either changed signal means an update.
+    release_marker = google_play_release_marker(version, updated_marker)
     screenshots = [
         str(url).strip()
         for url in (data.get("screenshots") or [])
@@ -4942,8 +5051,9 @@ def fetch_google_play_update_state(app_id: str, country: str = "US") -> dict:
         "feature_graphic_url": feature_graphic_url,
     }
     result.update({
-        "ok": bool(version or fingerprint),
+        "ok": bool(release_marker or fingerprint),
         "version": version,
+        "release_marker": release_marker,
         "design_fingerprint": fingerprint,
         "card_meta": card_meta,
     })
@@ -4956,12 +5066,12 @@ def apply_google_play_update_state(app: dict, update_payload: dict, state: dict)
     changes: list[str] = []
     previous_version = str(app.get("last_store_version") or "").strip()
     previous_design = str(app.get("last_design_fingerprint") or "").strip()
-    current_version = str(state.get("version") or "").strip()
+    current_version = str(state.get("release_marker") or state.get("version") or "").strip()
     current_design = str(state.get("design_fingerprint") or "").strip()
 
     if current_version:
         update_payload["last_store_version"] = current_version
-        if previous_version and previous_version != current_version:
+        if previous_version and google_play_release_changed(previous_version, current_version):
             changes.append("version")
     if current_design:
         update_payload["last_design_fingerprint"] = current_design
@@ -5467,8 +5577,19 @@ def run_live_status_bot_check(
                 state = {"ok": False, "error": f"GOOGLE_PLAY_METADATA_ERROR:{exc}"}
 
             result["apps_checked"] += 1
-            update_payload = {"last_checked_at": now, "last_error": ""}
-            changes = apply_google_play_update_state(app, update_payload, state) if state.get("ok") else []
+            update_payload = {"last_checked_at": now}
+            if state.get("ok"):
+                update_payload["last_error"] = ""
+                changes = apply_google_play_update_state(app, update_payload, state)
+            else:
+                error = str(state.get("error") or "GOOGLE_PLAY_METADATA_UNKNOWN_ERROR")
+                update_payload["last_error"] = error
+                result["errors"].append({
+                    "app_id": app_id,
+                    "stage": "google_play_metadata",
+                    "error": error,
+                })
+                changes = []
             updates.append((app, update_payload))
 
             if not changes:
@@ -5569,6 +5690,14 @@ def run_live_status_bot_check(
                 if not event and metadata_changes:
                     event = "app_updated"
                     changed_codes = set()
+            else:
+                error = str(metadata_state.get("error") or "GOOGLE_PLAY_METADATA_UNKNOWN_ERROR")
+                update_payload["last_error"] = error
+                result["errors"].append({
+                    "app_id": app_id,
+                    "stage": "google_play_metadata",
+                    "error": error,
+                })
         updates.append((app, update_payload))
 
         if event:

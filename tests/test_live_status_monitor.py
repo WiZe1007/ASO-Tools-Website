@@ -36,10 +36,11 @@ def app_row(status="live", open_codes="US", closed_codes="CA"):
     }
 
 
-def update_state(version="1.0.0", fingerprint="design-v1"):
+def update_state(version="1.0.0", fingerprint="design-v1", updated="1786348525"):
     return {
         "ok": True,
         "version": version,
+        "release_marker": app.google_play_release_marker(version, updated),
         "design_fingerprint": fingerprint,
         "card_meta": {
             "app_id": "com.example.game",
@@ -70,8 +71,79 @@ class LiveStatusMonitorTests(unittest.TestCase):
         state = app.fetch_google_play_update_state("com.example.game", "US")
 
         self.assertTrue(state["ok"])
-        self.assertEqual(state["version"], "updated:1786348525")
+        self.assertEqual(state["version"], "")
+        self.assertEqual(state["release_marker"], "updated:2026-08-10")
         self.assertTrue(state["design_fingerprint"])
+
+    def test_public_updated_marker_parser(self):
+        page_html = """
+        <div class="meta-row">
+          <div class="label">Updated on</div>
+          <div class="value">May 4, 2026</div>
+        </div>
+        """
+
+        self.assertEqual(
+            app.parse_google_play_public_updated_marker(page_html),
+            "May 4, 2026",
+        )
+
+    @patch("app.fetch_google_play_public_updated_marker", return_value="May 4, 2026")
+    @patch("app.scrape_google_play_app")
+    def test_update_state_falls_back_to_public_updated_date(self, scrape, public_updated):
+        scrape.return_value = {
+            "title": "Example Game",
+            "version": "Varies with device",
+            "updated": None,
+            "genre": "Game",
+            "contentRating": "Everyone",
+            "icon": "https://example.com/icon=w240-rw",
+            "screenshots": ["https://example.com/screen=w720-rw"],
+        }
+
+        state = app.fetch_google_play_update_state("com.example.game", "US")
+
+        self.assertTrue(state["ok"])
+        self.assertEqual(state["release_marker"], "updated:2026-05-04")
+        public_updated.assert_called_once_with("com.example.game", "US")
+
+    def test_legacy_plain_version_migrates_without_false_alert(self):
+        row = app_row()
+        row["last_store_version"] = "1.0.0"
+        payload = {}
+
+        changes = app.apply_google_play_update_state(
+            row,
+            payload,
+            update_state(version="1.0.0", updated="1786348525"),
+        )
+
+        self.assertEqual(changes, [])
+        self.assertEqual(
+            payload["last_store_version"],
+            "version:1.0.0|updated:2026-08-10",
+        )
+
+    def test_updated_date_change_is_detected_when_version_stays_the_same(self):
+        row = app_row()
+        row["last_store_version"] = "version:1.0.0|updated:1786348525"
+        payload = {}
+
+        changes = app.apply_google_play_update_state(
+            row,
+            payload,
+            update_state(version="1.0.0", updated="1786434925"),
+        )
+
+        self.assertEqual(changes, ["version"])
+
+    def test_timestamp_and_public_date_formats_do_not_create_false_alert(self):
+        self.assertFalse(
+            app.google_play_release_changed(
+                "version:1.0.0|updated:1777852800",
+                "version:1.0.0|updated:May 4, 2026",
+            )
+        )
 
     def test_new_live_message_includes_app_type(self):
         row = app_row(status="watch", open_codes="", closed_codes="")
@@ -121,7 +193,10 @@ class LiveStatusMonitorTests(unittest.TestCase):
             len(app.BOT_LIVE_STATUS_PROBE_COUNTRIES),
         )
         self.assertEqual(len(store.updates), 1)
-        self.assertEqual(store.updates[0][1]["last_store_version"], "1.0.0")
+        self.assertEqual(
+            store.updates[0][1]["last_store_version"],
+            "version:1.0.0|updated:2026-08-10",
+        )
         self.assertEqual(store.updates[0][1]["last_design_fingerprint"], "design-v1")
         self.assertEqual(store.logs, [])
 
@@ -148,7 +223,10 @@ class LiveStatusMonitorTests(unittest.TestCase):
         self.assertEqual(len(result["notifications"]), 1)
         self.assertEqual(result["notifications"][0]["event"], "app_updated")
         self.assertEqual(result["notifications"][0]["changes"], ["version"])
-        self.assertEqual(store.updates[0][1]["last_store_version"], "1.1.0")
+        self.assertEqual(
+            store.updates[0][1]["last_store_version"],
+            "version:1.1.0|updated:2026-08-10",
+        )
         self.assertEqual(store.logs[0][0], "app_updated")
         self.assertIn("changes=version", store.logs[0][3])
         message = send_event.call_args.args[0]
@@ -206,6 +284,8 @@ class LiveStatusMonitorTests(unittest.TestCase):
         self.assertEqual(result["notifications"], [])
         self.assertNotIn("last_store_version", store.updates[0][1])
         self.assertNotIn("last_design_fingerprint", store.updates[0][1])
+        self.assertEqual(store.updates[0][1]["last_error"], "TEMPORARY_ERROR")
+        self.assertEqual(result["errors"][0]["stage"], "google_play_metadata")
         self.assertEqual(store.logs, [])
         send_event.assert_not_called()
         summarize.assert_not_called()
