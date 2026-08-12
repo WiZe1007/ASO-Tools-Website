@@ -1175,6 +1175,10 @@ def run_scheduled_live_status_check():
             "notifications": len(result.get("notifications") or []),
             "errors": len(result.get("errors") or []),
             "full_confirmations": result.get("full_confirmations", 0),
+            "metadata_checked": result.get("metadata_checked", 0),
+            "metadata_baselines": result.get("metadata_baselines", 0),
+            "metadata_changes": result.get("metadata_changes", 0),
+            "metadata_failures": result.get("metadata_failures", 0),
         }, ensure_ascii=False))
     except Exception:
         print(json.dumps({

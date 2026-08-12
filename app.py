@@ -175,7 +175,10 @@ S_AVAILABILITY_DB_SPREADSHEET_ID = (
 S_AVAILABILITY_DB_APPS_SHEET = os.environ.get("S_AVAILABILITY_DB_APPS_SHEET", "Apps").strip() or "Apps"
 S_AVAILABILITY_DB_LOG_SHEET = os.environ.get("S_AVAILABILITY_DB_LOG_SHEET", "Checks").strip() or "Checks"
 S_LIVE_DB_ALLOWED_EMAILS = os.environ.get("S_LIVE_DB_ALLOWED_EMAILS", "").strip()
-AVAILABILITY_CHECK_LIMIT = env_int("AVAILABILITY_CHECK_LIMIT", 200, 1, 1000)
+AVAILABILITY_CHECK_LIMIT = env_int("AVAILABILITY_CHECK_LIMIT", 1000, 1, 1000)
+BOT_UPDATE_METADATA_COUNTRY = (
+    os.environ.get("BOT_UPDATE_METADATA_COUNTRY", "US").strip().upper() or "US"
+)
 AVAILABILITY_TASK_SECRET = (os.environ.get("AVAILABILITY_TASK_SECRET") or os.environ.get("BOT_CHECK_SECRET") or "").strip()
 TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
 TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
@@ -5062,6 +5065,44 @@ def fetch_google_play_update_state(app_id: str, country: str = "US") -> dict:
     return result
 
 
+def google_play_update_country_candidates(app: dict, preferred_country: str = "") -> list[str]:
+    """Return a deterministic metadata lookup order for update monitoring."""
+    candidates: list[str] = []
+
+    def add(value: str):
+        code = str(value or "").strip().upper()
+        if re.fullmatch(r"[A-Z]{2}", code) and code not in candidates:
+            candidates.append(code)
+
+    # A fixed primary GEO prevents version/fingerprint values from oscillating
+    # when the quick availability probe happens to succeed in another country.
+    add(BOT_UPDATE_METADATA_COUNTRY)
+    add(preferred_country)
+    for code in sorted(split_country_codes(app.get("last_open_countries"))):
+        add(code)
+    add("US")
+    return candidates
+
+
+def fetch_google_play_update_state_for_app(app: dict, preferred_country: str = "") -> dict:
+    """Fetch Play metadata from a stable GEO, falling back only when needed."""
+    app_id = str(app.get("app_id") or "").strip()
+    errors: list[tuple[str, str]] = []
+    for country in google_play_update_country_candidates(app, preferred_country):
+        state = fetch_google_play_update_state(app_id, country)
+        state["country"] = country
+        if state.get("ok"):
+            return state
+        if state.get("error"):
+            errors.append((country, str(state["error"])))
+    return {
+        "ok": False,
+        "country": "",
+        "attempted_countries": [country for country, _error in errors],
+        "error": errors[0][1] if errors else "GOOGLE_PLAY_METADATA_UNKNOWN_ERROR",
+    }
+
+
 def apply_google_play_update_state(app: dict, update_payload: dict, state: dict) -> list[str]:
     changes: list[str] = []
     previous_version = str(app.get("last_store_version") or "").strip()
@@ -5502,6 +5543,10 @@ def run_live_status_bot_check(
         "skipped": [],
         "errors": [],
         "full_confirmations": 0,
+        "metadata_checked": 0,
+        "metadata_baselines": 0,
+        "metadata_changes": 0,
+        "metadata_failures": 0,
     }
     updates: list[tuple[dict, dict]] = []
     pending_events: list[tuple[str, dict, dict, set[str]]] = []
@@ -5562,8 +5607,8 @@ def run_live_status_bot_check(
     with ThreadPoolExecutor(max_workers=metadata_workers) as executor:
         future_to_item = {
             executor.submit(
-                fetch_google_play_update_state,
-                str(app.get("app_id") or "").strip(),
+                fetch_google_play_update_state_for_app,
+                app,
                 country,
             ): (app, country)
             for app, country in metadata_check_apps
@@ -5577,11 +5622,19 @@ def run_live_status_bot_check(
                 state = {"ok": False, "error": f"GOOGLE_PLAY_METADATA_ERROR:{exc}"}
 
             result["apps_checked"] += 1
+            result["metadata_checked"] += 1
             update_payload = {"last_checked_at": now}
             if state.get("ok"):
                 update_payload["last_error"] = ""
                 changes = apply_google_play_update_state(app, update_payload, state)
+                if not str(app.get("last_store_version") or "").strip() and not str(
+                    app.get("last_design_fingerprint") or ""
+                ).strip():
+                    result["metadata_baselines"] += 1
+                if changes:
+                    result["metadata_changes"] += 1
             else:
+                result["metadata_failures"] += 1
                 error = str(state.get("error") or "GOOGLE_PLAY_METADATA_UNKNOWN_ERROR")
                 update_payload["last_error"] = error
                 result["errors"].append({
@@ -5678,12 +5731,19 @@ def run_live_status_bot_check(
         metadata_state = {}
         metadata_changes: list[str] = []
         if current_live:
-            metadata_state = fetch_google_play_update_state(
-                app_id,
+            result["metadata_checked"] += 1
+            metadata_state = fetch_google_play_update_state_for_app(
+                app,
                 (sorted(current_open) or ["US"])[0],
             )
             if metadata_state.get("ok"):
                 metadata_changes = apply_google_play_update_state(app, update_payload, metadata_state)
+                if not str(app.get("last_store_version") or "").strip() and not str(
+                    app.get("last_design_fingerprint") or ""
+                ).strip():
+                    result["metadata_baselines"] += 1
+                if metadata_changes:
+                    result["metadata_changes"] += 1
                 # A Live/restored transition is the more important event. The
                 # new metadata is still persisted and used in its visual card,
                 # but no second update notification is sent in the same pass.
@@ -5691,6 +5751,7 @@ def run_live_status_bot_check(
                     event = "app_updated"
                     changed_codes = set()
             else:
+                result["metadata_failures"] += 1
                 error = str(metadata_state.get("error") or "GOOGLE_PLAY_METADATA_UNKNOWN_ERROR")
                 update_payload["last_error"] = error
                 result["errors"].append({

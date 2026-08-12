@@ -55,6 +55,39 @@ def update_state(version="1.0.0", fingerprint="design-v1", updated="1786348525")
 
 
 class LiveStatusMonitorTests(unittest.TestCase):
+    @patch("app.BOT_UPDATE_METADATA_COUNTRY", "US")
+    @patch("app.fetch_google_play_update_state")
+    def test_update_metadata_uses_stable_country_before_probe_country(self, fetch_state):
+        fetch_state.return_value = update_state()
+        row = app_row(open_codes="UA,GB")
+
+        state = app.fetch_google_play_update_state_for_app(row, "UA")
+
+        self.assertTrue(state["ok"])
+        self.assertEqual(state["country"], "US")
+        fetch_state.assert_called_once_with("com.example.game", "US")
+
+    @patch("app.BOT_UPDATE_METADATA_COUNTRY", "US")
+    @patch("app.fetch_google_play_update_state")
+    def test_update_metadata_falls_back_when_stable_country_fails(self, fetch_state):
+        fetch_state.side_effect = [
+            {"ok": False, "error": "NOT_AVAILABLE"},
+            update_state(),
+        ]
+        row = app_row(open_codes="UA")
+
+        state = app.fetch_google_play_update_state_for_app(row, "UA")
+
+        self.assertTrue(state["ok"])
+        self.assertEqual(state["country"], "UA")
+        self.assertEqual(
+            fetch_state.call_args_list,
+            [
+                unittest.mock.call("com.example.game", "US"),
+                unittest.mock.call("com.example.game", "UA"),
+            ],
+        )
+
     @patch("app.scrape_google_play_app")
     def test_update_state_uses_updated_date_when_version_varies(self, scrape):
         scrape.return_value = {
@@ -187,6 +220,10 @@ class LiveStatusMonitorTests(unittest.TestCase):
         self.assertEqual(result["apps_checked"], 1)
         self.assertEqual(result["notifications"], [])
         self.assertEqual(result["full_confirmations"], 0)
+        self.assertEqual(result["metadata_checked"], 1)
+        self.assertEqual(result["metadata_baselines"], 1)
+        self.assertEqual(result["metadata_changes"], 0)
+        self.assertEqual(result["metadata_failures"], 0)
         summarize.assert_not_called()
         probe.assert_called_once_with(
             store.apps[0],
