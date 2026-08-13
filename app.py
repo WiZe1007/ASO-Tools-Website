@@ -4859,31 +4859,95 @@ def google_play_app_card_meta(app: dict) -> dict:
     return meta
 
 
+GOOGLE_PLAY_RELEASE_MARKER_PREFIX = "gp-release-v2"
+GOOGLE_PLAY_DESIGN_MARKER_PREFIX = "gp-design-v2"
+
+
 def canonical_google_play_asset_url(value) -> str:
     url = str(value or "").strip()
     if not url.startswith(("http://", "https://")):
         return ""
-    clean = url.split("?", 1)[0]
-    return re.sub(r"=(?:w|s)\d+(?:-[^/?#]+)*$", "", clean)
+    parsed = urlparse(url)
+    host = str(parsed.hostname or "").lower()
+    path = unquote(str(parsed.path or ""))
+    if not host or not path:
+        return ""
+
+    # Play serves the same original image through many resize/format URLs such
+    # as `=w720-rw`, `=s240`, and `=rw-e365`. Those delivery parameters are not
+    # a design change and can vary between otherwise identical responses.
+    if host.endswith("googleusercontent.com"):
+        path = path.split("=", 1)[0]
+    else:
+        path = re.sub(r"=(?:w|h|s|rw|rj)[^/]*$", "", path, flags=re.IGNORECASE)
+    return f"{host}{path}"
 
 
 def google_play_design_fingerprint(icon_url, feature_graphic_url, screenshots) -> str:
+    # Header images are optional in scraper responses, so their presence alone
+    # is not reliable enough to trigger a company-wide Telegram alert.
+    del feature_graphic_url
+    normalized_screenshots = sorted({
+        normalized
+        for normalized in (
+            canonical_google_play_asset_url(url)
+            for url in (screenshots or [])
+        )
+        if normalized
+    })
     payload = {
         "icon": canonical_google_play_asset_url(icon_url),
-        "feature_graphic": canonical_google_play_asset_url(feature_graphic_url),
-        "screenshots": [
-            normalized
-            for normalized in (
-                canonical_google_play_asset_url(url)
-                for url in (screenshots or [])
-            )
-            if normalized
-        ],
+        "screenshots": normalized_screenshots,
     }
-    if not payload["icon"] and not payload["feature_graphic"] and not payload["screenshots"]:
+    if not payload["icon"] and not payload["screenshots"]:
         return ""
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def google_play_country_code(value) -> str:
+    code = str(value or "").strip().upper()
+    if re.fullmatch(r"[A-Z]{2}", code):
+        return code
+    fallback = str(BOT_UPDATE_METADATA_COUNTRY or "US").strip().upper()
+    return fallback if re.fullmatch(r"[A-Z]{2}", fallback) else "US"
+
+
+def google_play_country_release_marker(country, release_marker) -> str:
+    marker = str(release_marker or "").strip()
+    if not marker:
+        return ""
+    if marker.startswith(f"{GOOGLE_PLAY_RELEASE_MARKER_PREFIX}:"):
+        return marker
+    return f"{GOOGLE_PLAY_RELEASE_MARKER_PREFIX}:{google_play_country_code(country)}|{marker}"
+
+
+def google_play_country_design_marker(country, fingerprint) -> str:
+    value = str(fingerprint or "").strip()
+    if not value:
+        return ""
+    if value.startswith(f"{GOOGLE_PLAY_DESIGN_MARKER_PREFIX}:"):
+        return value
+    return f"{GOOGLE_PLAY_DESIGN_MARKER_PREFIX}:{google_play_country_code(country)}:{value}"
+
+
+def parse_google_play_design_marker(value) -> dict[str, str]:
+    text = str(value or "").strip()
+    parsed = {"format": "", "country": "", "fingerprint": ""}
+    if not text:
+        return parsed
+    prefix = f"{GOOGLE_PLAY_DESIGN_MARKER_PREFIX}:"
+    if text.startswith(prefix):
+        country, separator, fingerprint = text[len(prefix):].partition(":")
+        if separator and re.fullmatch(r"[A-Z]{2}", country.upper()) and fingerprint:
+            parsed.update({
+                "format": "v2",
+                "country": country.upper(),
+                "fingerprint": fingerprint,
+            })
+            return parsed
+    parsed.update({"format": "legacy", "fingerprint": text})
+    return parsed
 
 
 def normalize_google_play_updated_marker(value) -> str:
@@ -4922,9 +4986,18 @@ def google_play_release_marker(version, updated) -> str:
 def parse_google_play_release_marker(value) -> dict[str, str]:
     """Read both the current marker and legacy plain-version Sheet values."""
     text = str(value or "").strip()
-    parsed = {"version": "", "updated": ""}
+    parsed = {"format": "", "country": "", "version": "", "updated": ""}
     if not text:
         return parsed
+
+    country_prefix = f"{GOOGLE_PLAY_RELEASE_MARKER_PREFIX}:"
+    if text.startswith(country_prefix):
+        header, separator, payload = text.partition("|")
+        country = header[len(country_prefix):].strip().upper()
+        if separator and re.fullmatch(r"[A-Z]{2}", country):
+            parsed["format"] = "v2"
+            parsed["country"] = country
+            text = payload
 
     if text.startswith(("version:", "updated:")):
         for part in text.split("|"):
@@ -4932,9 +5005,12 @@ def parse_google_play_release_marker(value) -> dict[str, str]:
             if separator and key in parsed:
                 parsed[key] = raw_value.strip()
         parsed["updated"] = normalize_google_play_updated_marker(parsed["updated"])
+        if not parsed["format"]:
+            parsed["format"] = "legacy"
         return parsed
 
     # Rows created before release markers stored a plain version number.
+    parsed["format"] = "legacy"
     parsed["version"] = text
     return parsed
 
@@ -4943,6 +5019,13 @@ def google_play_release_changed(previous, current) -> bool:
     """Compare only signals available in both snapshots to avoid migration alerts."""
     previous_parts = parse_google_play_release_marker(previous)
     current_parts = parse_google_play_release_marker(current)
+
+    if (
+        previous_parts["format"] == "v2"
+        and current_parts["format"] == "v2"
+        and previous_parts["country"] != current_parts["country"]
+    ):
+        return False
 
     previous_version = previous_parts["version"]
     current_version = current_parts["version"]
@@ -5077,9 +5160,9 @@ def google_play_update_country_candidates(app: dict, preferred_country: str = ""
     # A fixed primary GEO prevents version/fingerprint values from oscillating
     # when the quick availability probe happens to succeed in another country.
     add(BOT_UPDATE_METADATA_COUNTRY)
-    add(preferred_country)
     for code in sorted(split_country_codes(app.get("last_open_countries"))):
         add(code)
+    add(preferred_country)
     add("US")
     return candidates
 
@@ -5103,20 +5186,116 @@ def fetch_google_play_update_state_for_app(app: dict, preferred_country: str = "
     }
 
 
+def google_play_design_change_candidate(app: dict, state: dict) -> bool:
+    previous = parse_google_play_design_marker(app.get("last_design_fingerprint"))
+    current = parse_google_play_design_marker(
+        google_play_country_design_marker(
+            state.get("country"),
+            state.get("design_fingerprint"),
+        )
+    )
+    return bool(
+        previous["format"] == "v2"
+        and current["format"] == "v2"
+        and previous["country"] == current["country"]
+        and previous["fingerprint"]
+        and current["fingerprint"]
+        and previous["fingerprint"] != current["fingerprint"]
+    )
+
+
+def google_play_release_change_candidate(app: dict, state: dict) -> bool:
+    previous = str(app.get("last_store_version") or "").strip()
+    current = google_play_country_release_marker(
+        state.get("country"),
+        state.get("release_marker") or state.get("version"),
+    )
+    previous_parts = parse_google_play_release_marker(previous)
+    current_parts = parse_google_play_release_marker(current)
+    return bool(
+        previous_parts["format"] == "v2"
+        and current_parts["format"] == "v2"
+        and previous_parts["country"] == current_parts["country"]
+        and google_play_release_changed(previous, current)
+    )
+
+
+def confirm_google_play_update_state(app: dict, state: dict) -> dict:
+    """Require two matching Play responses before accepting any update."""
+    release_candidate = google_play_release_change_candidate(app, state)
+    design_candidate = google_play_design_change_candidate(app, state)
+    if not release_candidate and not design_candidate:
+        return state
+
+    app_id = str(app.get("app_id") or "").strip()
+    country = google_play_country_code(state.get("country"))
+    confirmation = fetch_google_play_update_state(app_id, country)
+    confirmed_release = google_play_country_release_marker(
+        country,
+        (confirmation.get("release_marker") or confirmation.get("version"))
+        if confirmation.get("ok")
+        else "",
+    )
+    current_release = google_play_country_release_marker(
+        country,
+        state.get("release_marker") or state.get("version"),
+    )
+    confirmed_design = google_play_country_design_marker(
+        country,
+        confirmation.get("design_fingerprint") if confirmation.get("ok") else "",
+    )
+    current_design = google_play_country_design_marker(
+        country,
+        state.get("design_fingerprint"),
+    )
+    release_confirmed = not release_candidate or (
+        confirmed_release and confirmed_release == current_release
+    )
+    design_confirmed = not design_candidate or (
+        confirmed_design and confirmed_design == current_design
+    )
+    if release_confirmed and design_confirmed:
+        return state
+
+    # Ignore only the unstable signal. Its old Sheet baseline remains in place
+    # and will be compared again during the next 20-minute pass.
+    stable_state = dict(state)
+    if not release_confirmed:
+        stable_state["version"] = ""
+        stable_state["release_marker"] = ""
+        stable_state["release_change_unconfirmed"] = True
+    if not design_confirmed:
+        stable_state["design_fingerprint"] = ""
+        stable_state["design_change_unconfirmed"] = True
+    return stable_state
+
+
 def apply_google_play_update_state(app: dict, update_payload: dict, state: dict) -> list[str]:
     changes: list[str] = []
     previous_version = str(app.get("last_store_version") or "").strip()
     previous_design = str(app.get("last_design_fingerprint") or "").strip()
-    current_version = str(state.get("release_marker") or state.get("version") or "").strip()
-    current_design = str(state.get("design_fingerprint") or "").strip()
+    current_version = google_play_country_release_marker(
+        state.get("country"),
+        state.get("release_marker") or state.get("version"),
+    )
+    current_design = google_play_country_design_marker(
+        state.get("country"),
+        state.get("design_fingerprint"),
+    )
 
     if current_version:
         update_payload["last_store_version"] = current_version
-        if previous_version and google_play_release_changed(previous_version, current_version):
+        previous_release_parts = parse_google_play_release_marker(previous_version)
+        current_release_parts = parse_google_play_release_marker(current_version)
+        if (
+            previous_release_parts["format"] == "v2"
+            and current_release_parts["format"] == "v2"
+            and google_play_release_changed(previous_version, current_version)
+        ):
             changes.append("version")
     if current_design:
         update_payload["last_design_fingerprint"] = current_design
-        if previous_design and previous_design != current_design:
+        if google_play_design_change_candidate(app, state):
             changes.append("design")
     return changes
 
@@ -5547,6 +5726,8 @@ def run_live_status_bot_check(
         "metadata_baselines": 0,
         "metadata_changes": 0,
         "metadata_failures": 0,
+        "metadata_release_unconfirmed": 0,
+        "metadata_design_unconfirmed": 0,
     }
     updates: list[tuple[dict, dict]] = []
     pending_events: list[tuple[str, dict, dict, set[str]]] = []
@@ -5625,6 +5806,11 @@ def run_live_status_bot_check(
             result["metadata_checked"] += 1
             update_payload = {"last_checked_at": now}
             if state.get("ok"):
+                state = confirm_google_play_update_state(app, state)
+                if state.get("release_change_unconfirmed"):
+                    result["metadata_release_unconfirmed"] += 1
+                if state.get("design_change_unconfirmed"):
+                    result["metadata_design_unconfirmed"] += 1
                 update_payload["last_error"] = ""
                 changes = apply_google_play_update_state(app, update_payload, state)
                 if not str(app.get("last_store_version") or "").strip() and not str(
@@ -5737,6 +5923,11 @@ def run_live_status_bot_check(
                 (sorted(current_open) or ["US"])[0],
             )
             if metadata_state.get("ok"):
+                metadata_state = confirm_google_play_update_state(app, metadata_state)
+                if metadata_state.get("release_change_unconfirmed"):
+                    result["metadata_release_unconfirmed"] += 1
+                if metadata_state.get("design_change_unconfirmed"):
+                    result["metadata_design_unconfirmed"] += 1
                 metadata_changes = apply_google_play_update_state(app, update_payload, metadata_state)
                 if not str(app.get("last_store_version") or "").strip() and not str(
                     app.get("last_design_fingerprint") or ""
