@@ -15,6 +15,12 @@ class FakeStore:
 
     def batch_update_apps(self, updates):
         self.updates.extend(updates)
+        for source, payload in updates:
+            row_index = source.get("row_index")
+            for row in self.apps:
+                if row.get("row_index") == row_index:
+                    row.update(payload)
+                    break
 
     def append_log(self, event, app_row, countries, details=""):
         self.logs.append((event, app_row, set(countries), details))
@@ -33,6 +39,8 @@ def app_row(status="live", open_codes="US", closed_codes="CA"):
         "last_closed_count": 1 if closed_codes else 0,
         "last_store_version": "",
         "last_design_fingerprint": "",
+        "pending_store_version": "",
+        "pending_design_fingerprint": "",
     }
 
 
@@ -67,6 +75,33 @@ def design_marker(fingerprint="design-v1", country="US"):
 
 
 class LiveStatusMonitorTests(unittest.TestCase):
+    def test_google_sheets_schema_adds_pending_update_columns(self):
+        store = object.__new__(app.GoogleSheetsAvailabilityStore)
+        store.apps_sheet = "Apps"
+        store.log_sheet = "Checks"
+        writes = []
+        store.get_sheet_titles = lambda: {"Apps", "Checks"}
+        store.add_sheet = lambda _title: self.fail("Existing sheets must not be recreated")
+        store.get_values = lambda _sheet, cell_range: (
+            [app.PREVIOUS_APPS_SHEET_HEADERS]
+            if cell_range == "A1:R1"
+            else [app.CHECKS_SHEET_HEADERS]
+        )
+        store.update_values = lambda sheet, cell_range, values: writes.append(
+            (sheet, cell_range, values)
+        )
+
+        store.ensure_ready()
+
+        self.assertEqual(
+            writes,
+            [(
+                "Apps",
+                "Q1:R1",
+                [["pending_store_version", "pending_design_fingerprint"]],
+            )],
+        )
+
     @patch("app.BOT_UPDATE_METADATA_COUNTRY", "US")
     @patch("app.fetch_google_play_update_state")
     def test_update_metadata_uses_stable_country_before_probe_country(self, fetch_state):
@@ -166,11 +201,11 @@ class LiveStatusMonitorTests(unittest.TestCase):
         self.assertEqual(changes, [])
         self.assertEqual(
             payload["last_store_version"],
-            "gp-release-v2:US|version:1.0.0|updated:2026-08-10",
+            "gp-release-v3:US|version:1.0.0|updated:2026-08-10",
         )
-        self.assertEqual(payload["last_design_fingerprint"], "gp-design-v2:US:design-v1")
+        self.assertEqual(payload["last_design_fingerprint"], "gp-design-v3:US:design-v1")
 
-    def test_updated_date_change_is_detected_when_version_stays_the_same(self):
+    def test_updated_date_change_is_ignored_when_version_stays_the_same(self):
         row = app_row()
         row["last_store_version"] = release_marker()
         payload = {}
@@ -181,7 +216,8 @@ class LiveStatusMonitorTests(unittest.TestCase):
             update_state(version="1.0.0", updated="1786434925"),
         )
 
-        self.assertEqual(changes, ["version"])
+        self.assertEqual(changes, [])
+        self.assertEqual(payload["pending_store_version"], "")
 
     def test_country_change_is_a_quiet_baseline_migration(self):
         row = app_row()
@@ -305,20 +341,80 @@ class LiveStatusMonitorTests(unittest.TestCase):
         row["last_design_fingerprint"] = design_marker()
         store = FakeStore([row])
 
-        result = app.run_live_status_bot_check(store=store, send_messages=True, write_changes=True)
+        first_result = app.run_live_status_bot_check(
+            store=store,
+            send_messages=True,
+            write_changes=True,
+        )
 
-        self.assertEqual(len(result["notifications"]), 1)
-        self.assertEqual(result["notifications"][0]["event"], "app_updated")
-        self.assertEqual(result["notifications"][0]["changes"], ["version"])
+        self.assertEqual(first_result["notifications"], [])
+        self.assertEqual(row["pending_store_version"], release_marker(version="1.1.0"))
+        self.assertEqual(row["last_store_version"], release_marker())
+        send_event.assert_not_called()
+
+        second_result = app.run_live_status_bot_check(
+            store=store,
+            send_messages=True,
+            write_changes=True,
+        )
+
+        self.assertEqual(len(second_result["notifications"]), 1)
+        self.assertEqual(second_result["notifications"][0]["event"], "app_updated")
+        self.assertEqual(second_result["notifications"][0]["changes"], ["version"])
         self.assertEqual(
-            store.updates[0][1]["last_store_version"],
+            row["last_store_version"],
             release_marker(version="1.1.0"),
         )
+        self.assertEqual(row["pending_store_version"], "")
         self.assertEqual(store.logs[0][0], "app_updated")
         self.assertIn("changes=version", store.logs[0][3])
         message = send_event.call_args.args[0]
         self.assertIn("Додаток Оновився", message)
         send_event.assert_called_once()
+        summarize.assert_not_called()
+
+    @patch("app.send_telegram_event_message")
+    @patch("app.fetch_google_play_update_state")
+    @patch("app.summarize_google_availability")
+    @patch("app.probe_google_play_live_status")
+    def test_transient_version_candidate_is_cleared_next_cycle(
+        self,
+        probe,
+        summarize,
+        fetch_state,
+        send_event,
+    ):
+        probe.return_value = {"state": "live", "country": "US", "error": ""}
+        fetch_state.side_effect = [
+            update_state(version="1.1.0", fingerprint="design-v1"),
+            update_state(version="1.1.0", fingerprint="design-v1"),
+            update_state(version="1.0.0", fingerprint="design-v1"),
+        ]
+        row = app_row()
+        row["last_store_version"] = release_marker()
+        row["last_design_fingerprint"] = design_marker()
+        store = FakeStore([row])
+
+        first_result = app.run_live_status_bot_check(
+            store=store,
+            send_messages=True,
+            write_changes=True,
+        )
+
+        self.assertEqual(first_result["notifications"], [])
+        self.assertEqual(row["pending_store_version"], release_marker(version="1.1.0"))
+
+        second_result = app.run_live_status_bot_check(
+            store=store,
+            send_messages=True,
+            write_changes=True,
+        )
+
+        self.assertEqual(second_result["notifications"], [])
+        self.assertEqual(row["last_store_version"], release_marker())
+        self.assertEqual(row["pending_store_version"], "")
+        self.assertEqual(store.logs, [])
+        send_event.assert_not_called()
         summarize.assert_not_called()
 
     @patch("app.send_telegram_event_message")
@@ -333,23 +429,36 @@ class LiveStatusMonitorTests(unittest.TestCase):
         send_event,
     ):
         probe.return_value = {"state": "live", "country": "US", "error": ""}
-        fetch_state.side_effect = [
-            update_state(version="1.0.0", fingerprint="design-v2"),
-            update_state(version="1.0.0", fingerprint="design-v2"),
-        ]
+        fetch_state.return_value = update_state(version="1.0.0", fingerprint="design-v2")
         row = app_row()
         row["last_store_version"] = release_marker()
         row["last_design_fingerprint"] = design_marker()
         store = FakeStore([row])
 
-        result = app.run_live_status_bot_check(store=store, send_messages=True, write_changes=True)
+        first_result = app.run_live_status_bot_check(
+            store=store,
+            send_messages=True,
+            write_changes=True,
+        )
 
-        self.assertEqual(result["notifications"][0]["event"], "app_updated")
-        self.assertEqual(result["notifications"][0]["changes"], ["design"])
-        self.assertEqual(store.updates[0][1]["last_design_fingerprint"], design_marker("design-v2"))
+        self.assertEqual(first_result["notifications"], [])
+        self.assertEqual(row["pending_design_fingerprint"], design_marker("design-v2"))
+        self.assertEqual(row["last_design_fingerprint"], design_marker())
+        send_event.assert_not_called()
+
+        second_result = app.run_live_status_bot_check(
+            store=store,
+            send_messages=True,
+            write_changes=True,
+        )
+
+        self.assertEqual(second_result["notifications"][0]["event"], "app_updated")
+        self.assertEqual(second_result["notifications"][0]["changes"], ["design"])
+        self.assertEqual(row["last_design_fingerprint"], design_marker("design-v2"))
+        self.assertEqual(row["pending_design_fingerprint"], "")
         self.assertIn("changes=design", store.logs[0][3])
         send_event.assert_called_once()
-        self.assertEqual(fetch_state.call_count, 2)
+        self.assertEqual(fetch_state.call_count, 4)
         summarize.assert_not_called()
 
     @patch("app.send_telegram_event_message")
@@ -378,6 +487,7 @@ class LiveStatusMonitorTests(unittest.TestCase):
         self.assertEqual(result["notifications"], [])
         self.assertEqual(result["metadata_design_unconfirmed"], 1)
         self.assertNotIn("last_design_fingerprint", store.updates[0][1])
+        self.assertEqual(store.updates[0][1]["pending_design_fingerprint"], "")
         self.assertEqual(store.logs, [])
         send_event.assert_not_called()
         summarize.assert_not_called()
@@ -408,6 +518,7 @@ class LiveStatusMonitorTests(unittest.TestCase):
         self.assertEqual(result["notifications"], [])
         self.assertEqual(result["metadata_release_unconfirmed"], 1)
         self.assertNotIn("last_store_version", store.updates[0][1])
+        self.assertEqual(store.updates[0][1]["pending_store_version"], "")
         self.assertEqual(store.logs, [])
         self.assertEqual(fetch_state.call_count, 2)
         send_event.assert_not_called()
@@ -429,6 +540,7 @@ class LiveStatusMonitorTests(unittest.TestCase):
         row = app_row()
         row["last_store_version"] = release_marker()
         row["last_design_fingerprint"] = design_marker()
+        row["pending_store_version"] = release_marker(version="1.1.0")
         store = FakeStore([row])
 
         with self.assertRaisesRegex(RuntimeError, "telegram unavailable"):

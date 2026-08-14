@@ -3995,9 +3995,12 @@ APPS_SHEET_HEADERS = [
     "app_type",
     "last_store_version",
     "last_design_fingerprint",
+    "pending_store_version",
+    "pending_design_fingerprint",
 ]
-LEGACY_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:-3]
-PREVIOUS_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:-2]
+LEGACY_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:13]
+APP_TYPE_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:14]
+PREVIOUS_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:16]
 APP_TYPE_LABELS = {
     "placeholder": "Заглушка",
     "full": "Повноцінна",
@@ -4210,25 +4213,42 @@ class GoogleSheetsAvailabilityStore:
         if self.log_sheet not in titles:
             self.add_sheet(self.log_sheet)
 
-        app_values = self.get_values(self.apps_sheet, "A1:P1")
+        app_values = self.get_values(self.apps_sheet, "A1:R1")
         if not app_values:
-            self.update_values(self.apps_sheet, "A1:P1", [APPS_SHEET_HEADERS])
+            self.update_values(self.apps_sheet, "A1:R1", [APPS_SHEET_HEADERS])
         else:
             normalized_headers = [str(v).strip() for v in app_values[0]]
             if normalized_headers == LEGACY_APPS_SHEET_HEADERS:
                 self.update_values(
                     self.apps_sheet,
-                    "N1:P1",
-                    [["app_type", "last_store_version", "last_design_fingerprint"]],
+                    "N1:R1",
+                    [[
+                        "app_type",
+                        "last_store_version",
+                        "last_design_fingerprint",
+                        "pending_store_version",
+                        "pending_design_fingerprint",
+                    ]],
+                )
+            elif normalized_headers == APP_TYPE_APPS_SHEET_HEADERS:
+                self.update_values(
+                    self.apps_sheet,
+                    "O1:R1",
+                    [[
+                        "last_store_version",
+                        "last_design_fingerprint",
+                        "pending_store_version",
+                        "pending_design_fingerprint",
+                    ]],
                 )
             elif normalized_headers == PREVIOUS_APPS_SHEET_HEADERS:
                 self.update_values(
                     self.apps_sheet,
-                    "O1:P1",
-                    [["last_store_version", "last_design_fingerprint"]],
+                    "Q1:R1",
+                    [["pending_store_version", "pending_design_fingerprint"]],
                 )
             elif normalized_headers != APPS_SHEET_HEADERS:
-                raise BotConfigError("Заголовки аркуша Apps не відповідають очікуваній схемі A:P.")
+                raise BotConfigError("Заголовки аркуша Apps не відповідають очікуваній схемі A:R.")
 
         log_values = self.get_values(self.log_sheet, "A1:H1")
         if not log_values or [str(v).strip() for v in log_values[0]] != CHECKS_SHEET_HEADERS:
@@ -4236,7 +4256,7 @@ class GoogleSheetsAvailabilityStore:
 
     def load_apps(self) -> list[dict]:
         self.ensure_ready()
-        values = self.get_values(self.apps_sheet, "A2:P")
+        values = self.get_values(self.apps_sheet, "A2:R")
         apps = []
         for offset, row in enumerate(values, start=2):
             row_dict = {
@@ -4265,7 +4285,7 @@ class GoogleSheetsAvailabilityStore:
         return apps
 
     def update_app(self, row_index: int, updates: dict):
-        values = self.get_values(self.apps_sheet, f"A{row_index}:P{row_index}")
+        values = self.get_values(self.apps_sheet, f"A{row_index}:R{row_index}")
         current_row = values[0] if values else []
         row_dict = {
             header: current_row[idx] if idx < len(current_row) else ""
@@ -4273,7 +4293,7 @@ class GoogleSheetsAvailabilityStore:
         }
         row_dict.update(updates)
         row = [row_dict.get(header, "") for header in APPS_SHEET_HEADERS]
-        self.update_values(self.apps_sheet, f"A{row_index}:P{row_index}", [row])
+        self.update_values(self.apps_sheet, f"A{row_index}:R{row_index}", [row])
 
     def batch_update_apps(self, app_updates: list[tuple[dict, dict]]):
         if not app_updates:
@@ -4859,8 +4879,10 @@ def google_play_app_card_meta(app: dict) -> dict:
     return meta
 
 
-GOOGLE_PLAY_RELEASE_MARKER_PREFIX = "gp-release-v2"
-GOOGLE_PLAY_DESIGN_MARKER_PREFIX = "gp-design-v2"
+GOOGLE_PLAY_RELEASE_MARKER_PREFIX = "gp-release-v3"
+GOOGLE_PLAY_DESIGN_MARKER_PREFIX = "gp-design-v3"
+GOOGLE_PLAY_RELEASE_MARKER_V2_PREFIX = "gp-release-v2"
+GOOGLE_PLAY_DESIGN_MARKER_V2_PREFIX = "gp-design-v2"
 
 
 def canonical_google_play_asset_url(value) -> str:
@@ -4919,6 +4941,12 @@ def google_play_country_release_marker(country, release_marker) -> str:
         return ""
     if marker.startswith(f"{GOOGLE_PLAY_RELEASE_MARKER_PREFIX}:"):
         return marker
+    old_prefix = f"{GOOGLE_PLAY_RELEASE_MARKER_V2_PREFIX}:"
+    if marker.startswith(old_prefix):
+        header, separator, payload = marker.partition("|")
+        old_country = header[len(old_prefix):].strip().upper()
+        if separator and re.fullmatch(r"[A-Z]{2}", old_country) and payload:
+            return f"{GOOGLE_PLAY_RELEASE_MARKER_PREFIX}:{old_country}|{payload}"
     return f"{GOOGLE_PLAY_RELEASE_MARKER_PREFIX}:{google_play_country_code(country)}|{marker}"
 
 
@@ -4928,6 +4956,12 @@ def google_play_country_design_marker(country, fingerprint) -> str:
         return ""
     if value.startswith(f"{GOOGLE_PLAY_DESIGN_MARKER_PREFIX}:"):
         return value
+    old_prefix = f"{GOOGLE_PLAY_DESIGN_MARKER_V2_PREFIX}:"
+    if value.startswith(old_prefix):
+        old_country, separator, old_fingerprint = value[len(old_prefix):].partition(":")
+        old_country = old_country.strip().upper()
+        if separator and re.fullmatch(r"[A-Z]{2}", old_country) and old_fingerprint:
+            return f"{GOOGLE_PLAY_DESIGN_MARKER_PREFIX}:{old_country}:{old_fingerprint}"
     return f"{GOOGLE_PLAY_DESIGN_MARKER_PREFIX}:{google_play_country_code(country)}:{value}"
 
 
@@ -4936,12 +4970,17 @@ def parse_google_play_design_marker(value) -> dict[str, str]:
     parsed = {"format": "", "country": "", "fingerprint": ""}
     if not text:
         return parsed
-    prefix = f"{GOOGLE_PLAY_DESIGN_MARKER_PREFIX}:"
-    if text.startswith(prefix):
+    marker_formats = (
+        (f"{GOOGLE_PLAY_DESIGN_MARKER_PREFIX}:", "v3"),
+        (f"{GOOGLE_PLAY_DESIGN_MARKER_V2_PREFIX}:", "v2"),
+    )
+    for prefix, marker_format in marker_formats:
+        if not text.startswith(prefix):
+            continue
         country, separator, fingerprint = text[len(prefix):].partition(":")
         if separator and re.fullmatch(r"[A-Z]{2}", country.upper()) and fingerprint:
             parsed.update({
-                "format": "v2",
+                "format": marker_format,
                 "country": country.upper(),
                 "fingerprint": fingerprint,
             })
@@ -4990,14 +5029,20 @@ def parse_google_play_release_marker(value) -> dict[str, str]:
     if not text:
         return parsed
 
-    country_prefix = f"{GOOGLE_PLAY_RELEASE_MARKER_PREFIX}:"
-    if text.startswith(country_prefix):
+    marker_formats = (
+        (f"{GOOGLE_PLAY_RELEASE_MARKER_PREFIX}:", "v3"),
+        (f"{GOOGLE_PLAY_RELEASE_MARKER_V2_PREFIX}:", "v2"),
+    )
+    for country_prefix, marker_format in marker_formats:
+        if not text.startswith(country_prefix):
+            continue
         header, separator, payload = text.partition("|")
         country = header[len(country_prefix):].strip().upper()
         if separator and re.fullmatch(r"[A-Z]{2}", country):
-            parsed["format"] = "v2"
+            parsed["format"] = marker_format
             parsed["country"] = country
             text = payload
+        break
 
     if text.startswith(("version:", "updated:")):
         for part in text.split("|"):
@@ -5021,21 +5066,21 @@ def google_play_release_changed(previous, current) -> bool:
     current_parts = parse_google_play_release_marker(current)
 
     if (
-        previous_parts["format"] == "v2"
-        and current_parts["format"] == "v2"
+        previous_parts["format"] in {"v2", "v3"}
+        and current_parts["format"] in {"v2", "v3"}
         and previous_parts["country"] != current_parts["country"]
     ):
         return False
 
     previous_version = previous_parts["version"]
     current_version = current_parts["version"]
-    if previous_version and current_version and previous_version != current_version:
-        return True
+    if previous_version and current_version:
+        return previous_version != current_version
 
     previous_updated = previous_parts["updated"]
     current_updated = current_parts["updated"]
-    if previous_updated and current_updated and previous_updated != current_updated:
-        return True
+    if not previous_version and not current_version and previous_updated and current_updated:
+        return previous_updated != current_updated
 
     # With no overlapping public signal, the current value becomes a baseline.
     return False
@@ -5108,9 +5153,9 @@ def fetch_google_play_update_state(app_id: str, country: str = "US") -> dict:
             updated_marker = fetch_google_play_public_updated_marker(app_id, country)
         except requests.RequestException:
             updated_marker = ""
-    # The public update timestamp is tracked even when a version exists. Play
-    # can keep the same visible version during staged releases or expose it
-    # later than the updated date, so either changed signal means an update.
+    # Keep the public date in the marker for diagnostics and as a fallback when
+    # Play exposes no version. When a version is available it is authoritative:
+    # the public date may oscillate between localized/cached Play responses.
     release_marker = google_play_release_marker(version, updated_marker)
     screenshots = [
         str(url).strip()
@@ -5195,8 +5240,8 @@ def google_play_design_change_candidate(app: dict, state: dict) -> bool:
         )
     )
     return bool(
-        previous["format"] == "v2"
-        and current["format"] == "v2"
+        previous["format"] == "v3"
+        and current["format"] == "v3"
         and previous["country"] == current["country"]
         and previous["fingerprint"]
         and current["fingerprint"]
@@ -5213,8 +5258,8 @@ def google_play_release_change_candidate(app: dict, state: dict) -> bool:
     previous_parts = parse_google_play_release_marker(previous)
     current_parts = parse_google_play_release_marker(current)
     return bool(
-        previous_parts["format"] == "v2"
-        and current_parts["format"] == "v2"
+        previous_parts["format"] == "v3"
+        and current_parts["format"] == "v3"
         and previous_parts["country"] == current_parts["country"]
         and google_play_release_changed(previous, current)
     )
@@ -5272,9 +5317,11 @@ def confirm_google_play_update_state(app: dict, state: dict) -> dict:
 
 def apply_google_play_update_state(app: dict, update_payload: dict, state: dict) -> list[str]:
     changes: list[str] = []
-    previous_version = str(app.get("last_store_version") or "").strip()
+    previous_release = str(app.get("last_store_version") or "").strip()
     previous_design = str(app.get("last_design_fingerprint") or "").strip()
-    current_version = google_play_country_release_marker(
+    pending_release = str(app.get("pending_store_version") or "").strip()
+    pending_design = str(app.get("pending_design_fingerprint") or "").strip()
+    current_release = google_play_country_release_marker(
         state.get("country"),
         state.get("release_marker") or state.get("version"),
     )
@@ -5282,21 +5329,66 @@ def apply_google_play_update_state(app: dict, update_payload: dict, state: dict)
         state.get("country"),
         state.get("design_fingerprint"),
     )
+    release_confirmed = False
+    design_confirmed = False
 
-    if current_version:
-        update_payload["last_store_version"] = current_version
-        previous_release_parts = parse_google_play_release_marker(previous_version)
-        current_release_parts = parse_google_play_release_marker(current_version)
+    if state.get("release_change_unconfirmed"):
+        update_payload["pending_store_version"] = ""
+    elif current_release:
+        previous_release_parts = parse_google_play_release_marker(previous_release)
+        current_release_parts = parse_google_play_release_marker(current_release)
         if (
-            previous_release_parts["format"] == "v2"
-            and current_release_parts["format"] == "v2"
-            and google_play_release_changed(previous_version, current_version)
+            not previous_release
+            or previous_release_parts["format"] != "v3"
+            or current_release_parts["format"] != "v3"
+            or previous_release_parts["country"] != current_release_parts["country"]
         ):
-            changes.append("version")
-    if current_design:
-        update_payload["last_design_fingerprint"] = current_design
-        if google_play_design_change_candidate(app, state):
-            changes.append("design")
+            # Empty, legacy, v2, and cross-country values are migrations. They
+            # establish a clean v3 baseline and must never generate an alert.
+            update_payload["last_store_version"] = current_release
+            update_payload["pending_store_version"] = ""
+        elif google_play_release_changed(previous_release, current_release):
+            if pending_release == current_release:
+                release_confirmed = True
+            else:
+                update_payload["pending_store_version"] = current_release
+        else:
+            update_payload["pending_store_version"] = ""
+
+    if state.get("design_change_unconfirmed"):
+        update_payload["pending_design_fingerprint"] = ""
+    elif current_design:
+        previous_design_parts = parse_google_play_design_marker(previous_design)
+        current_design_parts = parse_google_play_design_marker(current_design)
+        if (
+            not previous_design
+            or previous_design_parts["format"] != "v3"
+            or current_design_parts["format"] != "v3"
+            or previous_design_parts["country"] != current_design_parts["country"]
+        ):
+            update_payload["last_design_fingerprint"] = current_design
+            update_payload["pending_design_fingerprint"] = ""
+        elif previous_design_parts["fingerprint"] != current_design_parts["fingerprint"]:
+            if pending_design == current_design:
+                design_confirmed = True
+            else:
+                update_payload["pending_design_fingerprint"] = current_design
+        else:
+            update_payload["pending_design_fingerprint"] = ""
+
+    if release_confirmed:
+        changes.append("version")
+    if design_confirmed:
+        changes.append("design")
+    if changes:
+        # One confirmed Play update can change both release and visual data.
+        # Promote the complete snapshot together so it produces one alert.
+        if current_release:
+            update_payload["last_store_version"] = current_release
+        if current_design:
+            update_payload["last_design_fingerprint"] = current_design
+        update_payload["pending_store_version"] = ""
+        update_payload["pending_design_fingerprint"] = ""
     return changes
 
 

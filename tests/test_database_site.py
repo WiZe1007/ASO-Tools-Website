@@ -98,6 +98,33 @@ class DatabaseSiteTests(unittest.TestCase):
     def headers(self):
         return {"X-CSRF-Token": "test-csrf"}
 
+    def test_google_sheets_schema_adds_pending_update_columns(self):
+        store = object.__new__(self.original_store)
+        store.apps_sheet = "Apps"
+        store.log_sheet = "Checks"
+        writes = []
+        store.get_sheet_titles = lambda: {"Apps", "Checks"}
+        store.add_sheet = lambda _title: self.fail("Existing sheets must not be recreated")
+        store.get_values = lambda _sheet, cell_range: (
+            [database_app.PREVIOUS_APPS_SHEET_HEADERS]
+            if cell_range == "A1:R1"
+            else [database_app.CHECKS_SHEET_HEADERS]
+        )
+        store.update_values = lambda sheet, cell_range, values: writes.append(
+            (sheet, cell_range, values)
+        )
+
+        store.ensure_ready()
+
+        self.assertEqual(
+            writes,
+            [(
+                "Apps",
+                "Q1:R1",
+                [["pending_store_version", "pending_design_fingerprint"]],
+            )],
+        )
+
     def test_normalize_package_input(self):
         self.assertEqual(
             database_app.normalize_package_input(

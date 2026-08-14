@@ -118,9 +118,12 @@ APPS_SHEET_HEADERS = [
     "app_type",
     "last_store_version",
     "last_design_fingerprint",
+    "pending_store_version",
+    "pending_design_fingerprint",
 ]
-LEGACY_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:-3]
-PREVIOUS_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:-2]
+LEGACY_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:13]
+APP_TYPE_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:14]
+PREVIOUS_APPS_SHEET_HEADERS = APPS_SHEET_HEADERS[:16]
 
 CHECKS_SHEET_HEADERS = [
     "created_at",
@@ -344,32 +347,49 @@ class GoogleSheetsStore:
             self.add_sheet(self.apps_sheet)
         if self.log_sheet not in titles:
             self.add_sheet(self.log_sheet)
-        app_headers = self.get_values(self.apps_sheet, "A1:P1")
+        app_headers = self.get_values(self.apps_sheet, "A1:R1")
         if not app_headers:
-            self.update_values(self.apps_sheet, "A1:P1", [APPS_SHEET_HEADERS])
+            self.update_values(self.apps_sheet, "A1:R1", [APPS_SHEET_HEADERS])
         else:
             normalized_headers = [str(item).strip() for item in app_headers[0]]
             if normalized_headers == LEGACY_APPS_SHEET_HEADERS:
                 self.update_values(
                     self.apps_sheet,
-                    "N1:P1",
-                    [["app_type", "last_store_version", "last_design_fingerprint"]],
+                    "N1:R1",
+                    [[
+                        "app_type",
+                        "last_store_version",
+                        "last_design_fingerprint",
+                        "pending_store_version",
+                        "pending_design_fingerprint",
+                    ]],
+                )
+            elif normalized_headers == APP_TYPE_APPS_SHEET_HEADERS:
+                self.update_values(
+                    self.apps_sheet,
+                    "O1:R1",
+                    [[
+                        "last_store_version",
+                        "last_design_fingerprint",
+                        "pending_store_version",
+                        "pending_design_fingerprint",
+                    ]],
                 )
             elif normalized_headers == PREVIOUS_APPS_SHEET_HEADERS:
                 self.update_values(
                     self.apps_sheet,
-                    "O1:P1",
-                    [["last_store_version", "last_design_fingerprint"]],
+                    "Q1:R1",
+                    [["pending_store_version", "pending_design_fingerprint"]],
                 )
             elif normalized_headers != APPS_SHEET_HEADERS:
-                raise DatabaseConfigError("Заголовки аркуша Apps не відповідають очікуваній схемі A:P.")
+                raise DatabaseConfigError("Заголовки аркуша Apps не відповідають очікуваній схемі A:R.")
         log_headers = self.get_values(self.log_sheet, "A1:H1")
         if not log_headers:
             self.update_values(self.log_sheet, "A1:H1", [CHECKS_SHEET_HEADERS])
 
     def load_all_apps(self) -> list[dict]:
         self.ensure_ready()
-        rows = self.get_values(self.apps_sheet, "A2:P")
+        rows = self.get_values(self.apps_sheet, "A2:R")
         apps = []
         for row_index, row in enumerate(rows, start=2):
             item = {
@@ -398,7 +418,7 @@ class GoogleSheetsStore:
         row = dict(current)
         row.update(updates)
         values = [row.get(header, "") for header in APPS_SHEET_HEADERS]
-        self.update_values(self.apps_sheet, f"A{row_index}:P{row_index}", [values])
+        self.update_values(self.apps_sheet, f"A{row_index}:R{row_index}", [values])
 
     def append_log(self, event: str, app_data: dict, details: str):
         countries = split_country_codes(app_data.get("last_closed_countries"))
