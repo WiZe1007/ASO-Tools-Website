@@ -4708,13 +4708,34 @@ def normalize_content_rating_label(value: str) -> str:
     text = str(value or "").strip()
     if not text or text == "—":
         return "—"
-    match = re.search(r"(\d{1,2})\s*\+", text)
-    if match:
-        return f"{match.group(1)}+"
-    match = re.search(r"rated\s+for\s+(\d{1,2})", text, flags=re.I)
-    if match:
-        return f"{match.group(1)}+"
-    return text
+
+    normalized = re.sub(r"[\s_-]+", " ", text.casefold()).strip()
+    if normalized in {"unrated", "not rated", "rating pending"}:
+        return "—"
+
+    if any(label in normalized for label in ("adults only", "adult only", "mature", "high maturity")):
+        return "18+"
+    if re.search(r"\bteen(?:ager|agers)?\b", normalized) or "medium maturity" in normalized:
+        return "16+"
+    if any(label in normalized for label in ("everyone 10", "parental guidance", "guidance suggested", "low maturity")):
+        return "7+"
+    if normalized in {"everyone", "all ages", "all"}:
+        return "3+"
+
+    match = re.search(r"(\d{1,2})\s*\+", normalized)
+    if not match:
+        match = re.search(r"(?:rated for|pegi|age|ages)\s*(\d{1,2})", normalized)
+    if not match:
+        return "—"
+
+    age = int(match.group(1))
+    if age <= 3:
+        return "3+"
+    if age <= 10:
+        return "7+"
+    if age <= 16:
+        return "16+"
+    return "18+"
 
 
 def extract_card_media_urls(value) -> list[str]:

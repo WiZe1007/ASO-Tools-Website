@@ -39,9 +39,29 @@ class TelegramAppCardTests(unittest.TestCase):
 
         self.assertEqual(meta["name"], "Royal Jewels Game")
         self.assertEqual(meta["category"], "Game - Casual")
-        self.assertEqual(meta["content_rating"], "Teen")
+        self.assertEqual(meta["content_rating"], "16+")
         self.assertEqual(meta["icon_url"], "https://play-lh.googleusercontent.com/icon")
         self.assertEqual(len(meta["screenshots"]), 3)
+
+    def test_content_rating_labels_are_normalized_for_card_badges(self):
+        cases = {
+            "Everyone": "3+",
+            "Rated for 3+": "3+",
+            "Everyone 10+": "7+",
+            "Parental guidance": "7+",
+            "Teen": "16+",
+            "Teenagers": "16+",
+            "PEGI 12": "16+",
+            "16+": "16+",
+            "Mature 17+": "18+",
+            "Adults only 18+": "18+",
+            "Unrated": "—",
+            "Unknown label": "—",
+        }
+
+        for source, expected in cases.items():
+            with self.subTest(source=source):
+                self.assertEqual(app.normalize_content_rating_label(source), expected)
 
     @patch("app.send_telegram_photo")
     @patch("app.build_telegram_app_card", return_value=b"card")
