@@ -516,7 +516,10 @@
           Live tools
         </div>
         {% include 'accounts/nav_link.html' %}
-        <a class="nav-utility auth-logout" href="/logout" aria-label="Logout" title="{{ current_user_email or 'Logout' }}">↪</a>
+        <form class="auth-logout" method="post" action="{{ url_for('logout') }}">
+          <input type="hidden" name="csrf_token" value="{{ logout_csrf_token }}">
+          <button class="nav-utility" type="submit" aria-label="Logout" title="{{ current_user_email or 'Logout' }}">↪</button>
+        </form>
         <button class="nav-utility" type="button" aria-label="Help">?</button>
         <button class="nav-utility theme-toggle" type="button" aria-label="Switch to light theme" title="Theme">☼</button>
 

@@ -32,6 +32,10 @@ Required environment variables for the WWA database:
 - `DATABASE_SITE_USERS_SHEET` - optional users sheet name, defaults to `Users`.
 - `DATABASE_SITE_SECURE_COOKIES` - `1` on Render.
 
+On Render, login protection and Secure cookies are enforced even if an environment
+variable is accidentally set to disable them. `DATABASE_SITE_AUTH_REQUIRED=0`
+is honored only during local development.
+
 With `DATABASE_SITE_AUTH_STORAGE=google_sheets`, the site automatically creates
 the `Users` sheet in the WWA spreadsheet. Email addresses, password hashes,
 account status, and login timestamps are stored there. Plain-text passwords are

@@ -2,9 +2,15 @@
 
 import hashlib
 import hmac
+import math
+import os
 import re
 import secrets
+import threading
+import time
+from collections import defaultdict, deque
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import click
 from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, session, url_for
@@ -20,6 +26,114 @@ TEAM_EMAILS = (
 )
 
 DATABASE_ACCESS_KEYS = {"wwa", "s"}
+_DUMMY_PASSWORD_HASH = (
+    "scrypt:32768:8:1$aj5JqKI6XYLGmdzA$"
+    "8f9279a3488a50a82c4ae41d9cd8047d8f2f6459bd8dac5a9d93e6de83594889"
+    "e55e36aea0c1d4b78d08cda5eb18d0d9aa272490a909d55121d28f7aefd93cbf"
+)
+
+
+def hosted_runtime_detected():
+    return any(
+        str(os.environ.get(name) or "").strip()
+        for name in ("RENDER", "RENDER_SERVICE_ID", "RENDER_EXTERNAL_HOSTNAME")
+    )
+
+
+class LoginAttemptLimiter:
+    """Small per-process throttle for repeated login failures."""
+
+    def __init__(self, max_failures=6, window_seconds=15 * 60, max_keys=5000):
+        self.max_failures = max(1, int(max_failures))
+        self.window_seconds = max(1, int(window_seconds))
+        self.max_keys = max(100, int(max_keys))
+        self._attempts = defaultdict(deque)
+        self._lock = threading.Lock()
+
+    def _key(self, identity):
+        return hashlib.sha256(str(identity or "").encode()).hexdigest()
+
+    def _trim(self, attempts, now):
+        cutoff = now - self.window_seconds
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+
+    def retry_after(self, identity):
+        key = self._key(identity)
+        now = time.monotonic()
+        with self._lock:
+            attempts = self._attempts.get(key)
+            if not attempts:
+                return 0
+            self._trim(attempts, now)
+            if not attempts:
+                self._attempts.pop(key, None)
+                return 0
+            if len(attempts) < self.max_failures:
+                return 0
+            return max(1, math.ceil(self.window_seconds - (now - attempts[0])))
+
+    def record_failure(self, identity):
+        key = self._key(identity)
+        now = time.monotonic()
+        with self._lock:
+            if len(self._attempts) >= self.max_keys and key not in self._attempts:
+                oldest = min(self._attempts, key=lambda item: self._attempts[item][0] if self._attempts[item] else now)
+                self._attempts.pop(oldest, None)
+            attempts = self._attempts[key]
+            self._trim(attempts, now)
+            attempts.append(now)
+        return self.retry_after(identity)
+
+    def clear(self, identity=None):
+        with self._lock:
+            if identity is None:
+                self._attempts.clear()
+            else:
+                self._attempts.pop(self._key(identity), None)
+
+
+def login_limit_identity(email, remote_addr):
+    normalized_email = str(email or "").strip().lower()[:254]
+    normalized_remote = str(remote_addr or "unknown").strip().lower()[:128]
+    return f"{normalized_email}|{normalized_remote}"
+
+
+def request_origin_allowed():
+    """Reject browser writes coming from another origin without trusting the proxy scheme."""
+    fetch_site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
+    if fetch_site not in {"", "none", "same-origin"}:
+        return False
+    origin = (request.headers.get("Origin") or "").strip()
+    source_url = origin or (request.headers.get("Referer") or "").strip()
+    if not source_url:
+        return True
+    if source_url.casefold() == "null":
+        return fetch_site == "same-origin"
+    try:
+        parsed = urlsplit(source_url)
+    except ValueError:
+        return False
+    return parsed.scheme in {"http", "https"} and parsed.netloc.casefold() == request.host.casefold()
+
+
+def apply_security_headers(response):
+    response.headers.setdefault("Content-Security-Policy", (
+        "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
+        "form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self'"
+    ))
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+    if current_app.config.get("SESSION_COOKIE_SECURE"):
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    if request.endpoint not in {"static", "health"}:
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 
 def serialize_database_access(values):
@@ -55,12 +169,18 @@ def account_session_valid(user):
 
 
 def verify_account_password(user, password):
-    if not user or int(user.get("active") or 0) != 1:
-        return False
     try:
-        return check_password_hash(user.get("password_hash") or "", password)
+        eligible = bool(user and int(user.get("active") or 0) == 1)
+    except (TypeError, ValueError):
+        eligible = False
+    password_hash = str(user.get("password_hash") or "") if eligible else _DUMMY_PASSWORD_HASH
+    try:
+        verified = check_password_hash(password_hash, password)
     except (ValueError, TypeError):
+        # Keep malformed account rows from becoming a timing oracle.
+        check_password_hash(_DUMMY_PASSWORD_HASH, password)
         return False
+    return eligible and verified
 
 
 def account_validation_error(email, password, domain):

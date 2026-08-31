@@ -338,7 +338,9 @@ class DatabaseSiteAuthTests(unittest.TestCase):
         self.assertEqual(dashboard.status_code, 200)
         self.assertIn(email.encode(), dashboard.data)
 
-        logged_out = self.client.get("/logout")
+        with self.client.session_transaction() as session:
+            csrf = session["csrf_token"]
+        logged_out = self.client.post("/logout", data={"csrf_token": csrf})
         self.assertEqual(logged_out.status_code, 302)
         self.assertIn("/login", logged_out.headers["Location"])
 
@@ -381,7 +383,6 @@ class DatabaseSiteGoogleSheetsAuthTests(unittest.TestCase):
         self.assertIn(email, self.user_store.users)
         self.assertNotEqual(self.user_store.users[email]["password_hash"], "correct-password")
 
-        self.client.get("/logout")
         database_app.AUTH_USER_CACHE.clear()
         self.client.get("/login")
         with self.client.session_transaction() as session:

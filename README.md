@@ -51,7 +51,7 @@ These are optional. Do not commit real values.
 - `AUTH_SERVICE_ACCOUNT_JSON` - credentials for the account spreadsheet; falls back to the existing database-site or Google service account configuration.
 - `AUTH_ADMIN_EMAILS` - exact comma-separated existing account emails allowed to manage users. Empty by default: no account automatically becomes an administrator.
 - `AUTH_DB_PATH` - SQLite user database path, used only with `AUTH_STORAGE=sqlite`. SQLite is not persistent on Render Free.
-- `AUTH_REQUIRED` - defaults to `1`. Set `0` only for local debugging without login.
+- `AUTH_REQUIRED` - defaults to `1`. Set `0` only for local debugging without login. Render is always protected even if this value is accidentally set to `0`.
 
 Self-registration is removed, including both GET and POST `/register`.
 Administrators sign in normally and open `/admin/users` to add an email/password,
@@ -355,5 +355,7 @@ Dry run reads the sheet and checks apps, but does not update the sheet and does 
 You can also trigger the hosted web service endpoint:
 
 ```bash
-curl -X POST "https://YOUR-RENDER-URL/tasks/check-availability?secret=AVAILABILITY_TASK_SECRET"
+curl -X POST \
+  -H "X-Task-Secret: AVAILABILITY_TASK_SECRET" \
+  "https://YOUR-RENDER-URL/tasks/check-availability"
 ```

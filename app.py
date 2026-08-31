@@ -17,7 +17,7 @@ import sqlite3
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs, quote, unquote
+from urllib.parse import urljoin, urlparse, parse_qs, quote, unquote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 
@@ -29,8 +29,9 @@ from werkzeug.security import generate_password_hash
 
 import database_site.app as shared_accounts
 from account_access import (
-    account_session_token, account_session_valid, account_validation_error,
-    create_accounts_blueprint, is_account_admin, login_csrf_token,
+    LoginAttemptLimiter, account_session_token, account_session_valid, account_validation_error,
+    apply_security_headers, create_accounts_blueprint, is_account_admin,
+    hosted_runtime_detected, login_csrf_token, login_limit_identity, request_origin_allowed,
     valid_form_csrf, verify_account_password,
 )
 
@@ -191,7 +192,9 @@ AVAILABILITY_TASK_SECRET = (os.environ.get("AVAILABILITY_TASK_SECRET") or os.env
 TELEGRAM_BOT_TOKEN = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
 TELEGRAM_CHAT_ID = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
 TELEGRAM_SEND_APP_CARD = env_bool("TELEGRAM_SEND_APP_CARD", True)
-AUTH_REQUIRED = (os.environ.get("AUTH_REQUIRED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
+AUTH_REQUIRED = hosted_runtime_detected() or (
+    (os.environ.get("AUTH_REQUIRED", "1") or "1").strip().lower() not in {"0", "false", "no", "off"}
+)
 AUTH_ALLOWED_EMAIL_DOMAIN = (os.environ.get("AUTH_ALLOWED_EMAIL_DOMAIN", "@wildwildgroup.com") or "@wildwildgroup.com").strip().lower()
 AUTH_DB_PATH = (
     os.environ.get("AUTH_DB_PATH")
@@ -1081,7 +1084,10 @@ def parse_appmagic_login_link(raw_url: str) -> tuple[dict | None, str | None]:
     if "://" not in raw and "code=" in raw:
         raw = "https://appmagic.rocks/login?" + raw.lstrip("?")
 
-    q = parse_qs(urlparse(raw).query)
+    parsed = safe_urlparse(raw)
+    if not parsed or not url_has_host(raw, "appmagic.rocks"):
+        return None, "APPMAGIC_LOGIN_LINK_INVALID_HOST"
+    q = parse_qs(parsed.query)
     code = (q.get("code", [""])[0] or "").strip()
     email = (q.get("email", [""])[0] or "").strip()
 
@@ -1160,11 +1166,17 @@ app.config["SECRET_KEY"] = (
 )
 app.config["AUTH_ADMIN_EMAILS"] = os.environ.get("AUTH_ADMIN_EMAILS") or ""
 app.config["AUTH_ACCOUNT_REALM"] = "tools"
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 app.config["SESSION_COOKIE_NAME"] = "wwa_tools_session"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-if (os.environ.get("SESSION_COOKIE_SECURE") or "").strip() == "1":
-    app.config["SESSION_COOKIE_SECURE"] = True
+secure_cookie_setting = os.environ.get("SESSION_COOKIE_SECURE")
+hosted_runtime_configured = hosted_runtime_detected()
+app.config["SESSION_COOKIE_SECURE"] = (
+    hosted_runtime_configured
+    or secure_cookie_setting is not None
+    and secure_cookie_setting.strip().lower() not in {"", "0", "false", "no", "off"}
+)
 session = requests.Session()
 http_adapter = HTTPAdapter(pool_connections=HTTP_POOL_SIZE, pool_maxsize=HTTP_POOL_SIZE, max_retries=0)
 session.mount("https://", http_adapter)
@@ -1174,6 +1186,7 @@ _runtime_port = None
 AUTH_DB_LOCK = threading.Lock()
 TOOLS_AUTH_STORE_LOCK = threading.Lock()
 TOOLS_AUTH_USER_STORE = None
+LOGIN_ATTEMPT_LIMITER = LoginAttemptLimiter()
 
 
 def auth_db_path() -> str:
@@ -1421,6 +1434,7 @@ def inject_auth_context():
         "current_user_email": flask_session.get("user_email"),
         "auth_required": AUTH_REQUIRED,
         "auth_allowed_email_domain": AUTH_ALLOWED_EMAIL_DOMAIN,
+        "logout_csrf_token": login_csrf_token(),
         "can_access_s_live_db": user_can_access_s_live_db(),
         "can_access_wwa_live_db": user_can_access_live_database("wwa"),
         "can_manage_users": is_account_admin(),
@@ -1432,6 +1446,12 @@ def require_site_auth():
     g.current_user = None
     if request.endpoint is None:
         return None
+    if request.endpoint == "logout" and not request_origin_allowed():
+        return "Заборонений міжсайтовий запит.", 403
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not request_origin_allowed():
+        if request_wants_json():
+            return jsonify({"ok": False, "error": "CROSS_ORIGIN_REQUEST_BLOCKED"}), 403
+        return "Заборонений міжсайтовий запит.", 403
     if not AUTH_REQUIRED:
         return None
 
@@ -1467,24 +1487,41 @@ def login():
     next_url = safe_next_url(request.values.get("next"))
     error = ""
     status = 200
+    retry_after = 0
     email = normalize_auth_email(request.form.get("email") or "")
 
     if request.method == "POST":
         if not valid_form_csrf():
             return "Сесію форми втрачено. Онови сторінку.", 403
         password = request.form.get("password") or ""
-        try:
-            user = get_user_by_email(email, fresh=True)
-            if not verify_account_password(user, password):
-                error = "Невірна пошта або пароль."
-            else:
-                login_user(user)
-                return redirect(next_url)
-        except shared_accounts.DatabaseConfigError:
-            error, status = "Сховище користувачів тимчасово недоступне. Спробуй пізніше.", 503
+        login_identity = login_limit_identity(email, request.remote_addr)
+        retry_after = LOGIN_ATTEMPT_LIMITER.retry_after(login_identity)
+        if retry_after:
+            error, status = "Забагато невдалих спроб. Спробуй ще раз трохи пізніше.", 429
+        else:
+            try:
+                user = get_user_by_email(email, fresh=True)
+                if len(password) > 256 or not verify_account_password(user, password):
+                    retry_after = LOGIN_ATTEMPT_LIMITER.record_failure(login_identity)
+                    error = "Невірна пошта або пароль."
+                    if retry_after:
+                        error, status = "Забагато невдалих спроб. Спробуй ще раз трохи пізніше.", 429
+                else:
+                    LOGIN_ATTEMPT_LIMITER.clear(login_identity)
+                    login_user(user)
+                    return redirect(next_url)
+            except shared_accounts.DatabaseConfigError:
+                error, status = "Сховище користувачів тимчасово недоступне. Спробуй пізніше.", 503
 
-    return render_template("auth.html", email=email, error=error, next_url=next_url,
-                           csrf_token=login_csrf_token()), status
+    rendered = render_template("auth.html", email=email, error=error, next_url=next_url,
+                               csrf_token=login_csrf_token())
+    headers = {"Retry-After": str(retry_after)} if retry_after else {}
+    return rendered, status, headers
+
+
+@app.after_request
+def add_browser_security_headers(response):
+    return apply_security_headers(response)
 
 
 app.register_blueprint(create_accounts_blueprint(
@@ -1495,8 +1532,10 @@ app.register_blueprint(create_accounts_blueprint(
 ))
 
 
-@app.get("/logout")
+@app.post("/logout")
 def logout():
+    if not valid_form_csrf():
+        return "Сесію форми втрачено. Онови сторінку.", 403
     logout_user()
     return redirect(url_for("login"))
 
@@ -1511,8 +1550,16 @@ def is_local_request() -> bool:
     return remote in {"127.0.0.1", "::1", "localhost"} or remote.startswith("127.")
 
 
+def is_hosted_runtime() -> bool:
+    return hosted_runtime_detected()
+
+
+def local_feature_request_allowed() -> bool:
+    return is_local_request() and not is_hosted_runtime()
+
+
 def local_exit_enabled() -> bool:
-    return is_local_request() and (os.environ.get("WWA_ENABLE_LOCAL_EXIT") or "").strip() == "1"
+    return local_feature_request_allowed() and (os.environ.get("WWA_ENABLE_LOCAL_EXIT") or "").strip() == "1"
 
 
 @app.post("/shutdown")
@@ -1547,15 +1594,15 @@ def appmagic_auth_status():
         "authenticated": appmagic_auth_available(),
         "source": source,
         "email": cached.get("email") if source == "saved_login" else None,
-        "is_local": is_local_request(),
+        "is_local": local_feature_request_allowed(),
         "hosted_env_configured": source in {"env_cookie", "env_token"},
-        "can_auto_import": is_local_request(),
+        "can_auto_import": local_feature_request_allowed(),
     })
 
 
 @app.post("/appmagic/auth/exchange")
 def appmagic_auth_exchange():
-    if not is_local_request():
+    if not local_feature_request_allowed():
         return jsonify({
             "ok": False,
             "error": "APPMAGIC_LOGIN_LINK_LOCAL_ONLY",
@@ -1593,13 +1640,13 @@ def appmagic_auth_token():
     if looks_like_dashly_token(token):
         return jsonify({"ok": False, "error": "APPMAGIC_DASHLY_TOKEN_UNSUPPORTED"}), 400
 
-    if is_local_request():
+    if local_feature_request_allowed():
         _save_appmagic_cached_auth(token, email=email)
 
     return jsonify({
         "ok": True,
         "auth": {
-            "source": "saved_login" if is_local_request() else "browser_session",
+            "source": "saved_login" if local_feature_request_allowed() else "browser_session",
             "email": email,
         },
     })
@@ -1607,7 +1654,7 @@ def appmagic_auth_token():
 
 @app.post("/appmagic/auth/auto-import")
 def appmagic_auth_auto_import():
-    if not is_local_request():
+    if not local_feature_request_allowed():
         return jsonify({
             "ok": False,
             "error": "APPMAGIC_AUTO_IMPORT_LOCAL_ONLY",
@@ -1644,7 +1691,8 @@ def appmagic_auth_auto_import():
 
 @app.post("/appmagic/auth/logout")
 def appmagic_auth_logout():
-    _clear_appmagic_cached_auth()
+    if local_feature_request_allowed():
+        _clear_appmagic_cached_auth()
     return jsonify({"ok": True})
 
 
@@ -1718,29 +1766,71 @@ def ensure_single_instance_or_get_port(preferred_port: int) -> int:
 
 # ---------------- URL HELPERS ----------------
 
+def safe_urlparse(value: str):
+    raw = str(value or "").strip()
+    if not raw or re.search(r"[\x00-\x20\x7f]", raw):
+        return None
+    try:
+        return urlparse(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def url_has_host(value: str, expected_host: str) -> bool:
+    parsed = safe_urlparse(value)
+    if not parsed:
+        return False
+    try:
+        host = str(parsed.hostname or "").rstrip(".").lower()
+        port = parsed.port
+    except ValueError:
+        return False
+    expected = str(expected_host or "").rstrip(".").lower()
+    return bool(
+        parsed.scheme == "https"
+        and host
+        and (host == expected or host.endswith(f".{expected}"))
+        and port in {None, 443}
+        and not parsed.username
+        and not parsed.password
+    )
+
+
 def detect_store(url: str) -> str:
-    u = (url or "").lower()
-    if "play.google.com/store/apps" in u:
+    parsed = safe_urlparse(url)
+    if not parsed:
+        return "unknown"
+    path = str(parsed.path or "").lower()
+    if url_has_host(url, "play.google.com") and path.startswith("/store/apps"):
         return "google_play"
-    if "appmagic.rocks/google-play/" in u:
+    if url_has_host(url, "appmagic.rocks") and path.startswith("/google-play/"):
         return "appmagic_google_play"
-    if "apps.apple.com" in u:
+    if url_has_host(url, "apps.apple.com"):
         return "apple_app_store"
     return "unknown"
 
 
 def extract_google_play_app_id(play_url: str) -> str:
-    q = parse_qs(urlparse(play_url).query)
+    if not url_has_host(play_url, "play.google.com"):
+        return ""
+    parsed = safe_urlparse(play_url)
+    if not parsed:
+        return ""
+    q = parse_qs(parsed.query)
     raw = (q.get("id", [""])[0] or "").strip()
-    raw = re.sub(r"[^a-zA-Z0-9._]", "", raw)
-    return raw
+    return raw if re.fullmatch(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+", raw) else ""
 
 
 def extract_appmagic_google_play_app_id(appmagic_url: str) -> str:
-    parts = [part for part in urlparse(appmagic_url).path.split("/") if part]
+    if not url_has_host(appmagic_url, "appmagic.rocks"):
+        return ""
+    parsed = safe_urlparse(appmagic_url)
+    if not parsed:
+        return ""
+    parts = [part for part in parsed.path.split("/") if part]
     if len(parts) >= 3 and parts[0] == "google-play":
         raw = parts[2].strip()
-        return re.sub(r"[^a-zA-Z0-9._]", "", raw)
+        return raw if re.fullmatch(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+", raw) else ""
     return ""
 
 
@@ -2825,14 +2915,15 @@ def normalize_android_package_input(raw_value: str) -> str:
     if not raw:
         return ""
 
-    parsed = urlparse(raw)
+    parsed = safe_urlparse(raw)
+    if not parsed:
+        return ""
     if parsed.netloc:
-        host = parsed.netloc.lower()
-        if "play.google.com" in host:
+        if url_has_host(raw, "play.google.com"):
             return extract_google_play_app_id(raw)
-        if "appmagic.rocks" in host:
+        if url_has_host(raw, "appmagic.rocks"):
             return extract_appmagic_google_play_app_id(raw)
-        if "sensortower.com" in host:
+        if url_has_host(raw, "sensortower.com"):
             parts = [part for part in parsed.path.split("/") if part]
             if "overview" in parts:
                 idx = parts.index("overview")
@@ -2841,6 +2932,9 @@ def normalize_android_package_input(raw_value: str) -> str:
             for part in reversed(parts):
                 if "." in part:
                     return re.sub(r"[^a-zA-Z0-9._]", "", part)
+        return ""
+    if parsed.scheme or "://" in raw:
+        return ""
 
     match = re.search(r"\b([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)\b", raw)
     return match.group(1) if match else ""
@@ -2874,8 +2968,10 @@ def normalize_sensor_tower_publisher_id(raw_value: str) -> str:
     if not raw:
         return ""
 
-    parsed = urlparse(raw)
-    if parsed.netloc and "sensortower.com" in parsed.netloc:
+    parsed = safe_urlparse(raw)
+    if not parsed:
+        return ""
+    if parsed.netloc and url_has_host(raw, "sensortower.com"):
         parts = [part for part in parsed.path.split("/") if part]
         if "publisher" in parts:
             idx = parts.index("publisher")
@@ -4483,8 +4579,7 @@ def country_chip_payload(iso2: str) -> dict:
 
 
 def availability_app_payload(app: dict) -> dict:
-    app_id = str(app.get("app_id") or "").strip()
-    app_url = str(app.get("app_url") or "").strip()
+    app_id = normalize_android_package_input(app.get("app_id") or app.get("app_url") or "")
     status = str(app.get("status") or "watch").strip().lower() or "watch"
     open_codes = split_country_codes(app.get("last_open_countries"))
     closed_codes = split_country_codes(app.get("last_closed_countries"))
@@ -4496,7 +4591,7 @@ def availability_app_payload(app: dict) -> dict:
         "enabled": boolish(app.get("enabled"), default=True),
         "status": status,
         "is_live": is_live,
-        "app_url": app_url or (build_google_play_url(app_id, "US", "en") if app_id else ""),
+        "app_url": build_google_play_url(app_id, "US", "en") if app_id else "",
         "app_id": app_id,
         "app_name": str(app.get("app_name") or app_id or "Untitled app").strip(),
         "owner": str(app.get("owner") or "").strip(),
@@ -5041,8 +5136,13 @@ def canonical_google_play_asset_url(value) -> str:
     url = str(value or "").strip()
     if not url.startswith(("http://", "https://")):
         return ""
-    parsed = urlparse(url)
-    host = str(parsed.hostname or "").lower()
+    parsed = safe_urlparse(url)
+    if not parsed:
+        return ""
+    try:
+        host = str(parsed.hostname or "").lower()
+    except ValueError:
+        return ""
     path = unquote(str(parsed.path or ""))
     if not host or not path:
         return ""
@@ -5555,14 +5655,106 @@ def rounded_image(image, radius: int):
     return img
 
 
+CARD_MEDIA_MAX_BYTES = 8 * 1024 * 1024
+CARD_MEDIA_MAX_PIXELS = 25_000_000
+CARD_MEDIA_REDIRECT_LIMIT = 2
+
+
+def allowed_card_media_url(value: str) -> bool:
+    try:
+        parsed = urlparse(str(value or "").strip())
+        host = str(parsed.hostname or "").rstrip(".").lower()
+        port = parsed.port
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        parsed.scheme == "https"
+        and host
+        and (host == "googleusercontent.com" or host.endswith(".googleusercontent.com"))
+        and port in {None, 443}
+        and not parsed.username
+        and not parsed.password
+    )
+
+
+def fetch_card_media_bytes(url: str) -> bytes | None:
+    current_url = str(url or "").strip()
+    for redirect_index in range(CARD_MEDIA_REDIRECT_LIMIT + 1):
+        if not allowed_card_media_url(current_url):
+            return None
+        try:
+            response = session.get(
+                current_url,
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "image/*"},
+                timeout=(5, 15),
+                allow_redirects=False,
+                stream=True,
+            )
+        except requests.RequestException:
+            return None
+        if response.status_code in {301, 302, 303, 307, 308}:
+            if redirect_index >= CARD_MEDIA_REDIRECT_LIMIT:
+                response.close()
+                return None
+            location = str(response.headers.get("Location") or "").strip()
+            response.close()
+            current_url = urljoin(current_url, location)
+            continue
+        if response.status_code != 200:
+            response.close()
+            return None
+        content_type = str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if not content_type.startswith("image/"):
+            response.close()
+            return None
+        try:
+            content_length = int(response.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            content_length = 0
+        if content_length > CARD_MEDIA_MAX_BYTES:
+            response.close()
+            return None
+        body = bytearray()
+        try:
+            for chunk in response.iter_content(64 * 1024):
+                if not chunk:
+                    continue
+                body.extend(chunk)
+                if len(body) > CARD_MEDIA_MAX_BYTES:
+                    response.close()
+                    return None
+        except requests.RequestException:
+            response.close()
+            return None
+        response.close()
+        return bytes(body) if body else None
+    return None
+
+
+def decode_card_media_image(url: str):
+    if Image is None:
+        return None
+    data = fetch_card_media_bytes(url)
+    if not data:
+        return None
+    try:
+        with Image.open(io.BytesIO(data)) as source:
+            width, height = source.size
+            if width < 1 or height < 1 or width * height > CARD_MEDIA_MAX_PIXELS:
+                return None
+            source.load()
+            return source.convert("RGBA")
+    except Exception:
+        return None
+
+
 def fetch_card_icon(icon_url: str, size: int):
     if Image is None or not icon_url:
         return None
     try:
-        response = session.get(icon_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        if response.status_code != 200:
+        icon = decode_card_media_image(icon_url)
+        if icon is None:
             return None
-        icon = Image.open(io.BytesIO(response.content)).convert("RGBA")
         icon = ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
         return rounded_image(icon, 28)
     except Exception:
@@ -5573,10 +5765,9 @@ def fetch_card_media_image(url: str, size: tuple[int, int], radius: int):
     if Image is None or ImageOps is None or not url:
         return None
     try:
-        response = session.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        if response.status_code != 200:
+        image = decode_card_media_image(url)
+        if image is None:
             return None
-        image = Image.open(io.BytesIO(response.content)).convert("RGBA")
         image = ImageOps.fit(image, size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
         return rounded_image(image, radius)
     except Exception:
@@ -6396,14 +6587,13 @@ def run_availability_bot_check(
 
 def task_request_authorized() -> bool:
     if not AVAILABILITY_TASK_SECRET:
-        return is_local_request()
+        return local_feature_request_allowed()
     provided = (
         request.headers.get("X-Task-Secret")
-        or request.args.get("secret")
         or ((request.json or {}).get("secret") if request.is_json else "")
         or ""
     ).strip()
-    return provided == AVAILABILITY_TASK_SECRET
+    return bool(provided) and secrets.compare_digest(provided, AVAILABILITY_TASK_SECRET)
 
 
 # ---------------- NEW: GEO LINK HELPERS ----------------
@@ -7178,7 +7368,7 @@ def availability_check():
 
 # ---------------- TASK API: TELEGRAM AVAILABILITY BOT ----------------
 
-@app.route("/tasks/check-availability", methods=["GET", "POST"])
+@app.post("/tasks/check-availability")
 def task_check_availability():
     if not task_request_authorized():
         return jsonify({"ok": False, "error": "Forbidden"}), 403

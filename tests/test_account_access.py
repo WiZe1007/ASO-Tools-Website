@@ -9,7 +9,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import app as tools_app
 import database_site.app as database_app
-from account_access import TEAM_EMAILS, account_database_access
+from account_access import LoginAttemptLimiter, TEAM_EMAILS, account_database_access, verify_account_password
 from tests.test_database_site import FakeStore, FakeUserStore
 
 
@@ -30,6 +30,9 @@ class SeparateAccountTests(unittest.TestCase):
         for module in (database_app, tools_app):
             self.stack.enter_context(patch.object(module, "AUTH_REQUIRED", True))
             self.stack.enter_context(patch.object(module, "AUTH_ALLOWED_EMAIL_DOMAIN", "@wildwildgroup.com"))
+            self.stack.enter_context(patch.object(
+                module, "LOGIN_ATTEMPT_LIMITER", LoginAttemptLimiter(max_failures=6, window_seconds=900)
+            ))
             self.stack.enter_context(patch.dict(module.app.config, {
                 "TESTING": True, "SESSION_COOKIE_SECURE": False,
                 "SECRET_KEY": "test-" + module.__name__,
@@ -60,6 +63,9 @@ class SeparateAccountTests(unittest.TestCase):
     def admin_post(self, client, path="/admin/users", **data):
         return client.post(path, data={"csrf_token": self.csrf(client), **data})
 
+    def logout(self, client, **kwargs):
+        return client.post("/logout", data={"csrf_token": self.csrf(client)}, **kwargs)
+
     def test_registration_removed_on_both_sites_even_for_signed_in_admin(self):
         for client in self.clients:
             for signed_in in (False, True):
@@ -82,7 +88,7 @@ class SeparateAccountTests(unittest.TestCase):
                     self.assertEqual(self.login(client, email, "Existing-team-password").status_code, 302)
                     self.assertEqual(client.get("/").status_code, 200)
                     self.assertEqual(store.users[email]["password_hash"], password_hash)
-                    client.get("/logout")
+                    self.logout(client)
         result = tools_app.app.test_cli_runner().invoke(args=["users", "check-team"])
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertNotIn(password_hash, result.output)
@@ -447,6 +453,15 @@ class SeparateAccountTests(unittest.TestCase):
             store.users[self.employee]["password_hash"] = "malformed:hash"
             self.assertEqual(self.login(client).status_code, 200)
 
+    def test_missing_and_inactive_accounts_still_run_password_hash_check(self):
+        with patch("account_access.check_password_hash", return_value=False) as password_check:
+            self.assertFalse(verify_account_password(None, self.password))
+            self.assertFalse(verify_account_password({
+                "active": "invalid",
+                "password_hash": generate_password_hash(self.password),
+            }, self.password))
+        self.assertEqual(password_check.call_count, 2)
+
     def test_sessions_without_password_binding_require_new_login(self):
         for client in self.clients:
             with client.session_transaction() as session:
@@ -528,6 +543,185 @@ class SeparateAccountTests(unittest.TestCase):
                 with target.session_transaction() as session:
                     session.update(payload)
                 self.assertEqual(target.get("/").status_code, 302)
+
+    def test_repeated_failed_logins_are_throttled_on_both_sites(self):
+        for module, client in zip((database_app, tools_app), self.clients):
+            for attempt in range(6):
+                response = self.login(client, password="definitely-wrong-password")
+                self.assertEqual(response.status_code, 429 if attempt == 5 else 200)
+            self.assertGreater(int(response.headers["Retry-After"]), 0)
+            self.assertEqual(self.login(client).status_code, 429)
+            module.LOGIN_ATTEMPT_LIMITER.clear()
+            self.assertEqual(self.login(client).status_code, 302)
+
+    def test_cross_origin_browser_writes_are_blocked_on_both_sites(self):
+        hostile_headers = {
+            "Origin": "https://attacker.onrender.com",
+            "Sec-Fetch-Site": "same-site",
+        }
+        for client in self.clients:
+            client.get("/login")
+            response = client.post("/login", data={
+                "email": self.employee,
+                "password": self.password,
+                "csrf_token": self.csrf(client),
+            }, headers=hostile_headers)
+            self.assertEqual(response.status_code, 403)
+
+        self.login(self.clients[0])
+        response = self.clients[0].post(
+            "/api/apps",
+            json={"app_input": "com.cross.site"},
+            headers={"X-CSRF-Token": self.csrf(self.clients[0]), **hostile_headers},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json()["error"], "CROSS_ORIGIN_REQUEST_BLOCKED")
+
+        self.login(self.clients[1])
+        response = self.clients[1].post("/check", json={}, headers=hostile_headers)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.get_json()["error"], "CROSS_ORIGIN_REQUEST_BLOCKED")
+
+    def test_hostile_referer_is_blocked_when_origin_is_missing(self):
+        for client in self.clients:
+            client.get("/login")
+            response = client.post("/login", data={
+                "email": self.employee,
+                "password": self.password,
+                "csrf_token": self.csrf(client),
+            }, headers={"Referer": "https://attacker.example/login"})
+            self.assertEqual(response.status_code, 403)
+
+    def test_null_origin_requires_same_origin_fetch_metadata(self):
+        for client in self.clients:
+            client.get("/login")
+            data = {
+                "email": self.employee,
+                "password": self.password,
+                "csrf_token": self.csrf(client),
+            }
+            rejected = client.post("/login", data=data, headers={"Origin": "null"})
+            self.assertEqual(rejected.status_code, 403)
+            accepted = client.post("/login", data=data, headers={
+                "Origin": "null",
+                "Sec-Fetch-Site": "same-origin",
+            })
+            self.assertEqual(accepted.status_code, 302)
+
+    def test_cross_site_logout_cannot_clear_an_authenticated_session(self):
+        for client in self.clients:
+            self.assertEqual(self.login(client).status_code, 302)
+            self.assertEqual(client.get("/logout").status_code, 405)
+            self.assertEqual(client.post("/logout").status_code, 403)
+            response = self.logout(client, headers={
+                "Referer": "https://attacker.onrender.com/",
+                "Sec-Fetch-Site": "same-site",
+            })
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(client.get("/").status_code, 200)
+
+    def test_login_request_body_is_limited_on_both_sites(self):
+        for client in self.clients:
+            client.get("/login")
+            response = client.post("/login", data={
+                "email": self.employee,
+                "password": "x" * (70 * 1024),
+                "csrf_token": self.csrf(client),
+            })
+            self.assertEqual(response.status_code, 413)
+
+    def test_security_headers_and_secure_cookie_are_set_on_both_sites(self):
+        expected_headers = {
+            "Content-Security-Policy",
+            "X-Frame-Options",
+            "X-Content-Type-Options",
+            "Referrer-Policy",
+            "Permissions-Policy",
+            "Cross-Origin-Opener-Policy",
+        }
+        for module in (database_app, tools_app):
+            with patch.dict(module.app.config, {"SESSION_COOKIE_SECURE": True}):
+                response = module.app.test_client().get("/login")
+            self.assertTrue(expected_headers <= set(response.headers.keys()))
+            self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+            self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+            self.assertIn("no-store", response.headers["Cache-Control"])
+            self.assertIn("max-age=31536000", response.headers["Strict-Transport-Security"])
+            cookie = response.headers.get("Set-Cookie", "")
+            self.assertIn("Secure", cookie)
+            self.assertIn("HttpOnly", cookie)
+            self.assertIn("SameSite=Lax", cookie)
+
+    def test_render_runtime_cannot_use_local_only_tools_endpoints(self):
+        client = self.clients[1]
+        self.login(client)
+        with patch.dict(tools_app.os.environ, {"RENDER": "true"}), \
+             patch.object(tools_app, "_clear_appmagic_cached_auth") as clear_auth, \
+             patch.object(tools_app, "_save_appmagic_cached_auth") as save_auth:
+            status = client.get("/appmagic/auth/status").get_json()
+            self.assertFalse(status["is_local"])
+            self.assertFalse(status["can_auto_import"])
+            self.assertEqual(client.post("/appmagic/auth/exchange", json={"url": "secret"}).status_code, 400)
+            self.assertEqual(client.post("/appmagic/auth/auto-import", json={}).status_code, 400)
+            self.assertEqual(client.post("/shutdown").status_code, 403)
+            self.assertEqual(client.post("/exit").status_code, 403)
+            token_response = client.post("/appmagic/auth/token", json={"token": "A" * 24})
+            self.assertEqual(token_response.status_code, 200)
+            self.assertEqual(token_response.get_json()["auth"]["source"], "browser_session")
+            self.assertEqual(client.post("/appmagic/auth/logout").status_code, 200)
+            clear_auth.assert_not_called()
+            save_auth.assert_not_called()
+            with patch.object(tools_app, "AVAILABILITY_TASK_SECRET", ""), \
+                 tools_app.app.test_request_context("/tasks/check-availability", method="POST"):
+                self.assertFalse(tools_app.task_request_authorized())
+
+    def test_task_secret_is_never_accepted_from_the_url(self):
+        with patch.object(tools_app, "AVAILABILITY_TASK_SECRET", "strong-task-secret"):
+            with tools_app.app.test_request_context(
+                "/tasks/check-availability?secret=strong-task-secret", method="POST"
+            ):
+                self.assertFalse(tools_app.task_request_authorized())
+            with tools_app.app.test_request_context(
+                "/tasks/check-availability", method="POST",
+                headers={"X-Task-Secret": "strong-task-secret"},
+            ):
+                self.assertTrue(tools_app.task_request_authorized())
+            self.assertEqual(self.clients[1].get("/tasks/check-availability").status_code, 405)
+
+    def test_sheet_urls_are_rebuilt_as_google_play_links(self):
+        malicious = {
+            "app_id": "com.example.safe",
+            "app_url": "javascript:alert(document.cookie)",
+            "app_name": "Example",
+        }
+        database_payload = database_app.app_payload(malicious)
+        tools_payload = tools_app.availability_app_payload(malicious)
+        for payload in (database_payload, tools_payload):
+            self.assertTrue(payload["app_url"].startswith("https://play.google.com/store/apps/details?"))
+            self.assertNotIn("javascript:", payload["app_url"])
+        invalid = {"app_id": "javascript:alert(1)", "app_url": "javascript:alert(1)"}
+        self.assertEqual(database_app.app_payload(invalid)["app_url"], "")
+        self.assertEqual(tools_app.availability_app_payload(invalid)["app_url"], "")
+
+    def test_deceptive_store_domains_are_rejected(self):
+        deceptive_urls = (
+            "https://play.google.com.attacker.test/store/apps/details?id=com.example.app",
+            "https://user:password@play.google.com/store/apps/details?id=com.example.app",
+            "https://play.google.com:bad/store/apps/details?id=com.example.app",
+            "javascript:play.google.com/store/apps/details?id=com.example.app",
+            "https://[bad",
+            "\x00https://play.google.com/store/apps/details?id=com.example.app",
+        )
+        for deceptive in deceptive_urls:
+            with self.subTest(url=deceptive):
+                self.assertEqual(tools_app.detect_store(deceptive), "unknown")
+                self.assertEqual(tools_app.extract_google_play_app_id(deceptive), "")
+                self.assertEqual(tools_app.normalize_android_package_input(deceptive), "")
+                self.assertEqual(database_app.normalize_package_input(deceptive), "")
+        valid = "https://play.google.com/store/apps/details?id=com.example.app"
+        self.assertEqual(tools_app.detect_store(valid), "google_play")
+        self.assertEqual(tools_app.extract_google_play_app_id(valid), "com.example.app")
+        self.assertEqual(database_app.normalize_package_input(valid), "com.example.app")
 
 
 class SQLiteManualAccountTests(unittest.TestCase):

@@ -33,9 +33,12 @@
       <button class="icon-button" id="themeButton" type="button" title="Змінити тему" aria-label="Змінити тему">
         <svg aria-hidden="true"><use href="#icon-sun"></use></svg>
       </button>
-      <a class="icon-button" href="/logout" title="Вийти" aria-label="Вийти">
+      <form method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ logout_csrf_token }}">
+        <button class="icon-button" type="submit" title="Вийти" aria-label="Вийти">
         <svg aria-hidden="true"><use href="#icon-log-out"></use></svg>
-      </a>
+        </button>
+      </form>
     </div>
   </header>
 

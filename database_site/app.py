@@ -21,8 +21,10 @@ from google.oauth2 import service_account
 from werkzeug.security import generate_password_hash
 
 from account_access import (
-    account_database_access, account_session_token, account_session_valid, account_validation_error,
-    create_accounts_blueprint, is_account_admin, login_csrf_token,
+    LoginAttemptLimiter, account_database_access, account_session_token, account_session_valid,
+    account_validation_error, apply_security_headers, create_accounts_blueprint,
+    hosted_runtime_detected, is_account_admin, login_csrf_token, login_limit_identity,
+    request_origin_allowed,
     valid_form_csrf, verify_account_password,
 )
 
@@ -42,12 +44,15 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_NAME="wwa_database_session",
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=(os.environ.get("DATABASE_SITE_SECURE_COOKIES", "1") == "1"),
+    SESSION_COOKIE_SECURE=(
+        hosted_runtime_detected()
+        or os.environ.get("DATABASE_SITE_SECURE_COOKIES", "1") == "1"
+    ),
     AUTH_ADMIN_EMAILS=os.environ.get("AUTH_ADMIN_EMAILS") or os.environ.get("DATABASE_SITE_ADMIN_EMAILS") or "",
     AUTH_ACCOUNT_REALM="database",
 )
 
-AUTH_REQUIRED = os.environ.get("DATABASE_SITE_AUTH_REQUIRED", "1") != "0"
+AUTH_REQUIRED = hosted_runtime_detected() or os.environ.get("DATABASE_SITE_AUTH_REQUIRED", "1") != "0"
 AUTH_ALLOWED_EMAIL_DOMAIN = (
     os.environ.get("DATABASE_SITE_ALLOWED_EMAIL_DOMAIN")
     or os.environ.get("AUTH_ALLOWED_EMAIL_DOMAIN")
@@ -170,6 +175,7 @@ AUTH_STORE_LOCK = threading.Lock()
 SHEET_WRITE_LOCK = threading.Lock()
 AUTH_USER_CACHE: dict[str, tuple[float, dict | None]] = {}
 AUTH_USER_STORE = None
+LOGIN_ATTEMPT_LIMITER = LoginAttemptLimiter()
 
 
 class DatabaseConfigError(RuntimeError):
@@ -200,7 +206,20 @@ def normalize_package_input(raw_value: str) -> str:
     if not value:
         return ""
     if value.startswith(("http://", "https://")):
-        parsed = urlparse(value)
+        try:
+            parsed = urlparse(value)
+            host = str(parsed.hostname or "").rstrip(".").lower()
+            port = parsed.port
+        except ValueError:
+            return ""
+        if (
+            parsed.scheme != "https"
+            or host not in {"play.google.com", "www.play.google.com"}
+            or port not in {None, 443}
+            or parsed.username
+            or parsed.password
+        ):
+            return ""
         query_id = (parse_qs(parsed.query).get("id") or [""])[0].strip()
         if query_id:
             value = query_id
@@ -903,12 +922,13 @@ def app_payload(item: dict) -> dict:
     closed = split_country_codes(item.get("last_closed_countries"))
     opened = split_country_codes(item.get("last_open_countries"))
     app_type = normalize_app_type(item.get("app_type"))
+    app_id = normalize_package_input(item.get("app_id") or item.get("app_url") or "")
     return {
         "row_index": int(item.get("row_index") or 0),
         "enabled": boolish(item.get("enabled"), default=True),
         "status": str(item.get("status") or "watch").strip().lower(),
-        "app_url": str(item.get("app_url") or ""),
-        "app_id": str(item.get("app_id") or ""),
+        "app_url": google_play_url(app_id) if app_id else "",
+        "app_id": app_id,
         "app_name": str(item.get("app_name") or item.get("app_id") or ""),
         "owner": str(item.get("owner") or ""),
         "notes": str(item.get("notes") or ""),
@@ -928,6 +948,12 @@ def require_authentication():
     g.current_user = None
     if request.endpoint is None:
         return None
+    if request.endpoint == "logout" and not request_origin_allowed():
+        return "Заборонений міжсайтовий запит.", 403
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and not request_origin_allowed():
+        if request.path.startswith("/api/") or request.is_json:
+            return api_error("Заборонений міжсайтовий запит.", 403, "CROSS_ORIGIN_REQUEST_BLOCKED")
+        return "Заборонений міжсайтовий запит.", 403
     if not AUTH_REQUIRED:
         if not session.get("csrf_token"):
             session["csrf_token"] = secrets.token_urlsafe(24)
@@ -959,27 +985,47 @@ def login():
         return redirect(url_for("dashboard"))
     error = ""
     status = 200
+    retry_after = 0
     email = normalize_email(request.form.get("email") or "")
     if request.method == "POST":
         if not valid_form_csrf():
             return "Сесію форми втрачено. Онови сторінку.", 403
         password = request.form.get("password") or ""
-        try:
-            user = get_user_by_email(email, fresh=True)
-            if not verify_account_password(user, password):
-                error = "Невірна корпоративна пошта або пароль."
-            else:
-                login_user(user)
-                return redirect(url_for("dashboard"))
-        except DatabaseConfigError:
-            error, status = "Сховище користувачів тимчасово недоступне. Спробуй пізніше.", 503
-    return render_template("auth.html", email=email, error=error, domain=AUTH_ALLOWED_EMAIL_DOMAIN,
-                           csrf_token=login_csrf_token()), status
+        login_identity = login_limit_identity(email, request.remote_addr)
+        retry_after = LOGIN_ATTEMPT_LIMITER.retry_after(login_identity)
+        if retry_after:
+            error, status = "Забагато невдалих спроб. Спробуй ще раз трохи пізніше.", 429
+        else:
+            try:
+                user = get_user_by_email(email, fresh=True)
+                if len(password) > 256 or not verify_account_password(user, password):
+                    retry_after = LOGIN_ATTEMPT_LIMITER.record_failure(login_identity)
+                    error = "Невірна корпоративна пошта або пароль."
+                    if retry_after:
+                        error, status = "Забагато невдалих спроб. Спробуй ще раз трохи пізніше.", 429
+                else:
+                    LOGIN_ATTEMPT_LIMITER.clear(login_identity)
+                    login_user(user)
+                    return redirect(url_for("dashboard"))
+            except DatabaseConfigError:
+                error, status = "Сховище користувачів тимчасово недоступне. Спробуй пізніше.", 503
+    rendered = render_template("auth.html", email=email, error=error, domain=AUTH_ALLOWED_EMAIL_DOMAIN,
+                               csrf_token=login_csrf_token())
+    headers = {"Retry-After": str(retry_after)} if retry_after else {}
+    return rendered, status, headers
+
+
+@app.after_request
+def add_browser_security_headers(response):
+    return apply_security_headers(response)
 
 
 @app.context_processor
 def inject_account_context():
-    return {"can_manage_users": is_account_admin()}
+    return {
+        "can_manage_users": is_account_admin(),
+        "logout_csrf_token": login_csrf_token(),
+    }
 
 
 app.register_blueprint(create_accounts_blueprint(
@@ -991,8 +1037,10 @@ app.register_blueprint(create_accounts_blueprint(
 ))
 
 
-@app.get("/logout")
+@app.post("/logout")
 def logout():
+    if not valid_form_csrf():
+        return "Сесію форми втрачено. Онови сторінку.", 403
     session.clear()
     return redirect(url_for("login"))
 

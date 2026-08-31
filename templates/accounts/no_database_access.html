@@ -12,7 +12,12 @@
   <div class="page-background" aria-hidden="true"></div>
   <header class="app-header">
     <strong>{{ site_name }}</strong>
-    <div class="header-actions"><a class="secondary-button" href="{{ url_for('logout') }}">Вийти</a></div>
+    <div class="header-actions">
+      <form method="post" action="{{ url_for('logout') }}">
+        <input type="hidden" name="csrf_token" value="{{ logout_csrf_token }}">
+        <button class="secondary-button" type="submit">Вийти</button>
+      </form>
+    </div>
   </header>
   <main class="app-main accounts-main">
     <h1>Доступ до баз даних не надано</h1>

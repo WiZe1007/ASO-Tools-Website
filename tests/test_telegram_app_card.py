@@ -63,6 +63,36 @@ class TelegramAppCardTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertEqual(app.normalize_content_rating_label(source), expected)
 
+    @patch("app.session.get")
+    def test_card_media_rejects_untrusted_or_oversized_downloads(self, get):
+        for url in (
+            "http://play-lh.googleusercontent.com/icon.png",
+            "https://127.0.0.1/icon.png",
+            "https://play-lh.googleusercontent.com.attacker.test/icon.png",
+            "https://user:password@play-lh.googleusercontent.com/icon.png",
+        ):
+            with self.subTest(url=url):
+                self.assertIsNone(app.fetch_card_media_bytes(url))
+        get.assert_not_called()
+
+        response = Mock(status_code=200)
+        response.headers = {
+            "Content-Type": "image/png",
+            "Content-Length": str(app.CARD_MEDIA_MAX_BYTES + 1),
+        }
+        get.return_value = response
+        self.assertIsNone(app.fetch_card_media_bytes("https://play-lh.googleusercontent.com/icon.png"))
+        get.assert_called_once()
+
+    @patch("app.session.get")
+    def test_card_media_redirect_cannot_escape_google_cdn(self, get):
+        response = Mock(status_code=302)
+        response.headers = {"Location": "https://127.0.0.1/internal"}
+        get.return_value = response
+
+        self.assertIsNone(app.fetch_card_media_bytes("https://play-lh.googleusercontent.com/icon.png"))
+        get.assert_called_once()
+
     @patch("app.send_telegram_photo")
     @patch("app.build_telegram_app_card", return_value=b"card")
     def test_live_event_is_forwarded_to_card_builder(self, build_card, send_photo):
