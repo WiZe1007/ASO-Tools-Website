@@ -19,12 +19,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, quote, unquote
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 
 import requests
 from requests.adapters import HTTPAdapter
 from bs4 import BeautifulSoup
 from flask import Flask, abort, g, render_template, request, jsonify, redirect, url_for, session as flask_session
-from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.security import generate_password_hash
+
+import database_site.app as shared_accounts
+from account_access import (
+    account_session_token, account_session_valid, account_validation_error,
+    create_accounts_blueprint, is_account_admin, login_csrf_token,
+    valid_form_csrf, verify_account_password,
+)
 
 try:
     from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -189,6 +197,9 @@ AUTH_DB_PATH = (
     os.environ.get("AUTH_DB_PATH")
     or os.path.expanduser("~/.wwa_aso_checker_users.sqlite3")
 ).strip()
+AUTH_STORAGE = (os.environ.get("AUTH_STORAGE") or (
+    "google_sheets" if (os.environ.get("AUTH_SPREADSHEET_ID") or shared_accounts.SPREADSHEET_ID) else "sqlite"
+)).strip().lower()
 
 # Single-instance state
 STATE_FILE = os.path.expanduser("~/.wwa_aso_checker_state.json")
@@ -1139,8 +1150,9 @@ app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 60 * 60 * 24 * 30
 app.config["SECRET_KEY"] = (
     os.environ.get("SECRET_KEY")
     or os.environ.get("AUTH_SECRET_KEY")
-    or "wwa-aso-tools-local-dev-secret-change-me"
+    or secrets.token_hex(32)
 )
+app.config["AUTH_ADMIN_EMAILS"] = os.environ.get("AUTH_ADMIN_EMAILS") or os.environ.get("DATABASE_SITE_ADMIN_EMAILS") or ""
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 if (os.environ.get("SESSION_COOKIE_SECURE") or "").strip() == "1":
@@ -1162,10 +1174,15 @@ def auth_db_path() -> str:
     return path
 
 
+@contextmanager
 def auth_db_connect():
     conn = sqlite3.connect(auth_db_path(), timeout=20)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def ensure_auth_db():
@@ -1211,7 +1228,15 @@ def user_can_access_s_live_db(email: str | None = None) -> bool:
     return current_email in allowed
 
 
-def get_user_by_email(email: str):
+def auth_uses_google_sheets():
+    if AUTH_STORAGE not in {"google_sheets", "sqlite"}:
+        raise shared_accounts.DatabaseConfigError("AUTH_STORAGE must be google_sheets or sqlite.")
+    return AUTH_STORAGE == "google_sheets"
+
+
+def get_user_by_email(email: str, fresh=False):
+    if auth_uses_google_sheets():
+        return shared_accounts.get_sheets_user(email, fresh=fresh)
     ensure_auth_db()
     with auth_db_connect() as conn:
         row = conn.execute(
@@ -1224,27 +1249,73 @@ def get_user_by_email(email: str):
 def get_user_by_id(user_id):
     if not user_id:
         return None
+    if auth_uses_google_sheets():
+        return get_user_by_email(str(user_id))
     ensure_auth_db()
     with auth_db_connect() as conn:
         row = conn.execute(
-            "SELECT id, email, active, created_at, last_login_at FROM users WHERE id = ?",
+            "SELECT id, email, password_hash, active, created_at, last_login_at FROM users WHERE id = ?",
             (user_id,),
         ).fetchone()
     return dict(row) if row else None
 
 
 def create_user(email: str, password: str):
-    ensure_auth_db()
     normalized = normalize_auth_email(email)
-    with AUTH_DB_LOCK:
-        with auth_db_connect() as conn:
+    error = account_validation_error(normalized, password, AUTH_ALLOWED_EMAIL_DOMAIN)
+    if error:
+        raise ValueError(error)
+    password_hash = generate_password_hash(password)
+    if auth_uses_google_sheets():
+        user = shared_accounts.build_user_store().create_user(normalized, password_hash)
+        shared_accounts.cache_user(normalized, user)
+        return user
+    ensure_auth_db()
+    try:
+        with AUTH_DB_LOCK, auth_db_connect() as conn:
             conn.execute(
                 "INSERT INTO users (email, password_hash, active, created_at) VALUES (?, ?, 1, ?)",
-                (normalized, generate_password_hash(password), utc_now_iso()),
+                (normalized, password_hash, utc_now_iso()),
             )
+    except sqlite3.IntegrityError as exc:
+        raise ValueError("USER_ALREADY_EXISTS") from exc
+    return get_user_by_email(normalized)
+
+
+def list_users():
+    if auth_uses_google_sheets():
+        return shared_accounts.build_user_store().load_users()
+    ensure_auth_db()
+    with auth_db_connect() as conn:
+        return [dict(row) for row in conn.execute("SELECT * FROM users ORDER BY email")]
+
+
+def update_user(email: str, *, password=None, active=None):
+    normalized = normalize_auth_email(email)
+    password_hash = generate_password_hash(password) if password is not None else None
+    if auth_uses_google_sheets():
+        try:
+            return shared_accounts.build_user_store().update_user(normalized, password_hash=password_hash, active=active)
+        finally:
+            shared_accounts.clear_cached_user(normalized)
+    ensure_auth_db()
+    with AUTH_DB_LOCK, auth_db_connect() as conn:
+        changed = conn.execute(
+            "UPDATE users SET password_hash = COALESCE(?, password_hash), active = COALESCE(?, active) WHERE email = ?",
+            (password_hash, active, normalized),
+        )
+        if not changed.rowcount:
+            raise ValueError("USER_NOT_FOUND")
+    return get_user_by_email(normalized)
 
 
 def mark_user_login(user_id: int):
+    if auth_uses_google_sheets():
+        try:
+            shared_accounts.build_user_store().update_last_login(user_id, utc_now_iso())
+        except shared_accounts.DatabaseConfigError:
+            pass
+        return
     with AUTH_DB_LOCK:
         with auth_db_connect() as conn:
             conn.execute(
@@ -1258,6 +1329,8 @@ def login_user(user: dict):
     flask_session["user_id"] = user["id"]
     flask_session["user_email"] = user["email"]
     flask_session["session_nonce"] = secrets.token_urlsafe(12)
+    flask_session["csrf_token"] = secrets.token_urlsafe(24)
+    flask_session["account_token"] = account_session_token(user)
     mark_user_login(user["id"])
 
 
@@ -1267,7 +1340,7 @@ def logout_user():
 
 def safe_next_url(value: str | None) -> str:
     next_url = str(value or "").strip()
-    if next_url.startswith("/") and not next_url.startswith("//"):
+    if next_url.startswith("/") and not next_url.startswith("//") and "\\" not in next_url and not re.search(r"[\x00-\x1f]", next_url):
         return next_url
     return url_for("index")
 
@@ -1287,27 +1360,32 @@ def inject_auth_context():
         "auth_required": AUTH_REQUIRED,
         "auth_allowed_email_domain": AUTH_ALLOWED_EMAIL_DOMAIN,
         "can_access_s_live_db": user_can_access_s_live_db(),
+        "can_manage_users": is_account_admin(),
     }
 
 
 @app.before_request
 def require_site_auth():
     g.current_user = None
+    if request.endpoint is None:
+        return None
     if not AUTH_REQUIRED:
         return None
 
     public_endpoints = {
         "health",
         "login",
-        "register",
         "static",
         "task_check_availability",
     }
     if request.endpoint in public_endpoints:
         return None
 
-    user = get_user_by_id(flask_session.get("user_id"))
-    if user and int(user.get("active") or 0) == 1:
+    try:
+        user = get_user_by_id(flask_session.get("user_id"))
+    except shared_accounts.DatabaseConfigError:
+        return jsonify({"ok": False, "error": "AUTH_STORAGE_UNAVAILABLE"}), 503
+    if account_session_valid(user):
         g.current_user = user
         return None
 
@@ -1324,48 +1402,32 @@ def login():
 
     next_url = safe_next_url(request.values.get("next"))
     error = ""
+    status = 200
     email = normalize_auth_email(request.form.get("email") or "")
 
     if request.method == "POST":
+        if not valid_form_csrf():
+            return "Сесію форми втрачено. Онови сторінку.", 403
         password = request.form.get("password") or ""
-        user = get_user_by_email(email)
-        if not user or int(user.get("active") or 0) != 1 or not check_password_hash(user["password_hash"], password):
-            error = "Невірна пошта або пароль."
-        else:
-            login_user(user)
-            return redirect(next_url)
+        try:
+            user = get_user_by_email(email, fresh=True)
+            if not verify_account_password(user, password):
+                error = "Невірна пошта або пароль."
+            else:
+                login_user(user)
+                return redirect(next_url)
+        except shared_accounts.DatabaseConfigError:
+            error, status = "Сховище користувачів тимчасово недоступне. Спробуй пізніше.", 503
 
-    return render_template("auth.html", mode="login", email=email, error=error, next_url=next_url)
+    return render_template("auth.html", email=email, error=error, next_url=next_url,
+                           csrf_token=login_csrf_token()), status
 
 
-@app.route("/register", methods=["GET", "POST"])
-def register():
-    if not AUTH_REQUIRED:
-        return redirect(url_for("index"))
-
-    next_url = safe_next_url(request.values.get("next"))
-    error = ""
-    email = normalize_auth_email(request.form.get("email") or "")
-
-    if request.method == "POST":
-        password = request.form.get("password") or ""
-        password_confirm = request.form.get("password_confirm") or ""
-
-        if not email_domain_allowed(email):
-            error = f"Реєстрація доступна тільки для пошти {AUTH_ALLOWED_EMAIL_DOMAIN}."
-        elif len(password) < 8:
-            error = "Пароль має містити мінімум 8 символів."
-        elif password != password_confirm:
-            error = "Паролі не співпадають."
-        elif get_user_by_email(email):
-            error = "Користувач з такою поштою вже існує."
-        else:
-            create_user(email, password)
-            user = get_user_by_email(email)
-            login_user(user)
-            return redirect(next_url)
-
-    return render_template("auth.html", mode="register", email=email, error=error, next_url=next_url)
+app.register_blueprint(create_accounts_blueprint(
+    list_users=list_users, get_user=get_user_by_email, create_user=create_user, update_user=update_user,
+    domain=lambda: AUTH_ALLOWED_EMAIL_DOMAIN, site_name="WWA Tools", home_endpoint="index",
+    storage_errors=(shared_accounts.DatabaseConfigError, sqlite3.Error),
+))
 
 
 @app.get("/logout")

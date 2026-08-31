@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="uk" data-theme="dark" data-theme-storage="{{ 'wwa-db-theme' if home_endpoint == 'dashboard' else 'wwa.aso.tools.theme' }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Користувачі | {{ site_name }}</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='db/data-base-favicon.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='db/accounts.css', v='20260831') }}">
+  <script src="{{ url_for('static', filename='db/accounts.js', v='20260831') }}" defer></script>
+</head>
+<body class="database-page accounts-page">
+  <div class="page-background" aria-hidden="true"></div>
+  <header class="app-header">
+    <a class="brand" href="{{ url_for(home_endpoint) }}">
+      <img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" alt="">
+      <span><strong>{{ site_name }}</strong><small>Керування доступом</small></span>
+    </a>
+    <div class="header-actions">
+      <span class="user-email">{{ current_email }}</span>
+      <button class="icon-button" type="button" id="accountsTheme" title="Змінити тему" aria-label="Змінити тему">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
+      </button>
+      <a class="secondary-button" href="{{ url_for(home_endpoint) }}">До сервісу</a>
+    </div>
+  </header>
+  <main class="app-main accounts-main">
+    <div class="accounts-heading"><h1>Користувачі</h1><span>Акаунтів: {{ users|length }}</span></div>
+    {% if error %}<div class="form-alert" role="alert">{{ error }}</div>{% endif %}
+    {% for message in get_flashed_messages() %}<div class="accounts-notice" role="status">{{ message }}</div>{% endfor %}
+    <section class="account-create" aria-labelledby="createTitle">
+      <h2 id="createTitle">Додати користувача</h2>
+      <form method="post" action="{{ url_for('accounts.users') }}" class="accounts-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Корпоративна пошта<input name="email" type="email" maxlength="254" placeholder="name{{ domain }}" autocomplete="off" required></label>
+        <label>Пароль<input name="password" type="password" minlength="8" maxlength="256" placeholder="Щонайменше 8 символів" autocomplete="new-password" required></label>
+        <button type="submit" class="primary-button">Додати користувача</button>
+      </form>
+    </section>
+    <section class="accounts-list" aria-label="Облікові записи">
+      {% for user in users %}
+      <article class="account-row">
+        <div class="account-identity">
+          <strong>{{ user.email }}</strong>
+          <span class="account-status {{ 'is-active' if user.active else 'is-disabled' }}">{{ 'Активний' if user.active else 'Вимкнений' }}</span>
+          {% if user.email == current_email %}<small>Ваш акаунт</small>{% endif %}
+        </div>
+        <div class="account-actions">
+          <details class="account-password">
+            <summary>Змінити пароль</summary>
+            <form method="post" action="{{ url_for('accounts.edit_user', email=user.email) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="action" value="password">
+              <label>Новий пароль для {{ user.email }}<input type="password" name="password" minlength="8" maxlength="256" autocomplete="new-password" required></label>
+              <button type="submit" class="primary-button">Зберегти пароль</button>
+            </form>
+          </details>
+          {% if user.email != current_email %}
+          <form method="post" action="{{ url_for('accounts.edit_user', email=user.email) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="action" value="status">
+            <input type="hidden" name="active" value="{{ 0 if user.active else 1 }}">
+            <button type="submit" class="secondary-button {{ 'account-disable' if user.active else '' }}">{{ 'Вимкнути' if user.active else 'Увімкнути' }}</button>
+          </form>
+          {% endif %}
+        </div>
+      </article>
+      {% else %}<p class="accounts-empty">Користувачів поки немає.</p>{% endfor %}
+    </section>
+  </main>
+</body>
+</html>

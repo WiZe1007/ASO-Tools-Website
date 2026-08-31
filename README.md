@@ -43,9 +43,43 @@ The same command is also stored in `Procfile`.
 These are optional. Do not commit real values.
 
 - `SECRET_KEY` - required for stable login sessions on Render. Use a long random string.
-- `AUTH_ALLOWED_EMAIL_DOMAIN` - allowed registration email domain. Defaults to `@wildwildgroup.com`.
-- `AUTH_DB_PATH` - SQLite user database path. For persistent users on Render, point this to a mounted Disk, for example `/var/data/wwa_auth.sqlite3`.
+- `AUTH_ALLOWED_EMAIL_DOMAIN` - email domain for manually created accounts. Defaults to `@wildwildgroup.com`.
+- `AUTH_STORAGE` - set to `google_sheets` on Render to use the existing Apps Database users. Defaults to Google Sheets when a WWA/auth spreadsheet is configured, otherwise SQLite for local development. Storage errors never fall back to local passwords.
+- `AUTH_SPREADSHEET_ID` - the WWA spreadsheet containing the existing `Users` tab. Falls back to `DATABASE_SITE_SPREADSHEET_ID`, `AVAILABILITY_DB_SPREADSHEET_ID`, or `GOOGLE_SHEETS_SPREADSHEET_ID`.
+- `AUTH_USERS_SHEET` - defaults to `Users` (also accepts `DATABASE_SITE_USERS_SHEET`).
+- `AUTH_SERVICE_ACCOUNT_JSON` - credentials for the shared user spreadsheet; falls back to the existing database-site or Google service account configuration.
+- `AUTH_ADMIN_EMAILS` - exact comma-separated existing account emails allowed to manage users. Empty by default: no account automatically becomes an administrator.
+- `AUTH_DB_PATH` - SQLite user database path, used only with `AUTH_STORAGE=sqlite`. SQLite is not persistent on Render Free.
 - `AUTH_REQUIRED` - defaults to `1`. Set `0` only for local debugging without login.
+
+Self-registration is removed, including both GET and POST `/register`.
+Administrators sign in normally and open `/admin/users` to add an email/password,
+reset a password, or disable/reactivate an account. S DB permissions remain a
+separate exact-email allowlist; adding an account or making it an account admin
+does not grant S DB access.
+
+For both Render Web Services, configure the same `AUTH_SPREADSHEET_ID`,
+`AUTH_USERS_SHEET`, and credentials. Use `AUTH_STORAGE=google_sheets` on WWA Tools
+and `DATABASE_SITE_AUTH_STORAGE=google_sheets` on Apps Database. Keep a separate,
+stable `SECRET_KEY` (or `DATABASE_SITE_SECRET_KEY`) on each service. Users log in
+separately on each domain, with the same existing Apps Database password.
+The existing Users rows/hashes are read in place, not recreated or reset; legacy
+WWA Tools SQLite passwords are not copied over the shared accounts.
+
+After deployment, existing browser sessions require one fresh login. Password
+resets invalidate old sessions; Google Sheets session caching may take up to 60
+seconds to expire in another worker. Login and privileged administration always
+read fresh account state.
+
+To provision accounts from a trusted terminal (password is prompted and hashed):
+
+```bash
+.venv/bin/flask --app app users add employee@wildwildgroup.com
+.venv/bin/flask --app app users check-team
+```
+
+`users check-team` checks the five requested team accounts without creating,
+activating, or resetting any account. See [the deployment checklist](database_site/README.md#manual-accounts-rollout).
 - `APPMAGIC_BEARER_TOKEN` - required for fully automatic App Magic mode on Render. Add the App Magic `Authorization: Bearer ...` token here once, and users will not need to paste anything in the website.
 - `APPMAGIC_TOKEN` - alternative name for the same Bearer token.
 - `APPMAGIC_COOKIE` - fallback if you need cookie-based App Magic access.

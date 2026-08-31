@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <title>{{ "Вхід" if mode == "login" else "Реєстрація" }} | WWA Apps Database</title>
+  <title>Вхід | WWA Apps Database</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='db/data-base-favicon.png', v='20260804') }}">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='db/data-base-favicon.png', v='20260804') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css') }}">
@@ -22,36 +22,27 @@
     <section class="auth-card">
       <div class="auth-heading">
         <span class="eyebrow">Корпоративний доступ</span>
-        <h1>{{ "Увійти до бази" if mode == "login" else "Створити акаунт" }}</h1>
-        <p>Доступ дозволений співробітникам із поштою <strong>{{ domain }}</strong>.</p>
+        <h1>Увійти до бази</h1>
+        <p>Використовуй корпоративну пошту та пароль, надані адміністратором.</p>
       </div>
 
       {% if error %}<div class="form-alert" role="alert">{{ error }}</div>{% endif %}
 
       <form method="post" class="auth-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>
           <span>Корпоративна пошта</span>
           <input type="email" name="email" value="{{ email }}" placeholder="name{{ domain }}" autocomplete="email" required autofocus>
         </label>
         <label>
           <span>Пароль</span>
-          <input type="password" name="password" placeholder="Мінімум 8 символів" autocomplete="{{ 'current-password' if mode == 'login' else 'new-password' }}" required minlength="8">
+          <input type="password" name="password" placeholder="Пароль" autocomplete="current-password" required>
         </label>
-        {% if mode == "register" %}
-        <label>
-          <span>Повтори пароль</span>
-          <input type="password" name="password_confirm" placeholder="Повтори пароль" autocomplete="new-password" required minlength="8">
-        </label>
-        {% endif %}
-        <button class="primary-button full-button" type="submit">{{ "Увійти" if mode == "login" else "Зареєструватися" }}</button>
+        <button class="primary-button full-button" type="submit">Увійти</button>
       </form>
 
       <p class="auth-switch">
-        {% if mode == "login" %}
-          Ще немає акаунта? <a href="{{ url_for('register') }}">Зареєструватися</a>
-        {% else %}
-          Уже є акаунт? <a href="{{ url_for('login') }}">Увійти</a>
-        {% endif %}
+        Для отримання доступу звернися до адміністратора.
       </p>
     </section>
   </main>

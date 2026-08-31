@@ -68,6 +68,19 @@ class FakeUserStore:
     def update_last_login(self, email, last_login_at):
         self.users[database_app.normalize_email(email)]["last_login_at"] = last_login_at
 
+    def load_users(self):
+        return [dict(user) for user in self.users.values()]
+
+    def update_user(self, email, *, password_hash=None, active=None):
+        normalized = database_app.normalize_email(email)
+        if normalized not in self.users:
+            raise ValueError("USER_NOT_FOUND")
+        if password_hash is not None:
+            self.users[normalized]["password_hash"] = password_hash
+        if active is not None:
+            self.users[normalized]["active"] = active
+        return dict(self.users[normalized])
+
 
 class DatabaseSiteTests(unittest.TestCase):
     def setUp(self):
@@ -291,7 +304,7 @@ class DatabaseSiteAuthTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"/static/db/data-base-favicon.png?v=20260804", response.data)
 
-    def test_registration_rejects_external_email_domain(self):
+    def test_registration_is_removed(self):
         response = self.client.post(
             "/register",
             data={
@@ -300,22 +313,16 @@ class DatabaseSiteAuthTests(unittest.TestCase):
                 "password_confirm": "correct-password",
             },
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("Реєстрація доступна тільки".encode(), response.data)
+        self.assertEqual(response.status_code, 404)
         self.assertIsNone(database_app.get_user_by_email("employee@example.com"))
 
-    def test_corporate_user_can_register_logout_and_login(self):
+    def test_manually_created_corporate_user_can_logout_and_login(self):
         email = "employee@wildwildgroup.com"
-        registered = self.client.post(
-            "/register",
-            data={
-                "email": email,
-                "password": "correct-password",
-                "password_confirm": "correct-password",
-            },
-        )
-        self.assertEqual(registered.status_code, 302)
-        self.assertEqual(registered.headers["Location"], "/")
+        database_app.create_user(email, "correct-password")
+        self.client.get("/login")
+        with self.client.session_transaction() as session:
+            csrf = session["csrf_token"]
+        self.client.post("/login", data={"email": email, "password": "correct-password", "csrf_token": csrf})
         self.assertIsNotNone(database_app.get_user_by_email(email))
 
         dashboard = self.client.get("/")
@@ -326,9 +333,12 @@ class DatabaseSiteAuthTests(unittest.TestCase):
         self.assertEqual(logged_out.status_code, 302)
         self.assertIn("/login", logged_out.headers["Location"])
 
+        self.client.get("/login")
+        with self.client.session_transaction() as session:
+            csrf = session["csrf_token"]
         logged_in = self.client.post(
             "/login",
-            data={"email": email, "password": "correct-password"},
+            data={"email": email, "password": "correct-password", "csrf_token": csrf},
         )
         self.assertEqual(logged_in.status_code, 302)
         self.assertEqual(logged_in.headers["Location"], "/")
@@ -358,23 +368,18 @@ class DatabaseSiteGoogleSheetsAuthTests(unittest.TestCase):
 
     def test_google_sheets_user_survives_cache_clear_and_can_login(self):
         email = "free-user@wildwildgroup.com"
-        registered = self.client.post(
-            "/register",
-            data={
-                "email": email,
-                "password": "correct-password",
-                "password_confirm": "correct-password",
-            },
-        )
-        self.assertEqual(registered.status_code, 302)
+        database_app.create_user(email, "correct-password")
         self.assertIn(email, self.user_store.users)
         self.assertNotEqual(self.user_store.users[email]["password_hash"], "correct-password")
 
         self.client.get("/logout")
         database_app.AUTH_USER_CACHE.clear()
+        self.client.get("/login")
+        with self.client.session_transaction() as session:
+            csrf = session["csrf_token"]
         logged_in = self.client.post(
             "/login",
-            data={"email": email, "password": "correct-password"},
+            data={"email": email, "password": "correct-password", "csrf_token": csrf},
         )
         self.assertEqual(logged_in.status_code, 302)
         self.assertEqual(logged_in.headers["Location"], "/")

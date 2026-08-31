@@ -27,6 +27,9 @@
         <i></i><span id="connectionStateLabel">{{ "Google Sheets connected" if spreadsheet_configured else "Configuration required" }}</span>
       </span>
       <span class="user-email" title="Поточний користувач">{{ current_user_email }}</span>
+      {% if can_manage_users %}
+      <a class="secondary-button" href="{{ url_for('accounts.users') }}" style="text-decoration:none">Користувачі</a>
+      {% endif %}
       <button class="icon-button" id="themeButton" type="button" title="Змінити тему" aria-label="Змінити тему">
         <svg aria-hidden="true"><use href="#icon-sun"></use></svg>
       </button>

@@ -42,8 +42,55 @@ For local-only development, `DATABASE_SITE_AUTH_STORAGE=sqlite` remains
 available. `DATABASE_SITE_AUTH_DB` then controls the SQLite file path, but that
 file is not persistent on Render Free.
 
-The WWA database is available to every registered user whose email ends with
-`@wildwildgroup.com`.
+Self-registration is disabled. `/register` returns 404 for both GET and POST.
+The WWA database is available to active accounts provisioned manually by an
+administrator. A corporate email address alone does not create an account.
+
+## Manual Accounts Rollout
+
+1. Keep the existing WWA Google Sheet and its `Users` tab. Do not delete or
+   replace password hashes. The five requested accounts are reused in place:
+   `bohdan.m.publish@wildwildgroup.com`, `artem.k.publish@wildwildgroup.com`,
+   `vladyslav.s.publish@wildwildgroup.com`,
+   `mykhailo.h.android.dev@wildwildgroup.com`, `cto@wildwildgroup.com`.
+2. On both Web Services set `AUTH_SPREADSHEET_ID` to this same WWA spreadsheet,
+   `AUTH_USERS_SHEET=Users`, and `AUTH_SERVICE_ACCOUNT_JSON` to credentials with
+   Editor access to it. Existing `DATABASE_SITE_*`/`GOOGLE_SERVICE_ACCOUNT_*`
+   credentials remain supported as fallbacks. Do not use the S spreadsheet for
+   account storage.
+3. Set `DATABASE_SITE_AUTH_STORAGE=google_sheets` on Apps Database and
+   `AUTH_STORAGE=google_sheets` on WWA Tools. No Render Disk is needed.
+4. Set `AUTH_ADMIN_EMAILS` on each service to the owner-approved existing
+   administrator email(s). There are no hard-coded/default administrators.
+   Keep `DATABASE_SITE_SECRET_KEY`/`SECRET_KEY` stable and private.
+5. Deploy both Web Services. Sign in again using the existing Apps Database
+   password. Old WWA Tools-only SQLite credentials are not an alternative login.
+6. Administrators open `/admin/users` (also linked from the header). The page
+   lists existing accounts and supports manual email/password creation, password
+   resets, and activation/deactivation. It never displays stored password hashes.
+   Other users cannot access this page, even by posting directly to its routes.
+7. Check that the five accounts above appear as active. Existing accounts need
+   no import. If an account is missing, add it manually with a new password and
+   share it with that employee through an approved private channel. Email alone
+   cannot restore a missing password; the deployment never invents/reset passwords.
+
+The same account credentials work on both domains with separate login sessions.
+Password changes revoke older sessions after the short user-cache TTL (60 seconds
+by default); login and admin mutations bypass cached account records. S DB access
+continues to depend on the existing S email allowlist, not on the administrator
+role. `AUTH_REQUIRED=0` does not unlock the account administration UI.
+
+For a trusted terminal with the service environment configured:
+
+```bash
+.venv/bin/flask --app database_site.app users check-team
+.venv/bin/flask --app database_site.app users add employee@wildwildgroup.com
+```
+
+The add command prompts for a password without echoing it. `check-team` is
+read-only and reports missing/inactive accounts; it does not overwrite hashes.
+
+## S Database
 
 Environment variables for the restricted S database:
 
