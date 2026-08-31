@@ -52,6 +52,7 @@ These are optional. Do not commit real values.
 - `AUTH_ADMIN_EMAILS` - exact comma-separated existing account emails allowed to manage users. Empty by default: no account automatically becomes an administrator.
 - `AUTH_DB_PATH` - SQLite user database path, used only with `AUTH_STORAGE=sqlite`. SQLite is not persistent on Render Free.
 - `AUTH_REQUIRED` - defaults to `1`. Set `0` only for local debugging without login. Render is always protected even if this value is accidentally set to `0`.
+- `WWA_HEAVY_REQUESTS_PER_MINUTE` - per-user limit shared by resource-heavy check endpoints; defaults to `12`.
 
 Self-registration is removed, including both GET and POST `/register`.
 Administrators sign in normally and open `/admin/users` to add an email/password,

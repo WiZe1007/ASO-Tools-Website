@@ -85,6 +85,25 @@ class LoginAttemptLimiter:
             attempts.append(now)
         return self.retry_after(identity)
 
+    def consume(self, identity):
+        """Record one allowed action and return a retry delay when the window is full."""
+        key = self._key(identity)
+        now = time.monotonic()
+        with self._lock:
+            attempts = self._attempts.get(key)
+            if attempts:
+                self._trim(attempts, now)
+                if not attempts:
+                    self._attempts.pop(key, None)
+                    attempts = None
+            if attempts and len(attempts) >= self.max_failures:
+                return max(1, math.ceil(self.window_seconds - (now - attempts[0])))
+            if len(self._attempts) >= self.max_keys and key not in self._attempts:
+                oldest = min(self._attempts, key=lambda item: self._attempts[item][0] if self._attempts[item] else now)
+                self._attempts.pop(oldest, None)
+            self._attempts[key].append(now)
+            return 0
+
     def clear(self, identity=None):
         with self._lock:
             if identity is None:
@@ -117,10 +136,19 @@ def request_origin_allowed():
     return parsed.scheme in {"http", "https"} and parsed.netloc.casefold() == request.host.casefold()
 
 
+def request_csp_nonce():
+    nonce = getattr(g, "csp_nonce", "")
+    if not nonce:
+        nonce = secrets.token_urlsafe(18)
+        g.csp_nonce = nonce
+    return nonce
+
+
 def apply_security_headers(response):
+    nonce = request_csp_nonce()
     response.headers.setdefault("Content-Security-Policy", (
         "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; "
-        "form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+        f"form-action 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https:; font-src 'self' data: https:; connect-src 'self'"
     ))
     response.headers.setdefault("X-Frame-Options", "DENY")

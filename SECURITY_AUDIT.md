@@ -132,7 +132,40 @@ the current password hash, so changing a password invalidates old sessions.
 ### 11. Vulnerable image dependency
 
 The accepted Pillow range included a release reported by `pip-audit` with known
-security advisories. The project now requires `Pillow>=12.3,<13`.
+security advisories. The project now pins Pillow to the audited `12.3.0` release.
+
+### 12. Inline-script CSP bypass
+
+The initial CSP still allowed `script-src 'unsafe-inline'`, which would have made
+the policy much less useful if an HTML injection were introduced later.
+
+Every response now gets a cryptographically random CSP nonce. All seven inline
+application scripts receive that nonce, and `script-src` accepts only same-origin
+scripts or scripts carrying the response-specific nonce. Inline event handlers
+remain disallowed.
+
+### 13. Spreadsheet-formula injection in CSV export
+
+CSV cells beginning with `=`, `+`, `-`, or `@` can be interpreted as formulas by
+Excel or another spreadsheet program even when the CSV field is quoted.
+
+The browser export now prefixes those values with an apostrophe before quoting
+them. User-controlled labels remain text when the downloaded CSV is opened.
+
+### 14. Resource-heavy endpoint abuse
+
+An authenticated user could repeatedly call the Google Play, Sensor Tower, and
+availability checks and consume the service's worker capacity.
+
+Those endpoints now share a per-user and remote-address sliding-window limit.
+The default is 12 requests per minute and can be adjusted with
+`WWA_HEAVY_REQUESTS_PER_MINUTE`. Alternating between tools does not bypass it.
+
+### 15. Dependency drift
+
+Direct production dependencies are pinned to audited versions. A weekly
+Dependabot configuration was added so version and security updates are proposed
+instead of silently changing during an unrelated Render deploy.
 
 ## Verification
 
@@ -159,10 +192,10 @@ Production-like local checks confirmed:
 
 ### Rate-limit storage
 
-The login limiter is intentionally lightweight and stored in each Python process.
-It resets after a restart and is not shared between multiple workers. For stronger
-protection against distributed password attacks, add a Render/Cloudflare rate
-limit or move counters to a shared store such as Redis.
+The login and expensive-request limiters are intentionally lightweight and stored
+in each Python process. They reset after a restart and are not shared between
+multiple workers. For stronger protection against distributed attacks, add a
+Render/Cloudflare rate limit or move counters to a shared store such as Redis.
 
 ### Multi-factor authentication
 
@@ -172,10 +205,10 @@ especially for administrators.
 
 ### Content Security Policy
 
-The current templates still need inline scripts and styles, so CSP contains
-`'unsafe-inline'`. Existing output escaping and strict request validation remain
-the primary XSS defenses. Migrating inline code to static files or CSP nonces is a
-future hardening step.
+Inline scripts are protected with response-specific nonces. The templates still
+contain inline style blocks and dynamic style attributes, so `style-src` retains
+`'unsafe-inline'`. Moving those remaining styles to classes would further harden
+CSS injection, but it does not permit arbitrary JavaScript execution.
 
 ### Secret rotation
 

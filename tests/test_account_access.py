@@ -1,5 +1,6 @@
 import tempfile
 import sqlite3
+import re
 import unittest
 from contextlib import ExitStack, closing
 from pathlib import Path
@@ -554,6 +555,20 @@ class SeparateAccountTests(unittest.TestCase):
             module.LOGIN_ATTEMPT_LIMITER.clear()
             self.assertEqual(self.login(client).status_code, 302)
 
+    def test_expensive_tools_share_one_per_user_rate_limit(self):
+        client = self.clients[1]
+        self.assertEqual(self.login(client).status_code, 302)
+        limiter = LoginAttemptLimiter(max_failures=2, window_seconds=60)
+        with patch.object(tools_app, "HEAVY_REQUEST_LIMITER", limiter):
+            first = client.post("/check", json={"url": "invalid"})
+            second = client.post("/availability/check", json={"url": "invalid"})
+            blocked = client.post("/api/indexing/check", json={"app_id": "invalid"})
+        self.assertEqual(first.status_code, 400)
+        self.assertEqual(second.status_code, 400)
+        self.assertEqual(blocked.status_code, 429)
+        self.assertEqual(blocked.get_json()["error"], "RATE_LIMITED")
+        self.assertGreater(int(blocked.headers["Retry-After"]), 0)
+
     def test_cross_origin_browser_writes_are_blocked_on_both_sites(self):
         hostile_headers = {
             "Origin": "https://attacker.onrender.com",
@@ -644,13 +659,29 @@ class SeparateAccountTests(unittest.TestCase):
                 response = module.app.test_client().get("/login")
             self.assertTrue(expected_headers <= set(response.headers.keys()))
             self.assertEqual(response.headers["X-Frame-Options"], "DENY")
-            self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+            csp = response.headers["Content-Security-Policy"]
+            self.assertIn("frame-ancestors 'none'", csp)
+            self.assertRegex(csp, r"script-src 'self' 'nonce-[A-Za-z0-9_-]+'")
+            self.assertNotIn("script-src 'self' 'unsafe-inline'", csp)
             self.assertIn("no-store", response.headers["Cache-Control"])
             self.assertIn("max-age=31536000", response.headers["Strict-Transport-Security"])
             cookie = response.headers.get("Set-Cookie", "")
             self.assertIn("Secure", cookie)
             self.assertIn("HttpOnly", cookie)
             self.assertIn("SameSite=Lax", cookie)
+
+    def test_inline_scripts_use_the_response_csp_nonce(self):
+        for client in self.clients:
+            self.assertEqual(self.login(client).status_code, 302)
+            response = client.get("/")
+            csp = response.headers["Content-Security-Policy"]
+            nonce = re.search(r"script-src 'self' 'nonce-([^']+)'", csp).group(1)
+            self.assertIn(f'<script nonce="{nonce}">'.encode(), response.data)
+
+    def test_csv_export_neutralizes_spreadsheet_formulas(self):
+        source = (Path(__file__).resolve().parents[1] / "static" / "js" / "site-enhance.js").read_text()
+        self.assertIn("/^[=+\\-@]/.test(value)", source)
+        self.assertIn("value = `'${value}`", source)
 
     def test_render_runtime_cannot_use_local_only_tools_endpoints(self):
         client = self.clients[1]

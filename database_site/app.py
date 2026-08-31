@@ -24,7 +24,7 @@ from account_access import (
     LoginAttemptLimiter, account_database_access, account_session_token, account_session_valid,
     account_validation_error, apply_security_headers, create_accounts_blueprint,
     hosted_runtime_detected, is_account_admin, login_csrf_token, login_limit_identity,
-    request_origin_allowed,
+    request_csp_nonce, request_origin_allowed,
     valid_form_csrf, verify_account_password,
 )
 
@@ -1024,6 +1024,7 @@ def add_browser_security_headers(response):
 def inject_account_context():
     return {
         "can_manage_users": is_account_admin(),
+        "csp_nonce": request_csp_nonce(),
         "logout_csrf_token": login_csrf_token(),
     }
 

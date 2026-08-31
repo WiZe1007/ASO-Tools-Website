@@ -436,7 +436,7 @@
     </section>
   </main>
 
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (() => {
       const byId = (id) => document.getElementById(id);
       const API_URL = {{ live_db_api_url|tojson }};

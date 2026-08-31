@@ -267,7 +267,7 @@
     <symbol id="icon-external" viewBox="0 0 24 24"><path d="M14 3h7v7M21 3l-9 9M18 13v7H4V6h7"/></symbol>
   </svg>
 
-  <script>
+  <script nonce="{{ csp_nonce }}">
     window.DATABASE_CONFIG = {{ {
       "csrfToken": csrf_token,
       "currentUserEmail": current_user_email,

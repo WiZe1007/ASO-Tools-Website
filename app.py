@@ -31,7 +31,8 @@ import database_site.app as shared_accounts
 from account_access import (
     LoginAttemptLimiter, account_session_token, account_session_valid, account_validation_error,
     apply_security_headers, create_accounts_blueprint, is_account_admin,
-    hosted_runtime_detected, login_csrf_token, login_limit_identity, request_origin_allowed,
+    hosted_runtime_detected, login_csrf_token, login_limit_identity, request_csp_nonce,
+    request_origin_allowed,
     valid_form_csrf, verify_account_password,
 )
 
@@ -1187,6 +1188,10 @@ AUTH_DB_LOCK = threading.Lock()
 TOOLS_AUTH_STORE_LOCK = threading.Lock()
 TOOLS_AUTH_USER_STORE = None
 LOGIN_ATTEMPT_LIMITER = LoginAttemptLimiter()
+HEAVY_REQUEST_LIMITER = LoginAttemptLimiter(
+    max_failures=max(2, min(120, env_int("WWA_HEAVY_REQUESTS_PER_MINUTE", 12))),
+    window_seconds=60,
+)
 
 
 def auth_db_path() -> str:
@@ -1434,6 +1439,7 @@ def inject_auth_context():
         "current_user_email": flask_session.get("user_email"),
         "auth_required": AUTH_REQUIRED,
         "auth_allowed_email_domain": AUTH_ALLOWED_EMAIL_DOMAIN,
+        "csp_nonce": request_csp_nonce(),
         "logout_csrf_token": login_csrf_token(),
         "can_access_s_live_db": user_can_access_s_live_db(),
         "can_access_wwa_live_db": user_can_access_live_database("wwa"),
@@ -1522,6 +1528,25 @@ def login():
 @app.after_request
 def add_browser_security_headers(response):
     return apply_security_headers(response)
+
+
+def expensive_request_limit_error():
+    user = getattr(g, "current_user", None) or {}
+    identity = login_limit_identity(
+        user.get("email") or flask_session.get("user_email") or "anonymous",
+        request.remote_addr,
+    )
+    retry_after = HEAVY_REQUEST_LIMITER.consume(identity)
+    if not retry_after:
+        return None
+    response = jsonify({
+        "ok": False,
+        "error": "RATE_LIMITED",
+        "message": "Забагато перевірок. Спробуй ще раз трохи пізніше.",
+    })
+    response.status_code = 429
+    response.headers["Retry-After"] = str(retry_after)
+    return response
 
 
 app.register_blueprint(create_accounts_blueprint(
@@ -7111,6 +7136,9 @@ def s_live_apps_api():
 
 @app.post("/app-overview/lookup")
 def app_overview_lookup():
+    limit_error = expensive_request_limit_error()
+    if limit_error:
+        return limit_error
     payload = request.json or {}
     app_id = normalize_android_package_input(payload.get("app_id") or payload.get("query") or payload.get("url") or "")
     country = normalize_sensor_tower_country(payload.get("country") or "US")
@@ -7132,6 +7160,9 @@ def app_overview_lookup():
 
 @app.post("/app-overview/publisher")
 def app_overview_publisher_lookup():
+    limit_error = expensive_request_limit_error()
+    if limit_error:
+        return limit_error
     payload = request.json or {}
     publisher_id = normalize_sensor_tower_publisher_id(payload.get("publisher_id") or payload.get("publisher") or "")
     country = normalize_sensor_tower_country(payload.get("country") or "US")
@@ -7209,6 +7240,9 @@ def api_geo_link():
 
 @app.post("/api/indexing/check")
 def api_indexing_check():
+    limit_error = expensive_request_limit_error()
+    if limit_error:
+        return limit_error
     payload = request.json or {}
     raw_app = (
         payload.get("app_id")
@@ -7239,6 +7273,9 @@ def api_indexing_check():
 
 @app.post("/check")
 def check():
+    limit_error = expensive_request_limit_error()
+    if limit_error:
+        return limit_error
     payload = request.json or {}
     url = (payload.get("url") or "").strip()
     mode = (payload.get("mode") or "toolbox").strip().lower()
@@ -7328,6 +7365,9 @@ def check():
 
 @app.post("/availability/check")
 def availability_check():
+    limit_error = expensive_request_limit_error()
+    if limit_error:
+        return limit_error
     payload = request.json or {}
     url = (payload.get("url") or "").strip()
     if not url:

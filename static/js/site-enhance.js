@@ -418,7 +418,11 @@
     const table = byId("tbl");
     if (!button || !table) return;
 
-    const cellText = (cell) => `"${String(cell.textContent || "").replace(/\s+/g, " ").trim().replaceAll('"', '""')}"`;
+    const cellText = (cell) => {
+      let value = String(cell.textContent || "").replace(/\s+/g, " ").trim();
+      if (/^[=+\-@]/.test(value)) value = `'${value}`;
+      return `"${value.replaceAll('"', '""')}"`;
+    };
     button.addEventListener("click", () => {
       const rows = qsa("tr", table).filter((row) => !row.hidden);
       if (rows.length <= 1) {
