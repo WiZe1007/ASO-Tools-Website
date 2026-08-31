@@ -29,7 +29,7 @@ from werkzeug.security import generate_password_hash
 
 import database_site.app as shared_accounts
 from account_access import (
-    account_database_access, account_session_token, account_session_valid, account_validation_error,
+    account_session_token, account_session_valid, account_validation_error,
     create_accounts_blueprint, is_account_admin, login_csrf_token,
     valid_form_csrf, verify_account_password,
 )
@@ -200,6 +200,7 @@ AUTH_DB_PATH = (
 AUTH_STORAGE = (os.environ.get("AUTH_STORAGE") or (
     "google_sheets" if (os.environ.get("AUTH_SPREADSHEET_ID") or shared_accounts.SPREADSHEET_ID) else "sqlite"
 )).strip().lower()
+TOOLS_AUTH_USERS_SHEET = (os.environ.get("TOOLS_AUTH_USERS_SHEET") or "ToolsUsers").strip() or "ToolsUsers"
 
 # Single-instance state
 STATE_FILE = os.path.expanduser("~/.wwa_aso_checker_state.json")
@@ -249,7 +250,12 @@ class TTLCache:
                         self._items.pop(cache_key, None)
             self._items[key] = (now, copy.deepcopy(value))
 
+    def delete(self, key: tuple):
+        with self._lock:
+            self._items.pop(key, None)
 
+
+TOOLS_AUTH_USER_CACHE = TTLCache(shared_accounts.AUTH_CACHE_TTL_SECONDS)
 GOOGLE_RATING_CACHE = TTLCache(CACHE_TTL_RATINGS)
 APPLE_RATING_CACHE = TTLCache(CACHE_TTL_RATINGS)
 GOOGLE_INSTALL_RANGE_CACHE = TTLCache(CACHE_TTL_INSTALL_RANGE)
@@ -1152,7 +1158,9 @@ app.config["SECRET_KEY"] = (
     or os.environ.get("AUTH_SECRET_KEY")
     or secrets.token_hex(32)
 )
-app.config["AUTH_ADMIN_EMAILS"] = os.environ.get("AUTH_ADMIN_EMAILS") or os.environ.get("DATABASE_SITE_ADMIN_EMAILS") or ""
+app.config["AUTH_ADMIN_EMAILS"] = os.environ.get("AUTH_ADMIN_EMAILS") or ""
+app.config["AUTH_ACCOUNT_REALM"] = "tools"
+app.config["SESSION_COOKIE_NAME"] = "wwa_tools_session"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 if (os.environ.get("SESSION_COOKIE_SECURE") or "").strip() == "1":
@@ -1164,6 +1172,8 @@ session.mount("http://", http_adapter)
 
 _runtime_port = None
 AUTH_DB_LOCK = threading.Lock()
+TOOLS_AUTH_STORE_LOCK = threading.Lock()
+TOOLS_AUTH_USER_STORE = None
 
 
 def auth_db_path() -> str:
@@ -1188,9 +1198,12 @@ def auth_db_connect():
 def ensure_auth_db():
     with AUTH_DB_LOCK:
         with auth_db_connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tools_users'").fetchone():
+                return
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS users (
+                CREATE TABLE tools_users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     email TEXT NOT NULL UNIQUE,
                     password_hash TEXT NOT NULL,
@@ -1200,10 +1213,9 @@ def ensure_auth_db():
                 )
                 """
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
-            if "database_access" not in columns:
-                conn.execute("ALTER TABLE users ADD COLUMN database_access TEXT")
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").fetchone():
+                conn.execute("INSERT INTO tools_users (id, email, password_hash, active, created_at, last_login_at) "
+                             "SELECT id, email, password_hash, active, created_at, last_login_at FROM users")
 
 
 def normalize_auth_email(email: str) -> str:
@@ -1231,7 +1243,11 @@ def user_can_access_live_database(database_key: str, email: str | None = None) -
     user = getattr(g, "current_user", None)
     if not AUTH_REQUIRED:
         user = {"email": normalize_auth_email(email or flask_session.get("user_email") or "")}
-    return database_key in account_database_access(user, S_LIVE_DB_ALLOWED_EMAILS)
+    if not user:
+        return False
+    if database_key == "wwa":
+        return True
+    return database_key == "s" and user["email"] in parse_email_allowlist(S_LIVE_DB_ALLOWED_EMAILS)
 
 
 def auth_uses_google_sheets():
@@ -1240,14 +1256,39 @@ def auth_uses_google_sheets():
     return AUTH_STORAGE == "google_sheets"
 
 
+def build_tools_user_store():
+    global TOOLS_AUTH_USER_STORE
+    with TOOLS_AUTH_STORE_LOCK:
+        if TOOLS_AUTH_USER_STORE is None:
+            reserved = {shared_accounts.AUTH_USERS_SHEET, shared_accounts.APPS_SHEET, shared_accounts.LOG_SHEET,
+                        shared_accounts.S_APPS_SHEET, shared_accounts.S_LOG_SHEET}
+            if TOOLS_AUTH_USERS_SHEET.casefold() in {name.casefold() for name in reserved}:
+                raise shared_accounts.DatabaseConfigError("TOOLS_AUTH_USERS_SHEET має бути окремим аркушем, наприклад ToolsUsers.")
+            sheets = shared_accounts.GoogleSheetsStore(
+                spreadsheet_id=os.environ.get("AUTH_SPREADSHEET_ID") or shared_accounts.SPREADSHEET_ID,
+                service_account_json=os.environ.get("AUTH_SERVICE_ACCOUNT_JSON") or shared_accounts.SERVICE_ACCOUNT_JSON,
+                service_account_file=os.environ.get("AUTH_SERVICE_ACCOUNT_FILE") or shared_accounts.SERVICE_ACCOUNT_FILE,
+            )
+            store = shared_accounts.GoogleSheetsUserStore(sheets, TOOLS_AUTH_USERS_SHEET, database_permissions=False)
+            store.initialize_from_legacy_sheet(shared_accounts.AUTH_USERS_SHEET)
+            TOOLS_AUTH_USER_STORE = store
+        return TOOLS_AUTH_USER_STORE
+
+
 def get_user_by_email(email: str, fresh=False):
+    normalized = normalize_auth_email(email)
     if auth_uses_google_sheets():
-        return shared_accounts.get_sheets_user(email, fresh=fresh)
+        cached = TOOLS_AUTH_USER_CACHE.get((normalized,)) if not fresh else CACHE_MISS
+        if cached is not CACHE_MISS:
+            return cached
+        user = build_tools_user_store().get_user(normalized)
+        TOOLS_AUTH_USER_CACHE.set((normalized,), user)
+        return user
     ensure_auth_db()
     with auth_db_connect() as conn:
         row = conn.execute(
-            "SELECT id, email, password_hash, active, created_at, last_login_at, database_access FROM users WHERE email = ?",
-            (normalize_auth_email(email),),
+            "SELECT * FROM tools_users WHERE email = ?",
+            (normalized,),
         ).fetchone()
     return dict(row) if row else None
 
@@ -1260,28 +1301,28 @@ def get_user_by_id(user_id, fresh=False):
     ensure_auth_db()
     with auth_db_connect() as conn:
         row = conn.execute(
-            "SELECT id, email, password_hash, active, created_at, last_login_at, database_access FROM users WHERE id = ?",
+            "SELECT * FROM tools_users WHERE id = ?",
             (user_id,),
         ).fetchone()
     return dict(row) if row else None
 
 
-def create_user(email: str, password: str, *, database_access="wwa"):
+def create_user(email: str, password: str):
     normalized = normalize_auth_email(email)
     error = account_validation_error(normalized, password, AUTH_ALLOWED_EMAIL_DOMAIN)
     if error:
         raise ValueError(error)
     password_hash = generate_password_hash(password)
     if auth_uses_google_sheets():
-        user = shared_accounts.build_user_store().create_user(normalized, password_hash, database_access=database_access)
-        shared_accounts.cache_user(normalized, user)
+        user = build_tools_user_store().create_user(normalized, password_hash)
+        TOOLS_AUTH_USER_CACHE.set((normalized,), user)
         return user
     ensure_auth_db()
     try:
         with AUTH_DB_LOCK, auth_db_connect() as conn:
             conn.execute(
-                "INSERT INTO users (email, password_hash, active, created_at, database_access) VALUES (?, ?, 1, ?, ?)",
-                (normalized, password_hash, utc_now_iso(), database_access),
+                "INSERT INTO tools_users (email, password_hash, active, created_at) VALUES (?, ?, 1, ?)",
+                (normalized, password_hash, utc_now_iso()),
             )
     except sqlite3.IntegrityError as exc:
         raise ValueError("USER_ALREADY_EXISTS") from exc
@@ -1290,25 +1331,25 @@ def create_user(email: str, password: str, *, database_access="wwa"):
 
 def list_users():
     if auth_uses_google_sheets():
-        return shared_accounts.build_user_store().load_users()
+        return build_tools_user_store().load_users()
     ensure_auth_db()
     with auth_db_connect() as conn:
-        return [dict(row) for row in conn.execute("SELECT * FROM users ORDER BY email")]
+        return [dict(row) for row in conn.execute("SELECT * FROM tools_users ORDER BY email")]
 
 
-def update_user(email: str, *, password=None, active=None, database_access=None):
+def update_user(email: str, *, password=None, active=None):
     normalized = normalize_auth_email(email)
     password_hash = generate_password_hash(password) if password is not None else None
     if auth_uses_google_sheets():
         try:
-            return shared_accounts.build_user_store().update_user(normalized, password_hash=password_hash, active=active, database_access=database_access)
+            return build_tools_user_store().update_user(normalized, password_hash=password_hash, active=active)
         finally:
-            shared_accounts.clear_cached_user(normalized)
+            TOOLS_AUTH_USER_CACHE.delete((normalized,))
     ensure_auth_db()
     with AUTH_DB_LOCK, auth_db_connect() as conn:
         changed = conn.execute(
-            "UPDATE users SET password_hash = COALESCE(?, password_hash), active = COALESCE(?, active), database_access = COALESCE(?, database_access) WHERE email = ?",
-            (password_hash, active, database_access, normalized),
+            "UPDATE tools_users SET password_hash = COALESCE(?, password_hash), active = COALESCE(?, active) WHERE email = ?",
+            (password_hash, active, normalized),
         )
         if not changed.rowcount:
             raise ValueError("USER_NOT_FOUND")
@@ -1319,13 +1360,13 @@ def delete_user(email: str):
     normalized = normalize_auth_email(email)
     if auth_uses_google_sheets():
         try:
-            shared_accounts.build_user_store().delete_user(normalized)
+            build_tools_user_store().delete_user(normalized)
         finally:
-            shared_accounts.clear_cached_user(normalized)
+            TOOLS_AUTH_USER_CACHE.delete((normalized,))
         return
     ensure_auth_db()
     with AUTH_DB_LOCK, auth_db_connect() as conn:
-        deleted = conn.execute("DELETE FROM users WHERE email = ?", (normalized,))
+        deleted = conn.execute("DELETE FROM tools_users WHERE email = ?", (normalized,))
         if not deleted.rowcount:
             raise ValueError("USER_NOT_FOUND")
 
@@ -1333,14 +1374,14 @@ def delete_user(email: str):
 def mark_user_login(user_id: int):
     if auth_uses_google_sheets():
         try:
-            shared_accounts.build_user_store().update_last_login(user_id, utc_now_iso())
+            build_tools_user_store().update_last_login(user_id, utc_now_iso())
         except shared_accounts.DatabaseConfigError:
             pass
         return
     with AUTH_DB_LOCK:
         with auth_db_connect() as conn:
             conn.execute(
-                "UPDATE users SET last_login_at = ? WHERE id = ?",
+                "UPDATE tools_users SET last_login_at = ? WHERE id = ?",
                 (utc_now_iso(), user_id),
             )
 
@@ -1449,7 +1490,6 @@ def login():
 app.register_blueprint(create_accounts_blueprint(
     list_users=list_users, get_user=get_user_by_email, create_user=create_user, update_user=update_user,
     delete_user=delete_user,
-    database_access=lambda user: account_database_access(user, S_LIVE_DB_ALLOWED_EMAILS),
     domain=lambda: AUTH_ALLOWED_EMAIL_DOMAIN, site_name="WWA Tools", home_endpoint="index",
     storage_errors=(shared_accounts.DatabaseConfigError, sqlite3.Error),
 ))

@@ -13,15 +13,19 @@ from account_access import TEAM_EMAILS, account_database_access
 from tests.test_database_site import FakeStore, FakeUserStore
 
 
-class SharedAccountTests(unittest.TestCase):
+class SeparateAccountTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.store = FakeUserStore()
+        self.tools_store = FakeUserStore()
+        self.stores = (self.store, self.tools_store)
         self.stack.enter_context(patch.object(database_app, "AUTH_STORAGE", "google_sheets"))
         self.stack.enter_context(patch.object(database_app, "AUTH_USER_STORE", self.store))
         self.stack.enter_context(patch.object(database_app, "S_ALLOWED_EMAILS", ""))
         self.stack.enter_context(patch.object(tools_app, "AUTH_STORAGE", "google_sheets"))
+        self.stack.enter_context(patch.object(tools_app, "TOOLS_AUTH_USER_STORE", self.tools_store))
+        self.stack.enter_context(patch.object(tools_app, "TOOLS_AUTH_USER_CACHE", tools_app.TTLCache(60)))
         self.stack.enter_context(patch.object(tools_app, "S_LIVE_DB_ALLOWED_EMAILS", ""))
         for module in (database_app, tools_app):
             self.stack.enter_context(patch.object(module, "AUTH_REQUIRED", True))
@@ -37,8 +41,9 @@ class SharedAccountTests(unittest.TestCase):
         self.admin = "admin@wildwildgroup.com"
         self.employee = "employee@wildwildgroup.com"
         password_hash = generate_password_hash(self.password)
-        for email in (self.admin, self.employee):
-            self.store.create_user(email, password_hash)
+        for store in self.stores:
+            for email in (self.admin, self.employee):
+                store.create_user(email, password_hash)
         self.clients = [module.app.test_client() for module in (database_app, tools_app)]
 
     def csrf(self, client):
@@ -68,14 +73,15 @@ class SharedAccountTests(unittest.TestCase):
 
     def test_all_five_existing_accounts_keep_passwords_and_work_on_both_sites(self):
         password_hash = generate_password_hash("Existing-team-password")
-        for email in TEAM_EMAILS:
-            self.store.create_user(email, password_hash)
-        for client in self.clients:
+        for store in self.stores:
+            for email in TEAM_EMAILS:
+                store.create_user(email, password_hash)
+        for client, store in zip(self.clients, self.stores):
             for email in TEAM_EMAILS:
                 with self.subTest(email=email):
                     self.assertEqual(self.login(client, email, "Existing-team-password").status_code, 302)
                     self.assertEqual(client.get("/").status_code, 200)
-                    self.assertEqual(self.store.users[email]["password_hash"], password_hash)
+                    self.assertEqual(store.users[email]["password_hash"], password_hash)
                     client.get("/logout")
         result = tools_app.app.test_cli_runner().invoke(args=["users", "check-team"])
         self.assertEqual(result.exit_code, 0, result.output)
@@ -91,7 +97,7 @@ class SharedAccountTests(unittest.TestCase):
             self.assertNotIn(b"/admin/users", client.get("/").data)
         self.assertNotIn("intruder@wildwildgroup.com", self.store.users)
 
-    def test_admin_can_add_user_from_either_site_without_changing_own_session(self):
+    def test_admin_adds_user_only_to_current_site_without_changing_own_session(self):
         for index, client in enumerate(self.clients):
             self.login(client, self.admin)
             email = f"new{index}@wildwildgroup.com"
@@ -100,9 +106,10 @@ class SharedAccountTests(unittest.TestCase):
             self.assertEqual(result.headers["Location"], "/admin/users")
             with client.session_transaction() as session:
                 self.assertEqual(session["user_email"], self.admin)
-            self.assertTrue(check_password_hash(self.store.users[email]["password_hash"], self.password))
-            for module in (tools_app, database_app):
-                self.assertEqual(self.login(module.app.test_client(), email).status_code, 302)
+            self.assertTrue(check_password_hash(self.stores[index].users[email]["password_hash"], self.password))
+            self.assertNotIn(email, self.stores[1 - index].users)
+            for other_index, module in enumerate((database_app, tools_app)):
+                self.assertEqual(self.login(module.app.test_client(), email).status_code, 302 if other_index == index else 200)
 
     def test_admin_page_does_not_expose_passwords_or_hashes(self):
         for client in self.clients:
@@ -115,7 +122,7 @@ class SharedAccountTests(unittest.TestCase):
             self.assertNotIn(self.store.users[self.admin]["password_hash"].encode(), response.data)
 
     def test_create_assigns_explicit_wwa_s_both_or_no_access(self):
-        for index, client in enumerate(self.clients):
+        for index, client in enumerate(self.clients[:1]):
             self.login(client, self.admin)
             for scope in ([], ["wwa"], ["s"], ["wwa", "s"]):
                 email = f"new{index}.{len(scope)}.{scope[0] if scope else 'none'}@wildwildgroup.com"
@@ -123,8 +130,8 @@ class SharedAccountTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 303)
                 self.assertEqual(account_database_access(self.store.users[email], email), set(scope))
 
-    def test_access_edits_from_both_sites_enforce_database_isolation(self):
-        for admin_client in self.clients:
+    def test_database_access_edits_do_not_change_tools_access(self):
+        for admin_client in self.clients[:1]:
             self.login(admin_client, self.admin)
             for scopes in (["wwa"], ["s"], ["wwa", "s"], []):
                 response = self.admin_post(admin_client, f"/admin/users/{self.employee}",
@@ -156,13 +163,13 @@ class SharedAccountTests(unittest.TestCase):
                      patch.object(tools_app, "build_s_live_apps_store", return_value=Mock()):
                     for key, path in (("wwa", "live-apps"), ("s", "s-live-apps")):
                         payload.reset_mock()
-                        self.assertEqual(tools_client.get(f"/{path}").status_code, 200 if key in scopes else 403)
-                        self.assertEqual(tools_client.get(f"/api/{path}").status_code, 200 if key in scopes else 403)
-                        if key not in scopes:
+                        self.assertEqual(tools_client.get(f"/{path}").status_code, 200 if key == "wwa" else 403)
+                        self.assertEqual(tools_client.get(f"/api/{path}").status_code, 200 if key == "wwa" else 403)
+                        if key == "s":
                             payload.assert_not_called()
                     nav = tools_client.get("/").data
-                    self.assertEqual(b'href="/live-apps"' in nav, "wwa" in scopes)
-                    self.assertEqual(b'href="/s-live-apps"' in nav, "s" in scopes)
+                    self.assertIn(b'href="/live-apps"', nav)
+                    self.assertNotIn(b'href="/s-live-apps"', nav)
 
     def test_access_revocation_on_another_worker_bypasses_cached_permissions(self):
         self.store.update_user(self.employee, database_access="s,wwa")
@@ -173,7 +180,8 @@ class SharedAccountTests(unittest.TestCase):
         self.assertEqual(self.clients[0].get("/api/apps").status_code, 403)
         self.assertEqual(self.clients[0].get("/api/databases/s/apps").status_code, 403)
         database_app.cache_user(self.employee, {**self.store.get_user(self.employee), "database_access": "s,wwa"})
-        self.assertEqual(self.clients[1].get("/api/live-apps").status_code, 403)
+        with patch.object(tools_app, "build_live_apps_database_payload", return_value={}):
+            self.assertEqual(self.clients[1].get("/api/live-apps").status_code, 200)
         self.assertEqual(self.clients[1].get("/api/s-live-apps").status_code, 403)
 
     def test_s_only_user_can_create_and_edit_s_apps_without_touching_wwa(self):
@@ -211,7 +219,7 @@ class SharedAccountTests(unittest.TestCase):
 
     def test_group_lists_show_only_assigned_users_and_default_new_user_to_group(self):
         self.store.update_user(self.employee, database_access="s")
-        for client in self.clients:
+        for client in self.clients[:1]:
             self.login(client, self.admin)
             response = client.get("/admin/users?group=wwa")
             self.assertIn(self.admin.encode(), response.data)
@@ -234,15 +242,15 @@ class SharedAccountTests(unittest.TestCase):
             self.assertNotIn("blocked@wildwildgroup.com", self.store.users)
 
     def test_duplicate_does_not_overwrite_existing_password(self):
-        original = self.store.users[self.employee]["password_hash"]
-        for client in self.clients:
+        for client, store in zip(self.clients, self.stores):
+            original = store.users[self.employee]["password_hash"]
             self.login(client, self.admin)
             result = self.admin_post(client, email=self.employee.upper(), password="different-password")
             self.assertEqual(result.status_code, 409)
-            self.assertEqual(self.store.users[self.employee]["password_hash"], original)
+            self.assertEqual(store.users[self.employee]["password_hash"], original)
 
-    def test_delete_from_either_site_revokes_access_on_both_and_allows_recreation(self):
-        for module in (database_app, tools_app):
+    def test_delete_revokes_only_current_site_and_recreation_does_not_restore_session(self):
+        for index, module in enumerate((database_app, tools_app)):
             for client in self.clients:
                 self.assertEqual(self.login(client).status_code, 302)
             admin_client = module.app.test_client()
@@ -250,27 +258,30 @@ class SharedAccountTests(unittest.TestCase):
             response = self.admin_post(admin_client, f"/admin/users/{self.employee}",
                                        action="delete", confirm_email=self.employee)
             self.assertEqual(response.status_code, 303)
-            self.assertNotIn(self.employee, self.store.users)
+            self.assertNotIn(self.employee, self.stores[index].users)
+            self.assertIn(self.employee, self.stores[1 - index].users)
             self.assertNotIn(self.employee.encode(), admin_client.get("/admin/users").data)
-            self.assertIn(self.admin, self.store.users)
+            self.assertIn(self.admin, self.stores[index].users)
             self.assertEqual(admin_client.get("/admin/users").status_code, 200)
-            for other in (database_app, tools_app):
-                self.assertIsNone(other.get_user_by_email(self.employee))
-                self.assertEqual(self.login(other.app.test_client()).status_code, 200)
+            self.assertIsNone(module.get_user_by_email(self.employee))
+            self.assertEqual(self.login(module.app.test_client()).status_code, 200)
+            self.assertEqual(self.clients[1 - index].get("/").status_code, 200)
             # Recreating the same email/password must not revive its old sessions.
-            self.admin_post(admin_client, email=self.employee, password=self.password)
-            for client in self.clients:
-                self.assertEqual(client.get("/").status_code, 302)
+            options = {"database_access": ["wwa"]} if module is database_app else {}
+            self.admin_post(admin_client, email=self.employee, password=self.password, **options)
+            self.assertEqual(self.clients[index].get("/").status_code, 302)
+            self.assertEqual(self.clients[1 - index].get("/").status_code, 200)
 
     def test_disabled_account_can_be_permanently_deleted(self):
         for index, client in enumerate(self.clients):
             email = f"disabled{index}@wildwildgroup.com"
-            self.store.create_user(email, generate_password_hash(self.password))
-            self.store.update_user(email, active=0)
+            store = self.stores[index]
+            store.create_user(email, generate_password_hash(self.password))
+            store.update_user(email, active=0)
             self.login(client, self.admin)
             response = self.admin_post(client, f"/admin/users/{email}", action="delete", confirm_email=email)
             self.assertEqual(response.status_code, 303)
-            self.assertNotIn(email, self.store.users)
+            self.assertNotIn(email, store.users)
 
     def test_delete_requires_admin_csrf_and_matching_confirmation(self):
         for client in self.clients:
@@ -307,21 +318,24 @@ class SharedAccountTests(unittest.TestCase):
             self.assertEqual(len(self.store.users), 2)
 
     def test_delete_storage_failure_is_reported_and_invalidates_local_cache(self):
-        for client in self.clients:
+        for module, client, store in zip((database_app, tools_app), self.clients, self.stores):
             self.login(client, self.admin)
-            database_app.get_sheets_user(self.employee)
-            with patch.object(self.store, "delete_user", side_effect=database_app.DatabaseConfigError("secret")):
+            module.get_user_by_email(self.employee)
+            with patch.object(store, "delete_user", side_effect=database_app.DatabaseConfigError("secret")):
                 response = self.admin_post(client, f"/admin/users/{self.employee}", action="delete", confirm_email=self.employee)
             self.assertEqual(response.status_code, 503)
             self.assertNotIn(b"secret", response.data)
-            self.assertNotIn(self.employee, database_app.AUTH_USER_CACHE)
-            self.assertIn(self.employee, self.store.users)
+            if module is database_app:
+                self.assertNotIn(self.employee, database_app.AUTH_USER_CACHE)
+            else:
+                self.assertIs(tools_app.TOOLS_AUTH_USER_CACHE.get((self.employee,)), tools_app.CACHE_MISS)
+            self.assertIn(self.employee, store.users)
 
     def test_deleted_admin_cannot_delete_others_even_with_cached_session(self):
         for client in self.clients:
             self.login(client, self.admin)
-        del self.store.users[self.admin]
-        for client in self.clients:
+        for client, store in zip(self.clients, self.stores):
+            del store.users[self.admin]
             response = self.admin_post(client, f"/admin/users/{self.employee}", action="delete", confirm_email=self.employee)
             self.assertIn(response.status_code, (302, 403))
             self.assertIn(self.employee, self.store.users)
@@ -363,49 +377,55 @@ class SharedAccountTests(unittest.TestCase):
                                            action=action, active="0", password="malicious-change")
                 self.assertEqual(response.status_code, 403)
 
-    def test_password_reset_revokes_existing_sessions_on_both_sites(self):
-        for client in self.clients:
-            self.login(client)
-        admin_client = tools_app.app.test_client()
-        self.login(admin_client, self.admin)
-        result = self.admin_post(admin_client, f"/admin/users/{self.employee}",
-                                 action="password", password="new-valid-password")
-        self.assertEqual(result.status_code, 303)
-        for client in self.clients:
-            self.assertEqual(client.get("/").status_code, 302)
-            self.assertEqual(self.login(client).status_code, 200)
-            self.assertEqual(self.login(client, password="new-valid-password").status_code, 302)
+    def test_password_reset_and_disable_affect_only_current_site(self):
+        for index, module in enumerate((database_app, tools_app)):
+            for client, store in zip(self.clients, self.stores):
+                store.update_user(self.employee, password_hash=generate_password_hash(self.password), active=1)
+                self.login(client)
+            admin_client = module.app.test_client()
+            self.login(admin_client, self.admin)
+            result = self.admin_post(admin_client, f"/admin/users/{self.employee}",
+                                     action="password", password="new-valid-password")
+            self.assertEqual(result.status_code, 303)
+            self.assertEqual(self.clients[index].get("/").status_code, 302)
+            self.assertEqual(self.login(self.clients[index]).status_code, 200)
+            self.assertEqual(self.login(self.clients[index], password="new-valid-password").status_code, 302)
+            self.assertEqual(self.clients[1 - index].get("/").status_code, 200)
+            self.assertEqual(self.login(self.clients[1 - index]).status_code, 302)
+            self.assertEqual(self.admin_post(admin_client, f"/admin/users/{self.employee}", action="status", active="0").status_code, 303)
+            self.assertEqual(self.clients[index].get("/").status_code, 302)
+            self.assertEqual(self.clients[1 - index].get("/").status_code, 200)
 
     def test_disabled_user_cannot_log_in_even_with_stale_cached_active_user(self):
         for client in self.clients:
             self.login(client)
-        self.store.users[self.employee]["active"] = 0
-        for client in self.clients:
+        for client, store in zip(self.clients, self.stores):
+            store.users[self.employee]["active"] = 0
             self.assertEqual(self.login(client).status_code, 200)
             self.assertEqual(client.get("/").status_code, 302)
 
     def test_admin_can_disable_and_reactivate_but_not_disable_self(self):
-        for client in self.clients:
+        for client, store in zip(self.clients, self.stores):
             self.login(client, self.admin)
             for active in ("0", "1"):
                 result = self.admin_post(client, f"/admin/users/{self.employee}", action="status", active=active)
                 self.assertEqual(result.status_code, 303)
-                self.assertEqual(self.store.users[self.employee]["active"], int(active))
+                self.assertEqual(store.users[self.employee]["active"], int(active))
             result = self.admin_post(client, f"/admin/users/{self.admin}", action="status", active="0")
             self.assertEqual(result.status_code, 400)
 
     def test_admin_recheck_ignores_cached_privileges(self):
         for client in self.clients:
             self.login(client, self.admin)
-        self.store.users[self.admin]["active"] = 0
-        for client in self.clients:
+        for client, store in zip(self.clients, self.stores):
+            store.users[self.admin]["active"] = 0
             self.assertIn(client.get("/admin/users").status_code, (302, 403))
 
     def test_storage_outage_fails_closed_without_local_password_fallback(self):
         for client in self.clients:
             self.login(client, self.admin)
-        with patch.object(self.store, "get_user", side_effect=database_app.DatabaseConfigError("secret-token")):
-            for client in self.clients:
+        for client, store in zip(self.clients, self.stores):
+            with patch.object(store, "get_user", side_effect=database_app.DatabaseConfigError("secret-token")):
                 self.assertEqual(client.get("/admin/users").status_code, 503)
                 response = self.login(client)
                 self.assertEqual(response.status_code, 503)
@@ -423,8 +443,8 @@ class SharedAccountTests(unittest.TestCase):
                 self.assertEqual(client.get("/admin/users").status_code, 403)
 
     def test_malformed_password_hash_cannot_crash_login(self):
-        self.store.users[self.employee]["password_hash"] = "malformed:hash"
-        for client in self.clients:
+        for client, store in zip(self.clients, self.stores):
+            store.users[self.employee]["password_hash"] = "malformed:hash"
             self.assertEqual(self.login(client).status_code, 200)
 
     def test_sessions_without_password_binding_require_new_login(self):
@@ -441,14 +461,13 @@ class SharedAccountTests(unittest.TestCase):
         self.assertEqual(len(self.store.users), 2)
 
     def test_new_user_does_not_gain_s_database_permissions_or_admin_role(self):
-        client = self.clients[0]
-        self.login(client, self.admin)
-        self.admin_post(client, email="new@wildwildgroup.com", password=self.password, role="admin")
-        for other in self.clients:
-            self.login(other, "new@wildwildgroup.com")
-            self.assertNotIn(b"S Live DB", other.get("/").data)
-            self.assertEqual(other.get("/admin/users").status_code, 403)
-        self.assertEqual(client.get("/api/databases/s/apps").status_code, 403)
+        for client in self.clients:
+            self.login(client, self.admin)
+            self.admin_post(client, email="new@wildwildgroup.com", password=self.password, role="admin")
+            self.login(client, "new@wildwildgroup.com")
+            self.assertNotIn(b"S Live DB", client.get("/").data)
+            self.assertEqual(client.get("/admin/users").status_code, 403)
+        self.assertEqual(self.clients[0].get("/api/databases/s/apps").status_code, 403)
 
     def test_tools_login_next_cannot_redirect_to_an_external_host(self):
         client = self.clients[1]
@@ -456,9 +475,76 @@ class SharedAccountTests(unittest.TestCase):
             self.assertEqual(self.login(client, next=target).headers["Location"], "/")
         self.assertEqual(self.login(client, next="/availability").headers["Location"], "/availability")
 
+    def test_tools_admin_never_shows_or_accepts_database_permissions(self):
+        client = self.clients[1]
+        self.login(client, self.admin)
+        for group in ("", "wwa", "s"):
+            response = client.get(f"/admin/users?group={group}")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(self.employee.encode(), response.data)
+            for hidden in (b'WWA DB', b'S DB', b'name="database_access"', b'value="access"'):
+                self.assertNotIn(hidden, response.data)
+        self.assertEqual(self.admin_post(client, f"/admin/users/{self.employee}", action="access", database_access=["s"]).status_code, 400)
+        self.assertEqual(self.admin_post(client, email="blocked@wildwildgroup.com", password=self.password, database_access=["wwa"]).status_code, 400)
+        self.assertNotIn("blocked@wildwildgroup.com", self.tools_store.users)
+
+    def test_tools_s_live_db_uses_only_its_own_allowlist(self):
+        self.store.update_user(self.employee, database_access="none")
+        client = self.clients[1]
+        self.login(client)
+        with patch.object(tools_app, "S_LIVE_DB_ALLOWED_EMAILS", self.employee), \
+             patch.object(tools_app, "build_live_apps_database_payload", return_value={}), \
+             patch.object(tools_app, "build_s_live_apps_store", return_value=Mock()):
+            self.assertEqual(client.get("/api/s-live-apps").status_code, 200)
+            self.assertIn(b'href="/s-live-apps"', client.get("/").data)
+        self.assertEqual(client.get("/api/s-live-apps").status_code, 403)
+
+    def test_user_cache_is_separate_even_for_the_same_email(self):
+        self.tools_store.users[self.employee]["password_hash"] = "tools-only-hash"
+        self.assertEqual(tools_app.get_user_by_email(self.employee)["password_hash"], "tools-only-hash")
+        self.assertNotEqual(database_app.get_user_by_email(self.employee)["password_hash"], "tools-only-hash")
+        database_app.cache_user(self.employee, None)
+        self.assertIsNone(database_app.get_user_by_email(self.employee))
+        self.assertEqual(tools_app.get_user_by_email(self.employee)["password_hash"], "tools-only-hash")
+
+    def test_admin_allowlists_are_independent(self):
+        for client in self.clients:
+            self.login(client, self.admin)
+        with patch.dict(tools_app.app.config, {"AUTH_ADMIN_EMAILS": self.employee}):
+            self.assertEqual(self.clients[0].get("/admin/users").status_code, 200)
+            self.assertEqual(self.clients[1].get("/admin/users").status_code, 403)
+
+    def test_sessions_cannot_be_replayed_between_sites_even_with_same_secret(self):
+        modules = (database_app, tools_app)
+        self.assertNotEqual(modules[0].app.config["SESSION_COOKIE_NAME"], modules[1].app.config["SESSION_COOKIE_NAME"])
+        with patch.dict(database_app.app.config, {"SECRET_KEY": "shared-test-secret"}), \
+             patch.dict(tools_app.app.config, {"SECRET_KEY": "shared-test-secret"}):
+            for index, module in enumerate(modules):
+                source = module.app.test_client()
+                self.login(source)
+                with source.session_transaction() as session:
+                    payload = dict(session)
+                target = modules[1 - index].app.test_client()
+                with target.session_transaction() as session:
+                    session.update(payload)
+                self.assertEqual(target.get("/").status_code, 302)
+
 
 class SQLiteManualAccountTests(unittest.TestCase):
-    def test_legacy_sqlite_migration_preserves_hashes_and_adds_only_access_column(self):
+    def test_failed_legacy_copy_rolls_back_tools_table(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "users.sqlite"
+            with closing(sqlite3.connect(path)) as connection, connection:
+                connection.execute("CREATE TABLE users (email TEXT)")
+                connection.execute("INSERT INTO users VALUES ('existing@wildwildgroup.com')")
+            with patch.object(tools_app, "AUTH_DB_PATH", str(path)):
+                with self.assertRaises(sqlite3.OperationalError):
+                    tools_app.ensure_auth_db()
+            with closing(sqlite3.connect(path)) as connection:
+                self.assertIsNone(connection.execute("SELECT 1 FROM sqlite_master WHERE name = 'tools_users'").fetchone())
+                self.assertEqual(connection.execute("SELECT email FROM users").fetchone()[0], "existing@wildwildgroup.com")
+
+    def test_legacy_sqlite_migration_preserves_hashes_in_each_site_schema(self):
         for module in (database_app, tools_app):
             with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 path = Path(directory) / "users.sqlite"
@@ -469,10 +555,15 @@ class SQLiteManualAccountTests(unittest.TestCase):
                 stack.enter_context(patch.object(module, "AUTH_DB_PATH", str(path) if module is tools_app else path))
                 user = module.get_user_by_email("old@wildwildgroup.com")
                 self.assertEqual(user["password_hash"], "existing-hash")
-                self.assertIsNone(user["database_access"])
-                self.assertEqual(account_database_access(user), {"wwa"})
-                module.update_user(user["email"], database_access="s")
-                self.assertEqual(module.get_user_by_email(user["email"])["database_access"], "s")
+                if module is database_app:
+                    self.assertIsNone(user["database_access"])
+                    self.assertEqual(account_database_access(user), {"wwa"})
+                    module.update_user(user["email"], database_access="s")
+                    self.assertEqual(module.get_user_by_email(user["email"])["database_access"], "s")
+                else:
+                    self.assertNotIn("database_access", user)
+                    with closing(sqlite3.connect(path)) as connection:
+                        self.assertEqual(connection.execute("SELECT password_hash FROM users").fetchone()[0], "existing-hash")
 
     def test_deletion_removes_sqlite_record_and_invalidates_sessions_on_each_site(self):
         for module in (database_app, tools_app):
@@ -518,10 +609,13 @@ class SQLiteManualAccountTests(unittest.TestCase):
                                        input="local-test-password\nlocal-test-password\n")
                 self.assertEqual(result.exit_code, 0, result.output)
                 original = module.get_user_by_email("admin@wildwildgroup.com")
-                self.assertEqual(original["database_access"], "wwa")
-                changed = module.update_user(original["email"], database_access="s")
-                self.assertEqual(changed["database_access"], "s")
-                self.assertEqual(changed["password_hash"], original["password_hash"])
+                if module is database_app:
+                    self.assertEqual(original["database_access"], "wwa")
+                    changed = module.update_user(original["email"], database_access="s")
+                    self.assertEqual(changed["database_access"], "s")
+                    self.assertEqual(changed["password_hash"], original["password_hash"])
+                else:
+                    self.assertNotIn("database_access", original)
                 client = module.app.test_client()
                 client.get("/login")
                 with client.session_transaction() as session:
@@ -535,8 +629,191 @@ class SQLiteManualAccountTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     module.create_user(original["email"], "must-not-overwrite")
 
+    def test_same_sqlite_file_has_independent_accounts_and_one_time_migration(self):
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+            path = Path(directory) / "users.sqlite"
+            for module in (database_app, tools_app):
+                stack.enter_context(patch.object(module, "AUTH_STORAGE", "sqlite"))
+                stack.enter_context(patch.object(module, "AUTH_DB_PATH", str(path) if module is tools_app else path))
+            email = "employee@wildwildgroup.com"
+            original = database_app.create_user(email, "original-password")
+            database_app.update_user(email, active=0, database_access="s")
+            copied = tools_app.get_user_by_email(email)
+            self.assertEqual(copied["password_hash"], original["password_hash"])
+            self.assertEqual(copied["active"], 0)
+            self.assertNotIn("database_access", copied)
+            tools_app.update_user(email, password="tools-password", active=1)
+            self.assertEqual(database_app.get_user_by_email(email)["active"], 0)
+            self.assertEqual(database_app.get_user_by_email(email)["password_hash"], original["password_hash"])
+            database_app.update_user(email, password="database-password")
+            self.assertTrue(check_password_hash(tools_app.get_user_by_email(email)["password_hash"], "tools-password"))
+            database_app.create_user("database-only@wildwildgroup.com", "test-password")
+            self.assertIsNone(tools_app.get_user_by_email("database-only@wildwildgroup.com"))
+            tools_app.delete_user(email)
+            tools_app.ensure_auth_db()
+            self.assertEqual(tools_app.list_users(), [])
+            self.assertIsNotNone(database_app.get_user_by_email(email))
+            tools_app.create_user("tools-only@wildwildgroup.com", "test-password")
+            self.assertIsNone(database_app.get_user_by_email("tools-only@wildwildgroup.com"))
+
 
 class GoogleSheetsUserStoreTests(unittest.TestCase):
+    def migration_sheets(self, *, existing_target=False):
+        sheets = Mock()
+        sheets.tabs = {"Users": [database_app.USERS_SHEET_HEADERS[:],
+                                ["active@wildwildgroup.com", "hash-active", "TRUE", "created", "login", "s"],
+                                [], ["disabled@wildwildgroup.com", "hash-disabled", "FALSE", "created", "", "wwa"]]}
+        if existing_target:
+            sheets.tabs["ToolsUsers"] = [database_app.LEGACY_USERS_SHEET_HEADERS[:]]
+        sheets.get_sheet_titles.side_effect = lambda: set(sheets.tabs)
+
+        def read(sheet, cells):
+            rows = sheets.tabs[sheet]
+            if cells == "A1:E":
+                return [row[:5] for row in rows]
+            if cells in ("A1:E1", "A1:F1"):
+                return [rows[0][:5 if cells == "A1:E1" else 6]] if rows else []
+            if cells in ("A2:E", "A2:F", "A2:A"):
+                limit = {"A2:E": 5, "A2:F": 6, "A2:A": 1}[cells]
+                return [row[:limit] for row in rows[1:]]
+            raise AssertionError(cells)
+
+        def atomic_create(method, path, *, json):
+            self.assertEqual((method, path), ("POST", ":batchUpdate"))
+            self.assertEqual(len(json["requests"]), 2)
+            add, update = json["requests"]
+            properties = add["addSheet"]["properties"]
+            cells = update["updateCells"]
+            self.assertEqual(cells["start"], {"sheetId": properties["sheetId"], "rowIndex": 0, "columnIndex": 0})
+            self.assertEqual(cells["fields"], "userEnteredValue")
+            self.assertNotIn(properties["title"], sheets.tabs)
+            sheets.tabs[properties["title"]] = [
+                [value["userEnteredValue"]["stringValue"] for value in row["values"]]
+                for row in cells["rows"]
+            ]
+
+        sheets.get_values.side_effect = read
+        sheets._request.side_effect = atomic_create
+        return sheets
+
+    def test_tools_migration_is_atomic_preserves_passwords_and_does_not_copy_permissions(self):
+        sheets = self.migration_sheets()
+        original = [row[:] for row in sheets.tabs["Users"]]
+        store = database_app.GoogleSheetsUserStore(sheets, "ToolsUsers", database_permissions=False)
+        store.initialize_from_legacy_sheet("Users")
+        users = store.load_users()
+        self.assertEqual(len(users), 2)
+        self.assertEqual([user["password_hash"] for user in users], ["hash-active", "hash-disabled"])
+        self.assertEqual([user["active"] for user in users], [1, 0])
+        self.assertTrue(all("database_access" not in user for user in users))
+        self.assertEqual(sheets.tabs["Users"], original)
+        sheets._request.assert_called_once()
+        sheets.add_sheet.assert_not_called()
+        sheets.update_values.assert_not_called()
+
+    def test_existing_empty_tools_sheet_is_never_reseeded_after_deletion_or_restart(self):
+        sheets = self.migration_sheets(existing_target=True)
+        for _ in range(3):
+            store = database_app.GoogleSheetsUserStore(sheets, "ToolsUsers", database_permissions=False)
+            store.initialize_from_legacy_sheet("Users")
+            self.assertEqual(store.load_users(), [])
+        sheets._request.assert_not_called()
+        self.assertTrue(all(call.args[0] == "ToolsUsers" for call in sheets.get_values.call_args_list))
+
+    def test_migration_never_overwrites_an_existing_tools_password_or_adds_new_database_accounts(self):
+        sheets = self.migration_sheets()
+        store = database_app.GoogleSheetsUserStore(sheets, "ToolsUsers", database_permissions=False)
+        store.initialize_from_legacy_sheet("Users")
+        sheets.tabs["ToolsUsers"][1][1] = "new-tools-password-hash"
+        sheets.tabs["Users"].append(["new-db-only@wildwildgroup.com", "hash", "TRUE"])
+        restarted = database_app.GoogleSheetsUserStore(sheets, "ToolsUsers", database_permissions=False)
+        restarted.initialize_from_legacy_sheet("Users")
+        self.assertEqual(restarted.get_user("active@wildwildgroup.com")["password_hash"], "new-tools-password-hash")
+        self.assertIsNone(restarted.get_user("new-db-only@wildwildgroup.com"))
+        self.assertEqual(sheets._request.call_count, 1)
+
+    def test_first_start_without_legacy_sheet_initializes_empty_tools_accounts(self):
+        sheets = self.migration_sheets()
+        sheets.tabs.clear()
+        store = database_app.GoogleSheetsUserStore(sheets, "ToolsUsers", database_permissions=False)
+        store.initialize_from_legacy_sheet("Users")
+        self.assertEqual(store.load_users(), [])
+        self.assertEqual(set(sheets.tabs), {"ToolsUsers"})
+
+    def test_migration_failure_does_not_publish_empty_store_or_fallback_to_database(self):
+        sheets = self.migration_sheets()
+        sheets._request.side_effect = database_app.DatabaseConfigError("unavailable")
+        with patch.object(tools_app, "TOOLS_AUTH_USER_STORE", None), \
+             patch.object(tools_app, "TOOLS_AUTH_USERS_SHEET", "ToolsUsers"), \
+             patch.object(database_app, "GoogleSheetsStore", return_value=sheets):
+            for _ in range(2):
+                with self.assertRaises(database_app.DatabaseConfigError):
+                    tools_app.build_tools_user_store()
+                self.assertIsNone(tools_app.TOOLS_AUTH_USER_STORE)
+                self.assertNotIn("ToolsUsers", sheets.tabs)
+
+    def test_uncertain_or_concurrent_create_accepts_only_existing_valid_target(self):
+        sheets = self.migration_sheets()
+        create = sheets._request.side_effect
+
+        def create_then_timeout(*args, **kwargs):
+            create(*args, **kwargs)
+            raise database_app.DatabaseConfigError("response lost or another worker created sheet")
+
+        sheets._request.side_effect = create_then_timeout
+        store = database_app.GoogleSheetsUserStore(sheets, "ToolsUsers", database_permissions=False)
+        store.initialize_from_legacy_sheet("Users")
+        self.assertEqual(len(store.load_users()), 2)
+        sheets._request.assert_called_once()
+        sheets.tabs["ToolsUsers"][0] = ["unexpected"]
+        with self.assertRaises(database_app.DatabaseConfigError):
+            database_app.GoogleSheetsUserStore(sheets, "ToolsUsers", database_permissions=False).initialize_from_legacy_sheet("Users")
+
+    def test_invalid_legacy_headers_and_identical_source_target_are_rejected(self):
+        sheets = self.migration_sheets()
+        sheets.tabs["Users"][0] = ["wrong-schema"]
+        for target in ("ToolsUsers", "users", "Users"):
+            store = database_app.GoogleSheetsUserStore(sheets, target, database_permissions=False)
+            with self.assertRaises(database_app.DatabaseConfigError):
+                store.initialize_from_legacy_sheet("Users")
+        sheets._request.assert_not_called()
+
+    def test_tools_builder_uses_separate_tab_with_existing_auth_spreadsheet_settings(self):
+        sheets = self.migration_sheets()
+        with patch.object(tools_app, "TOOLS_AUTH_USER_STORE", None), \
+             patch.object(tools_app, "TOOLS_AUTH_USERS_SHEET", "ToolsUsers"), \
+             patch.object(database_app, "GoogleSheetsStore", return_value=sheets) as factory, \
+             patch.dict("os.environ", {"AUTH_SPREADSHEET_ID": "same-wwa-spreadsheet", "AUTH_SERVICE_ACCOUNT_JSON": "test-secret"}):
+            store = tools_app.build_tools_user_store()
+            self.assertEqual(store.users_sheet, "ToolsUsers")
+            self.assertFalse(store.database_permissions)
+            self.assertIs(tools_app.build_tools_user_store(), store)
+            self.assertEqual(factory.call_args.kwargs["spreadsheet_id"], "same-wwa-spreadsheet")
+            self.assertEqual(factory.call_args.kwargs["service_account_json"], "test-secret")
+        for reserved in (database_app.AUTH_USERS_SHEET, database_app.APPS_SHEET, database_app.S_APPS_SHEET, database_app.LOG_SHEET):
+            with patch.object(tools_app, "TOOLS_AUTH_USER_STORE", None), \
+                 patch.object(tools_app, "TOOLS_AUTH_USERS_SHEET", reserved.upper()):
+                with self.assertRaises(database_app.DatabaseConfigError):
+                    tools_app.build_tools_user_store()
+
+    def test_plain_tools_store_writes_only_its_own_five_columns(self):
+        sheets = self.migration_sheets(existing_target=True)
+        sheets.tabs["ToolsUsers"].append(["employee@wildwildgroup.com", "hash", "TRUE", "created", "login"])
+        store = database_app.GoogleSheetsUserStore(sheets, "ToolsUsers", database_permissions=False)
+        store.initialize_from_legacy_sheet("Users")
+        user = store.create_user("new@wildwildgroup.com", "test-hash")
+        self.assertNotIn("database_access", user)
+        self.assertEqual(sheets.append_values.call_args.args[0], "ToolsUsers")
+        self.assertEqual(len(sheets.append_values.call_args.args[1][0]), 5)
+        store.update_user("employee@wildwildgroup.com", password_hash="new-hash", active=0)
+        self.assertEqual([call.args[:2] for call in sheets.update_values.call_args_list], [("ToolsUsers", "B2:B2"), ("ToolsUsers", "C2:C2")])
+        with self.assertRaises(ValueError):
+            store.update_user("employee@wildwildgroup.com", database_access="s")
+        store.update_last_login("employee@wildwildgroup.com", "now")
+        sheets.update_values.assert_called_with("ToolsUsers", "E2:E2", [["now"]])
+        store.delete_user("employee@wildwildgroup.com")
+        sheets.clear_value_ranges.assert_called_once_with("ToolsUsers", ["A2:E2"])
+
     def test_legacy_users_schema_migration_preserves_existing_account_rows(self):
         sheets = Mock()
         sheets.get_sheet_titles.return_value = {"Users"}

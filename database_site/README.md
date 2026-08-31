@@ -53,8 +53,8 @@ administrator. A corporate email address alone does not create an account.
    `bohdan.m.publish@wildwildgroup.com`, `artem.k.publish@wildwildgroup.com`,
    `vladyslav.s.publish@wildwildgroup.com`,
    `mykhailo.h.android.dev@wildwildgroup.com`, `cto@wildwildgroup.com`.
-2. On both Web Services set `AUTH_SPREADSHEET_ID` to this same WWA spreadsheet,
-   `AUTH_USERS_SHEET=Users`, and `AUTH_SERVICE_ACCOUNT_JSON` to credentials with
+2. Both Web Services can keep `AUTH_SPREADSHEET_ID` pointing to the same WWA
+   spreadsheet, `AUTH_USERS_SHEET=Users`, and `AUTH_SERVICE_ACCOUNT_JSON` with
    Editor access to it. Existing `DATABASE_SITE_*`/`GOOGLE_SERVICE_ACCOUNT_*`
    credentials remain supported as fallbacks. Do not use the S spreadsheet for
    account storage.
@@ -63,27 +63,38 @@ administrator. A corporate email address alone does not create an account.
 4. Set `AUTH_ADMIN_EMAILS` on each service to the owner-approved existing
    administrator email(s). There are no hard-coded/default administrators.
    Keep `DATABASE_SITE_SECRET_KEY`/`SECRET_KEY` stable and private.
-5. Deploy both Web Services. Sign in again using the existing Apps Database
-   password. Old WWA Tools-only SQLite credentials are not an alternative login.
+5. Deploy both Web Services. Apps Database continues using `Users`. WWA Tools
+   atomically creates a separate `ToolsUsers` tab at first account access and
+   copies the existing emails, password hashes, status and timestamps once.
+   Database permissions are not copied. No additional Render variable is needed;
+   `TOOLS_AUTH_USERS_SHEET` can optionally rename the Tools target tab.
+   Do not precreate or delete that tab. Existing target tabs, including empty
+   ones, are never merged or repopulated on restart. Sign in again after deployment.
 6. Administrators open `/admin/users` (also linked from the header). The page
    lists existing accounts and supports manual email/password creation, password
    resets, activation/deactivation, and permanent deletion with confirmation.
+   Every operation applies only to this site's accounts, not the other site.
    Self-deletion is blocked; deleting an account does not delete its apps.
    It never displays stored password hashes.
    Other users cannot access this page, even by posting directly to its routes.
-7. Check that the five accounts above appear as active. Existing accounts need
-   no import. If an account is missing, add it manually with a new password and
+7. Check the five accounts above on each site. Migration preserves active and
+   disabled status; it does not activate accounts. If an account is missing, add
+   it manually on the required site with a new password and
    share it with that employee through an approved private channel. Email alone
    cannot restore a missing password; the deployment never invents/reset passwords.
 
-The same account credentials work on both domains with separate login sessions.
-Password changes/deletion revoke older sessions after the short user-cache TTL
-(60 seconds by default); login, database requests, and admin mutations bypass
-cached account records. `AUTH_REQUIRED=0` does not unlock account administration.
+After the one-time copy, both sites initially accept the existing passwords.
+New accounts, password changes, disabling and deletion are independent thereafter.
+Each service has separate session cookies, token realms and admin allowlists.
+Password changes/deletion revoke older sessions only on the affected site after
+the short user-cache TTL (60 seconds by default); login, database requests, and
+admin mutations bypass cached account records. Local SQLite likewise uses separate
+`users` (database) and `tools_users` (Tools) tables. `AUTH_REQUIRED=0` does not
+unlock account administration.
 
 ### Separate WWA and S Access
 
-Use the WWA DB and S DB groups on `/admin/users` to view the corresponding users.
+Use the WWA DB and S DB groups on the Apps Database `/admin/users` page to view the corresponding users.
 Select either or both checkboxes during account creation, or open Access on an
 existing account and save its new permissions. Clearing both leaves the account
 without database access. An administrator role does not grant either database.
@@ -91,8 +102,9 @@ without database access. An administrator role does not grant either database.
 The Users schema is extended from A:E to A:F without replacing existing rows.
 Column F (`database_access`) stores `wwa`, `s`, `s,wwa`, or `none`. Blank legacy
 values preserve WWA access and the previous S allowlist until explicitly edited.
-Explicit saved permissions override that allowlist. These settings are shared
-with WWA Tools through the same Users sheet; deploy both web services together.
+Explicit saved permissions override that allowlist. These settings affect only
+Apps Database, not WWA Tools. Tools has a plain user list and its own
+`S_LIVE_DB_ALLOWED_EMAILS` allowlist for the read-only S Live DB page.
 S-only users open S DB by default and cannot read or write WWA data, even through
 the legacy `/api/apps` endpoint. Users with no rights see an access-denied page.
 

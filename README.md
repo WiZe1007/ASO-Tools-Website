@@ -44,10 +44,11 @@ These are optional. Do not commit real values.
 
 - `SECRET_KEY` - required for stable login sessions on Render. Use a long random string.
 - `AUTH_ALLOWED_EMAIL_DOMAIN` - email domain for manually created accounts. Defaults to `@wildwildgroup.com`.
-- `AUTH_STORAGE` - set to `google_sheets` on Render to use the existing Apps Database users. Defaults to Google Sheets when a WWA/auth spreadsheet is configured, otherwise SQLite for local development. Storage errors never fall back to local passwords.
-- `AUTH_SPREADSHEET_ID` - the WWA spreadsheet containing the existing `Users` tab. Falls back to `DATABASE_SITE_SPREADSHEET_ID`, `AVAILABILITY_DB_SPREADSHEET_ID`, or `GOOGLE_SHEETS_SPREADSHEET_ID`.
-- `AUTH_USERS_SHEET` - defaults to `Users` (also accepts `DATABASE_SITE_USERS_SHEET`).
-- `AUTH_SERVICE_ACCOUNT_JSON` - credentials for the shared user spreadsheet; falls back to the existing database-site or Google service account configuration.
+- `AUTH_STORAGE` - set to `google_sheets` on Render. Defaults to Google Sheets when a WWA/auth spreadsheet is configured, otherwise SQLite for local development. Storage errors never fall back to another site's accounts or local passwords.
+- `AUTH_SPREADSHEET_ID` - spreadsheet for WWA Tools accounts. Falls back to `DATABASE_SITE_SPREADSHEET_ID`, `AVAILABILITY_DB_SPREADSHEET_ID`, or `GOOGLE_SHEETS_SPREADSHEET_ID`. It can be the same spreadsheet used by Apps Database: the account tabs are separate.
+- `TOOLS_AUTH_USERS_SHEET` - optional WWA Tools account tab, defaults to `ToolsUsers`. Must differ from the database-site user tab and app/log tabs.
+- `AUTH_USERS_SHEET` - existing Apps Database account tab, defaults to `Users` (also accepts `DATABASE_SITE_USERS_SHEET`). In WWA Tools this is only the source for the one-time migration, not its account store.
+- `AUTH_SERVICE_ACCOUNT_JSON` - credentials for the account spreadsheet; falls back to the existing database-site or Google service account configuration.
 - `AUTH_ADMIN_EMAILS` - exact comma-separated existing account emails allowed to manage users. Empty by default: no account automatically becomes an administrator.
 - `AUTH_DB_PATH` - SQLite user database path, used only with `AUTH_STORAGE=sqlite`. SQLite is not persistent on Render Free.
 - `AUTH_REQUIRED` - defaults to `1`. Set `0` only for local debugging without login.
@@ -55,33 +56,35 @@ These are optional. Do not commit real values.
 Self-registration is removed, including both GET and POST `/register`.
 Administrators sign in normally and open `/admin/users` to add an email/password,
 reset a password, disable/reactivate an account, or permanently delete another
-account after confirmation. Deletion removes its credentials and access settings,
-not the apps it submitted. Administrators cannot delete their own account.
+account after confirmation. All operations affect only the current site.
+Administrators cannot delete their own account. An account added to one site does
+not automatically get an account on the other.
 
-The Users page has All, WWA DB, and S DB groups. Select WWA DB and/or S DB when
-creating an account, or edit them under Access. An account can have either, both,
-or no database permissions. These permissions apply to the database editor and
-the corresponding read-only Live DB pages/APIs in WWA Tools. Account management
-privileges still depend only on `AUTH_ADMIN_EMAILS`; they do not imply database access.
+WWA Tools has a plain email/password user list. Only the Apps Database admin page
+has WWA DB/S DB groups and database permission checkboxes. Those permissions apply
+only to the database editor. Within WWA Tools, any active Tools account can view
+WWA Live DB; S Live DB uses this service's `S_LIVE_DB_ALLOWED_EMAILS` allowlist.
+Administrators are selected independently by `AUTH_ADMIN_EMAILS` on each service.
 
-`Users` gains a `database_access` column F automatically (SQLite gains the same
-column). Existing rows/passwords remain untouched: blank legacy access keeps WWA
-access and the old S email allowlist until an administrator saves explicit rights.
-Saved rights override the old allowlist, including explicit removal of S access.
-Both web services must be deployed and use the same Users store for consistent rights.
+On the first WWA Tools account-store initialization, if `ToolsUsers` is absent,
+the server atomically creates it and copies existing accounts from `Users`,
+preserving password hashes, active/disabled status and timestamps, but not database
+permissions. The source stays unchanged. An existing `ToolsUsers` tab, even if it
+contains no accounts, is never reimported or synchronized. Do not precreate it
+before migration, or delete it later: its existence records completed migration.
+Local SQLite uses a separate `tools_users` table, seeded once from legacy `users`.
 
-For both Render Web Services, configure the same `AUTH_SPREADSHEET_ID`,
-`AUTH_USERS_SHEET`, and credentials. Use `AUTH_STORAGE=google_sheets` on WWA Tools
-and `DATABASE_SITE_AUTH_STORAGE=google_sheets` on Apps Database. Keep a separate,
-stable `SECRET_KEY` (or `DATABASE_SITE_SECRET_KEY`) on each service. Users log in
-separately on each domain, with the same existing Apps Database password.
-The existing Users rows/hashes are read in place, not recreated or reset; legacy
-WWA Tools SQLite passwords are not copied over the shared accounts.
+The existing Render settings can remain: no new variable or Disk is required.
+Use `AUTH_STORAGE=google_sheets` on WWA Tools and
+`DATABASE_SITE_AUTH_STORAGE=google_sheets` on Apps Database. Deploy both services.
+Keep a separate stable `SECRET_KEY` (or `DATABASE_SITE_SECRET_KEY`) on each service.
+Existing passwords initially work on both sites after the copy; all subsequent
+creation, password changes, disabling and deletion are independent.
 
-After deployment, existing browser sessions require one fresh login. Password
-resets invalidate old sessions; Google Sheets session caching may take up to 60
-seconds to expire in another worker. Login and privileged administration always
-read fresh account state.
+After deployment, sign in again. Each site has its own session cookie and account
+token realm. A password reset invalidates only that site's older sessions; Google
+Sheets session caching may take up to 60 seconds to expire in another worker.
+Login and privileged administration always read fresh account state.
 
 To provision accounts from a trusted terminal (password is prompted and hashed):
 
@@ -137,9 +140,9 @@ the current live app database, search by bundle/package name, and see closed
 GEOs saved by the Telegram availability checks.
 
 The website can also expose `/s-live-apps` as a separate read-only page for the
-second team's live app database. Assign S DB access on `/admin/users`.
-`S_LIVE_DB_ALLOWED_EMAILS` is only a compatibility fallback for legacy accounts
-whose database permissions have not been saved yet.
+second team's live app database. Set `S_LIVE_DB_ALLOWED_EMAILS` on WWA Tools to
+the exact emails of active Tools accounts allowed to view it. Apps Database
+permissions do not grant or revoke access to this read-only Tools page.
 
 ### Google Service Account
 
@@ -272,10 +275,10 @@ S_AVAILABILITY_DB_APPS_SHEET=Apps
 S_AVAILABILITY_DB_LOG_SHEET=Checks
 ```
 
-Only logged-in users with S DB access see `S Live DB` in the navigation.
+Only logged-in Tools users in `S_LIVE_DB_ALLOWED_EMAILS` see `S Live DB` in the navigation.
 Direct access to `/s-live-apps` and `/api/s-live-apps` is forbidden for others.
-WWA Live DB pages and APIs similarly require WWA DB access. Database requests
-refresh account permissions, so cached sessions cannot bypass revoked rights.
+WWA Live DB pages and APIs require an active WWA Tools account. Database requests
+refresh account status, so cached sessions cannot bypass disabled/deleted accounts.
 
 ### Separate Telegram Bot
 

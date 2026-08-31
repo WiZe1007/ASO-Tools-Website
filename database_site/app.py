@@ -40,9 +40,11 @@ app.config.update(
     SECRET_KEY=os.environ.get("DATABASE_SITE_SECRET_KEY") or os.environ.get("SECRET_KEY") or secrets.token_hex(32),
     MAX_CONTENT_LENGTH=64 * 1024,
     SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_NAME="wwa_database_session",
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=(os.environ.get("DATABASE_SITE_SECURE_COOKIES", "1") == "1"),
     AUTH_ADMIN_EMAILS=os.environ.get("AUTH_ADMIN_EMAILS") or os.environ.get("DATABASE_SITE_ADMIN_EMAILS") or "",
+    AUTH_ACCOUNT_REALM="database",
 )
 
 AUTH_REQUIRED = os.environ.get("DATABASE_SITE_AUTH_REQUIRED", "1") != "0"
@@ -453,10 +455,52 @@ class GoogleSheetsStore:
 
 
 class GoogleSheetsUserStore:
-    def __init__(self, sheets_store: GoogleSheetsStore, users_sheet: str = AUTH_USERS_SHEET):
+    def __init__(self, sheets_store: GoogleSheetsStore, users_sheet: str = AUTH_USERS_SHEET, *, database_permissions=True):
         self.sheets_store = sheets_store
         self.users_sheet = users_sheet
+        self.database_permissions = database_permissions
+        self.headers = USERS_SHEET_HEADERS if database_permissions else LEGACY_USERS_SHEET_HEADERS
+        self.last_column = "F" if database_permissions else "E"
         self._ready = False
+
+    def initialize_from_legacy_sheet(self, source_sheet: str):
+        if self.users_sheet.casefold() == source_sheet.casefold():
+            raise DatabaseConfigError("Сховища користувачів двох сайтів мають бути різними.")
+        titles = self.sheets_store.get_sheet_titles()
+        if self.users_sheet in titles:
+            self.ensure_ready()
+            return
+        source_rows = self.sheets_store.get_values(source_sheet, "A1:E") if source_sheet in titles else []
+        if source_rows and [str(value).strip() for value in source_rows[0]] != LEGACY_USERS_SHEET_HEADERS:
+            raise DatabaseConfigError("Не вдалося перевірити структуру попереднього сховища користувачів.")
+        rows = [list(self.headers)]
+        for source_row in source_rows[1:]:
+            if not source_row or not normalize_email(source_row[0]):
+                continue
+            row = list(source_row[:5]) + [""] * max(0, 5 - len(source_row))
+            if self.database_permissions:
+                row.append("")
+            rows.append(row)
+        sheet_id = secrets.randbelow(2**31 - 1) + 1
+        # Atomically create and seed once. Never merge accounts into an existing sheet.
+        try:
+            self.sheets_store._request("POST", ":batchUpdate", json={
+                "requests": [
+                    {"addSheet": {"properties": {"sheetId": sheet_id, "title": self.users_sheet,
+                                                  "gridProperties": {"rowCount": max(1000, len(rows)), "columnCount": 26}}}},
+                    {"updateCells": {
+                        "start": {"sheetId": sheet_id, "rowIndex": 0, "columnIndex": 0},
+                        "rows": [{"values": [{"userEnteredValue": {"stringValue": str(value) if value is not None else ""}}
+                                             for value in row]} for row in rows],
+                        "fields": "userEnteredValue",
+                    }},
+                ],
+            })
+        except DatabaseConfigError:
+            # A retry or another worker may already have completed the atomic copy.
+            if self.users_sheet not in self.sheets_store.get_sheet_titles():
+                raise
+        self.ensure_ready()
 
     def ensure_ready(self):
         if self._ready:
@@ -464,25 +508,25 @@ class GoogleSheetsUserStore:
         titles = self.sheets_store.get_sheet_titles()
         if self.users_sheet not in titles:
             self.sheets_store.add_sheet(self.users_sheet)
-        headers = self.sheets_store.get_values(self.users_sheet, "A1:F1")
+        headers = self.sheets_store.get_values(self.users_sheet, f"A1:{self.last_column}1")
         if not headers:
-            self.sheets_store.update_values(self.users_sheet, "A1:F1", [USERS_SHEET_HEADERS])
-        elif [str(item).strip() for item in headers[0]] in (LEGACY_USERS_SHEET_HEADERS, LEGACY_USERS_SHEET_HEADERS + [""]):
+            self.sheets_store.update_values(self.users_sheet, f"A1:{self.last_column}1", [self.headers])
+        elif self.database_permissions and [str(item).strip() for item in headers[0]] in (LEGACY_USERS_SHEET_HEADERS, LEGACY_USERS_SHEET_HEADERS + [""]):
             self.sheets_store.update_values(self.users_sheet, "F1:F1", [["database_access"]])
-        elif [str(item).strip() for item in headers[0]] != USERS_SHEET_HEADERS:
+        elif [str(item).strip() for item in headers[0]] != self.headers:
             raise DatabaseConfigError(
-                f"Заголовки аркуша {self.users_sheet} не відповідають очікуваній схемі A:F."
+                f"Заголовки аркуша {self.users_sheet} не відповідають очікуваній схемі A:{self.last_column}."
             )
         self._ready = True
 
     def load_users(self) -> list[dict]:
         self.ensure_ready()
-        rows = self.sheets_store.get_values(self.users_sheet, "A2:F")
+        rows = self.sheets_store.get_values(self.users_sheet, f"A2:{self.last_column}")
         users = []
         for row in rows:
             item = {
                 header: row[index] if index < len(row) else ""
-                for index, header in enumerate(USERS_SHEET_HEADERS)
+                for index, header in enumerate(self.headers)
             }
             email = normalize_email(item.get("email"))
             if not email:
@@ -505,14 +549,16 @@ class GoogleSheetsUserStore:
         with AUTH_DB_LOCK:
             if self.get_user(normalized):
                 raise ValueError("USER_ALREADY_EXISTS")
-            self.sheets_store.append_values(self.users_sheet, [[
+            values = [
                 normalized,
                 password_hash,
                 "TRUE",
                 created_at,
                 "",
-                database_access,
-            ]])
+            ]
+            if self.database_permissions:
+                values.append(database_access)
+            self.sheets_store.append_values(self.users_sheet, [values])
         return {
             "id": normalized,
             "email": normalized,
@@ -520,7 +566,7 @@ class GoogleSheetsUserStore:
             "active": 1,
             "created_at": created_at,
             "last_login_at": "",
-            "database_access": database_access,
+            **({"database_access": database_access} if self.database_permissions else {}),
         }
 
     def update_last_login(self, email: str, last_login_at: str):
@@ -538,10 +584,12 @@ class GoogleSheetsUserStore:
                     return
 
     def update_user(self, email: str, *, password_hash=None, active=None, database_access=None):
+        if database_access is not None and not self.database_permissions:
+            raise ValueError("DATABASE_PERMISSIONS_NOT_SUPPORTED")
         normalized = normalize_email(email)
         with AUTH_DB_LOCK:
             self.ensure_ready()
-            rows = self.sheets_store.get_values(self.users_sheet, "A2:F")
+            rows = self.sheets_store.get_values(self.users_sheet, f"A2:{self.last_column}")
             for row_index, row in enumerate(rows, start=2):
                 if not row or normalize_email(row[0]) != normalized:
                     continue
@@ -563,7 +611,7 @@ class GoogleSheetsUserStore:
             self.ensure_ready()
             rows = self.sheets_store.get_values(self.users_sheet, "A2:A")
             ranges = [
-                f"A{index}:F{index}" for index, row in enumerate(rows, start=2)
+                f"A{index}:{self.last_column}{index}" for index, row in enumerate(rows, start=2)
                 if row and normalize_email(row[0]) == normalized
             ]
             if not ranges:

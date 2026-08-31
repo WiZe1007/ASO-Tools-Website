@@ -42,7 +42,7 @@ def account_database_access(user, legacy_s_emails=""):
 
 def account_session_token(user):
     # Bind sessions to the password without putting a password hash in cookies.
-    payload = f"{user['email']}:{user['password_hash']}".encode()
+    payload = f"{current_app.config.get('AUTH_ACCOUNT_REALM', '')}:{user['email']}:{user['password_hash']}".encode()
     return hmac.new(str(current_app.secret_key).encode(), payload, hashlib.sha256).hexdigest()
 
 
@@ -97,7 +97,7 @@ def valid_form_csrf():
     return bool(expected and supplied and secrets.compare_digest(expected, supplied))
 
 
-def create_accounts_blueprint(*, list_users, get_user, create_user, update_user, delete_user, database_access, domain, site_name, home_endpoint, storage_errors):
+def create_accounts_blueprint(*, list_users, get_user, create_user, update_user, delete_user, domain, site_name, home_endpoint, storage_errors, database_access=None):
     blueprint = Blueprint(
         "accounts", __name__, url_prefix="/admin", cli_group="users",
         template_folder=str(Path(__file__).resolve().parent / "templates"),
@@ -127,20 +127,21 @@ def create_accounts_blueprint(*, list_users, get_user, create_user, update_user,
         try:
             users = [
                 {**{key: user.get(key) for key in ("email", "active", "created_at", "last_login_at")},
-                 "database_access": database_access(user)}
+                 "database_access": database_access(user) if database_access else set()}
                 for user in list_users()
             ]
         except storage_errors:
             users = []
             error, status = "Сховище користувачів тимчасово недоступне. Спробуй пізніше.", 503
         group = request.values.get("group", "all")
-        if group not in DATABASE_ACCESS_KEYS:
+        if not database_access or group not in DATABASE_ACCESS_KEYS:
             group = "all"
         counts = {"all": len(users), **{key: sum(key in user["database_access"] for user in users) for key in DATABASE_ACCESS_KEYS}}
         visible_users = users if group == "all" else [user for user in users if group in user["database_access"]]
         return render_template(
             "accounts/users.html", users=sorted(visible_users, key=lambda user: user["email"]),
             group=group, account_counts=counts,
+            manage_database_access=database_access is not None,
             error=error, csrf_token=login_csrf_token(), domain=domain(),
             site_name=site_name, home_endpoint=home_endpoint,
             current_email=g.current_user["email"],
@@ -155,12 +156,16 @@ def create_accounts_blueprint(*, list_users, get_user, create_user, update_user,
         error = account_validation_error(email, password, domain())
         if error:
             return render_users(error, 400)
+        options = {}
+        if database_access:
+            try:
+                options["database_access"] = serialize_database_access(request.form.getlist("database_access"))
+            except ValueError:
+                return render_users("Некоректний список доступів до баз даних.", 400)
+        elif "database_access" in request.form:
+            return render_users("Доступи до баз даних налаштовуються на сайті Бази Даних.", 400)
         try:
-            access = serialize_database_access(request.form.getlist("database_access"))
-        except ValueError:
-            return render_users("Некоректний список доступів до баз даних.", 400)
-        try:
-            create_user(email, password, database_access=access)
+            create_user(email, password, **options)
         except ValueError:
             return render_users("Користувач із такою поштою вже існує.", 409)
         except storage_errors:
@@ -196,7 +201,7 @@ def create_accounts_blueprint(*, list_users, get_user, create_user, update_user,
             updates["active"] = int(request.form["active"])
             if not updates["active"] and email == g.current_user["email"]:
                 return render_users("Не можна вимкнути власний акаунт.", 400)
-        elif action == "access":
+        elif action == "access" and database_access:
             try:
                 updates["database_access"] = serialize_database_access(request.form.getlist("database_access"))
             except ValueError:

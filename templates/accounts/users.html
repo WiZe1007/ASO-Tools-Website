@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
   <title>Користувачі | {{ site_name }}</title>
-  <link rel="icon" type="image/png" href="{{ url_for('static', filename='db/data-base-favicon.png') }}">
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='db/data-base-favicon.png' if manage_database_access else 'img/WWA_icon_1024.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='db/accounts.css', v='20260831-access') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='db/accounts.css', v='20260831-sites') }}">
   <script src="{{ url_for('static', filename='db/accounts.js', v='20260831-access') }}" defer></script>
 </head>
 <body class="database-page accounts-page">
@@ -15,7 +15,7 @@
   <header class="app-header">
     <a class="brand" href="{{ url_for(home_endpoint) }}">
       <img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" alt="">
-      <span><strong>{{ site_name }}</strong><small>Керування доступом</small></span>
+      <span><strong>{{ site_name }}</strong><small>{{ 'Доступ до баз даних' if manage_database_access else 'Доступ до WWA Tools' }}</small></span>
     </a>
     <div class="header-actions">
       <span class="user-email">{{ current_email }}</span>
@@ -26,25 +26,29 @@
     </div>
   </header>
   <main class="app-main accounts-main">
-    <div class="accounts-heading"><h1>Користувачі</h1><span>Акаунтів: {{ account_counts.all }}</span></div>
+    <div class="accounts-heading"><h1>{{ 'Користувачі Бази Даних' if manage_database_access else 'Користувачі WWA Tools' }}</h1><span>Акаунтів: {{ account_counts.all }}</span></div>
+    {% if manage_database_access %}
     <nav class="account-groups" aria-label="Групи користувачів">
       {% for key, label in [('all', 'Усі'), ('wwa', 'WWA DB'), ('s', 'S DB')] %}
       <a href="{{ url_for('accounts.users', group=key) }}" class="secondary-button {{ 'is-selected' if group == key else '' }}" {% if group == key %}aria-current="page"{% endif %}>{{ label }} <span>{{ account_counts[key] }}</span></a>
       {% endfor %}
     </nav>
+    {% endif %}
     {% if error %}<div class="form-alert" role="alert">{{ error }}</div>{% endif %}
     {% for message in get_flashed_messages() %}<div class="accounts-notice" role="status">{{ message }}</div>{% endfor %}
     <section class="account-create" aria-labelledby="createTitle">
       <h2 id="createTitle">Додати користувача</h2>
-      <form method="post" action="{{ url_for('accounts.users') }}" class="accounts-form">
+      <form method="post" action="{{ url_for('accounts.users') }}" class="accounts-form {{ '' if manage_database_access else 'without-database-access' }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>Корпоративна пошта<input name="email" type="email" maxlength="254" placeholder="name{{ domain }}" autocomplete="off" required></label>
         <label>Пароль<input name="password" type="password" minlength="8" maxlength="256" placeholder="Щонайменше 8 символів" autocomplete="new-password" required></label>
+        {% if manage_database_access %}
         <fieldset class="account-access-options">
           <legend>Доступ до баз</legend>
           <label><input type="checkbox" name="database_access" value="wwa" {{ 'checked' if group != 's' else '' }}> WWA DB</label>
           <label><input type="checkbox" name="database_access" value="s" {{ 'checked' if group == 's' else '' }}> S DB</label>
         </fieldset>
+        {% endif %}
         <button type="submit" class="primary-button">Додати користувача</button>
       </form>
     </section>
@@ -55,14 +59,17 @@
           <strong>{{ user.email }}</strong>
           <span class="account-status {{ 'is-active' if user.active else 'is-disabled' }}">{{ 'Активний' if user.active else 'Вимкнений' }}</span>
           {% if user.email == current_email %}<small>Ваш акаунт</small>{% endif %}
+          {% if manage_database_access %}
           <div class="account-memberships">
             {% for key, label in [('wwa', 'WWA DB'), ('s', 'S DB')] %}
             {% if key in user.database_access %}<span class="account-status">{{ label }}</span>{% endif %}
             {% endfor %}
             {% if not user.database_access %}<small>Без доступу до баз</small>{% endif %}
           </div>
+          {% endif %}
         </div>
         <div class="account-actions">
+          {% if manage_database_access %}
           <details class="account-password account-access">
             <summary>Доступи</summary>
             <form method="post" action="{{ url_for('accounts.edit_user', email=user.email) }}">
@@ -76,6 +83,7 @@
               <button type="submit" class="primary-button">Зберегти доступи</button>
             </form>
           </details>
+          {% endif %}
           <details class="account-password">
             <summary>Змінити пароль</summary>
             <form method="post" action="{{ url_for('accounts.edit_user', email=user.email) }}">
@@ -96,13 +104,13 @@
           {% endif %}
         </div>
       </article>
-      {% else %}<p class="accounts-empty">У цій групі поки немає користувачів.</p>{% endfor %}
+      {% else %}<p class="accounts-empty">{{ 'У цій групі поки немає користувачів.' if manage_database_access else 'На цьому сайті поки немає користувачів.' }}</p>{% endfor %}
     </section>
   </main>
   <dialog class="account-delete-dialog" id="accountDeleteDialog" aria-labelledby="accountDeleteTitle" aria-describedby="accountDeleteDescription">
     <h2 id="accountDeleteTitle">Видалити користувача?</h2>
     <p class="account-delete-email" id="accountDeleteEmail"></p>
-    <p id="accountDeleteDescription">Акаунт і пароль буде видалено без можливості відновлення. Внесені користувачем додатки залишаться в базі.</p>
+    <p id="accountDeleteDescription">Акаунт і пароль буде видалено лише з {{ site_name }}. На іншому сайті акаунт залишиться без змін.{% if manage_database_access %} Внесені користувачем додатки залишаться в базі.{% endif %}</p>
     <form method="post" id="accountDeleteForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="action" value="delete">
