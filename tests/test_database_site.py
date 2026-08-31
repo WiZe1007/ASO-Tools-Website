@@ -50,7 +50,7 @@ class FakeUserStore:
         user = self.users.get(database_app.normalize_email(identifier))
         return dict(user) if user else None
 
-    def create_user(self, email, password_hash):
+    def create_user(self, email, password_hash, *, database_access=None):
         normalized = database_app.normalize_email(email)
         if normalized in self.users:
             raise ValueError("USER_ALREADY_EXISTS")
@@ -61,6 +61,7 @@ class FakeUserStore:
             "active": 1,
             "created_at": database_app.utc_now_iso(),
             "last_login_at": "",
+            "database_access": database_access,
         }
         self.users[normalized] = user
         return dict(user)
@@ -71,7 +72,13 @@ class FakeUserStore:
     def load_users(self):
         return [dict(user) for user in self.users.values()]
 
-    def update_user(self, email, *, password_hash=None, active=None):
+    def delete_user(self, email):
+        normalized = database_app.normalize_email(email)
+        if normalized not in self.users:
+            raise ValueError("USER_NOT_FOUND")
+        del self.users[normalized]
+
+    def update_user(self, email, *, password_hash=None, active=None, database_access=None):
         normalized = database_app.normalize_email(email)
         if normalized not in self.users:
             raise ValueError("USER_NOT_FOUND")
@@ -79,6 +86,8 @@ class FakeUserStore:
             self.users[normalized]["password_hash"] = password_hash
         if active is not None:
             self.users[normalized]["active"] = active
+        if database_access is not None:
+            self.users[normalized]["database_access"] = database_access
         return dict(self.users[normalized])
 
 

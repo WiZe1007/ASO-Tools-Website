@@ -67,7 +67,9 @@ administrator. A corporate email address alone does not create an account.
    password. Old WWA Tools-only SQLite credentials are not an alternative login.
 6. Administrators open `/admin/users` (also linked from the header). The page
    lists existing accounts and supports manual email/password creation, password
-   resets, and activation/deactivation. It never displays stored password hashes.
+   resets, activation/deactivation, and permanent deletion with confirmation.
+   Self-deletion is blocked; deleting an account does not delete its apps.
+   It never displays stored password hashes.
    Other users cannot access this page, even by posting directly to its routes.
 7. Check that the five accounts above appear as active. Existing accounts need
    no import. If an account is missing, add it manually with a new password and
@@ -75,10 +77,24 @@ administrator. A corporate email address alone does not create an account.
    cannot restore a missing password; the deployment never invents/reset passwords.
 
 The same account credentials work on both domains with separate login sessions.
-Password changes revoke older sessions after the short user-cache TTL (60 seconds
-by default); login and admin mutations bypass cached account records. S DB access
-continues to depend on the existing S email allowlist, not on the administrator
-role. `AUTH_REQUIRED=0` does not unlock the account administration UI.
+Password changes/deletion revoke older sessions after the short user-cache TTL
+(60 seconds by default); login, database requests, and admin mutations bypass
+cached account records. `AUTH_REQUIRED=0` does not unlock account administration.
+
+### Separate WWA and S Access
+
+Use the WWA DB and S DB groups on `/admin/users` to view the corresponding users.
+Select either or both checkboxes during account creation, or open Access on an
+existing account and save its new permissions. Clearing both leaves the account
+without database access. An administrator role does not grant either database.
+
+The Users schema is extended from A:E to A:F without replacing existing rows.
+Column F (`database_access`) stores `wwa`, `s`, `s,wwa`, or `none`. Blank legacy
+values preserve WWA access and the previous S allowlist until explicitly edited.
+Explicit saved permissions override that allowlist. These settings are shared
+with WWA Tools through the same Users sheet; deploy both web services together.
+S-only users open S DB by default and cannot read or write WWA data, even through
+the legacy `/api/apps` endpoint. Users with no rights see an access-denied page.
 
 For a trusted terminal with the service environment configured:
 
@@ -95,7 +111,7 @@ read-only and reports missing/inactive accounts; it does not overwrite hashes.
 Environment variables for the restricted S database:
 
 - `DATABASE_SITE_S_SPREADSHEET_ID` - Google Sheet ID for the second team.
-- `DATABASE_SITE_S_ALLOWED_EMAILS` - exact comma-separated emails that may access S DB, for example `lead@wildwildgroup.com,user@wildwildgroup.com`.
+- `DATABASE_SITE_S_ALLOWED_EMAILS` - legacy S access fallback for accounts without explicit database permissions. Manage new permissions on `/admin/users`.
 - `DATABASE_SITE_S_SERVICE_ACCOUNT_JSON` - optional separate service account JSON for S DB. If omitted, the site uses `DATABASE_SITE_SERVICE_ACCOUNT_JSON`.
 - `DATABASE_SITE_S_APPS_SHEET` - optional Apps sheet name, defaults to `Apps`.
 - `DATABASE_SITE_S_LOG_SHEET` - optional audit sheet name, defaults to `Checks`.

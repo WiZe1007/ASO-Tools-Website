@@ -43,8 +43,8 @@
     <section class="hero-row">
       <div>
         <span class="eyebrow">Company workspace</span>
-        <h1 id="databaseTitle">WWA Apps Database</h1>
-        <p id="databaseDescription">Додавай Google Play застосунки, призначай відповідальних і контролюй стан перевірок команди WWA.</p>
+        <h1 id="databaseTitle">{{ databases[0].title }}</h1>
+        <p id="databaseDescription">Додавай Google Play застосунки, призначай відповідальних і контролюй стан перевірок команди {{ databases[0].label }}.</p>
       </div>
       <button class="primary-button add-button" id="addAppButton" type="button">
         <svg aria-hidden="true"><use href="#icon-plus"></use></svg>
@@ -55,7 +55,7 @@
     {% if databases|length > 1 %}
     <nav class="database-switcher" id="databaseSwitcher" aria-label="Вибір бази даних">
       {% for database in databases %}
-      <button class="database-tab {{ 'is-active' if database.key == 'wwa' else '' }}" type="button" data-database-key="{{ database.key }}" aria-pressed="{{ 'true' if database.key == 'wwa' else 'false' }}">
+      <button class="database-tab {{ 'is-active' if loop.first else '' }}" type="button" data-database-key="{{ database.key }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">
         <svg aria-hidden="true"><use href="#icon-database"></use></svg>
         <span>
           <strong>{{ database.label }}</strong>

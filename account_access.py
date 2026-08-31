@@ -19,6 +19,26 @@ TEAM_EMAILS = (
     "cto@wildwildgroup.com",
 )
 
+DATABASE_ACCESS_KEYS = {"wwa", "s"}
+
+
+def serialize_database_access(values):
+    selected = set(values)
+    if not selected <= DATABASE_ACCESS_KEYS:
+        raise ValueError("INVALID_DATABASE_ACCESS")
+    return ",".join(sorted(selected)) or "none"
+
+
+def account_database_access(user, legacy_s_emails=""):
+    if not user:
+        return set()
+    stored = str(user.get("database_access") or "").strip().lower()
+    if stored:
+        return set(stored.split(",")) & DATABASE_ACCESS_KEYS
+    # Old accounts keep their previous rights until an admin saves explicit access.
+    legacy_allowed = {item.strip().lower() for item in re.split(r"[\s,;]+", legacy_s_emails) if item.strip()}
+    return {"wwa", "s"} if user["email"] in legacy_allowed else {"wwa"}
+
 
 def account_session_token(user):
     # Bind sessions to the password without putting a password hash in cookies.
@@ -77,7 +97,7 @@ def valid_form_csrf():
     return bool(expected and supplied and secrets.compare_digest(expected, supplied))
 
 
-def create_accounts_blueprint(*, list_users, get_user, create_user, update_user, domain, site_name, home_endpoint, storage_errors):
+def create_accounts_blueprint(*, list_users, get_user, create_user, update_user, delete_user, database_access, domain, site_name, home_endpoint, storage_errors):
     blueprint = Blueprint(
         "accounts", __name__, url_prefix="/admin", cli_group="users",
         template_folder=str(Path(__file__).resolve().parent / "templates"),
@@ -106,14 +126,21 @@ def create_accounts_blueprint(*, list_users, get_user, create_user, update_user,
     def render_users(error="", status=200):
         try:
             users = [
-                {key: user.get(key) for key in ("email", "active", "created_at", "last_login_at")}
+                {**{key: user.get(key) for key in ("email", "active", "created_at", "last_login_at")},
+                 "database_access": database_access(user)}
                 for user in list_users()
             ]
         except storage_errors:
             users = []
             error, status = "Сховище користувачів тимчасово недоступне. Спробуй пізніше.", 503
+        group = request.values.get("group", "all")
+        if group not in DATABASE_ACCESS_KEYS:
+            group = "all"
+        counts = {"all": len(users), **{key: sum(key in user["database_access"] for user in users) for key in DATABASE_ACCESS_KEYS}}
+        visible_users = users if group == "all" else [user for user in users if group in user["database_access"]]
         return render_template(
-            "accounts/users.html", users=sorted(users, key=lambda user: user["email"]),
+            "accounts/users.html", users=sorted(visible_users, key=lambda user: user["email"]),
+            group=group, account_counts=counts,
             error=error, csrf_token=login_csrf_token(), domain=domain(),
             site_name=site_name, home_endpoint=home_endpoint,
             current_email=g.current_user["email"],
@@ -129,7 +156,11 @@ def create_accounts_blueprint(*, list_users, get_user, create_user, update_user,
         if error:
             return render_users(error, 400)
         try:
-            create_user(email, password)
+            access = serialize_database_access(request.form.getlist("database_access"))
+        except ValueError:
+            return render_users("Некоректний список доступів до баз даних.", 400)
+        try:
+            create_user(email, password, database_access=access)
         except ValueError:
             return render_users("Користувач із такою поштою вже існує.", 409)
         except storage_errors:
@@ -141,6 +172,19 @@ def create_accounts_blueprint(*, list_users, get_user, create_user, update_user,
     def edit_user(email):
         email = email.strip().lower()
         action = request.form.get("action")
+        if action == "delete":
+            if email == g.current_user["email"]:
+                return render_users("Не можна видалити власний акаунт.", 400)
+            if str(request.form.get("confirm_email") or "").strip().lower() != email:
+                return render_users("Підтвердь видалення вибраного користувача.", 400)
+            try:
+                delete_user(email)
+            except ValueError:
+                abort(404)
+            except storage_errors:
+                return render_users("Не вдалося підтвердити видалення. Перевір список перед повторною спробою.", 503)
+            flash("Користувача повністю видалено.")
+            return redirect(url_for("accounts.users"), code=303)
         updates = {}
         if action == "password":
             password = request.form.get("password") or ""
@@ -152,6 +196,11 @@ def create_accounts_blueprint(*, list_users, get_user, create_user, update_user,
             updates["active"] = int(request.form["active"])
             if not updates["active"] and email == g.current_user["email"]:
                 return render_users("Не можна вимкнути власний акаунт.", 400)
+        elif action == "access":
+            try:
+                updates["database_access"] = serialize_database_access(request.form.getlist("database_access"))
+            except ValueError:
+                return render_users("Некоректний список доступів до баз даних.", 400)
         else:
             abort(400)
         try:
@@ -162,7 +211,7 @@ def create_accounts_blueprint(*, list_users, get_user, create_user, update_user,
             return render_users("Не вдалося зберегти зміни. Спробуй пізніше.", 503)
         if email == g.current_user["email"]:
             session["account_token"] = account_session_token(changed)
-        flash("Пароль змінено." if action == "password" else "Статус користувача змінено.")
+        flash({"password": "Пароль змінено.", "status": "Статус користувача змінено.", "access": "Доступи до баз даних змінено."}[action])
         return redirect(url_for("accounts.users"), code=303)
 
     @blueprint.cli.command("add")

@@ -7,8 +7,8 @@
   <title>Користувачі | {{ site_name }}</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='db/data-base-favicon.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='db/accounts.css', v='20260831') }}">
-  <script src="{{ url_for('static', filename='db/accounts.js', v='20260831') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='db/accounts.css', v='20260831-access') }}">
+  <script src="{{ url_for('static', filename='db/accounts.js', v='20260831-access') }}" defer></script>
 </head>
 <body class="database-page accounts-page">
   <div class="page-background" aria-hidden="true"></div>
@@ -26,7 +26,12 @@
     </div>
   </header>
   <main class="app-main accounts-main">
-    <div class="accounts-heading"><h1>Користувачі</h1><span>Акаунтів: {{ users|length }}</span></div>
+    <div class="accounts-heading"><h1>Користувачі</h1><span>Акаунтів: {{ account_counts.all }}</span></div>
+    <nav class="account-groups" aria-label="Групи користувачів">
+      {% for key, label in [('all', 'Усі'), ('wwa', 'WWA DB'), ('s', 'S DB')] %}
+      <a href="{{ url_for('accounts.users', group=key) }}" class="secondary-button {{ 'is-selected' if group == key else '' }}" {% if group == key %}aria-current="page"{% endif %}>{{ label }} <span>{{ account_counts[key] }}</span></a>
+      {% endfor %}
+    </nav>
     {% if error %}<div class="form-alert" role="alert">{{ error }}</div>{% endif %}
     {% for message in get_flashed_messages() %}<div class="accounts-notice" role="status">{{ message }}</div>{% endfor %}
     <section class="account-create" aria-labelledby="createTitle">
@@ -35,6 +40,11 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <label>Корпоративна пошта<input name="email" type="email" maxlength="254" placeholder="name{{ domain }}" autocomplete="off" required></label>
         <label>Пароль<input name="password" type="password" minlength="8" maxlength="256" placeholder="Щонайменше 8 символів" autocomplete="new-password" required></label>
+        <fieldset class="account-access-options">
+          <legend>Доступ до баз</legend>
+          <label><input type="checkbox" name="database_access" value="wwa" {{ 'checked' if group != 's' else '' }}> WWA DB</label>
+          <label><input type="checkbox" name="database_access" value="s" {{ 'checked' if group == 's' else '' }}> S DB</label>
+        </fieldset>
         <button type="submit" class="primary-button">Додати користувача</button>
       </form>
     </section>
@@ -45,8 +55,27 @@
           <strong>{{ user.email }}</strong>
           <span class="account-status {{ 'is-active' if user.active else 'is-disabled' }}">{{ 'Активний' if user.active else 'Вимкнений' }}</span>
           {% if user.email == current_email %}<small>Ваш акаунт</small>{% endif %}
+          <div class="account-memberships">
+            {% for key, label in [('wwa', 'WWA DB'), ('s', 'S DB')] %}
+            {% if key in user.database_access %}<span class="account-status">{{ label }}</span>{% endif %}
+            {% endfor %}
+            {% if not user.database_access %}<small>Без доступу до баз</small>{% endif %}
+          </div>
         </div>
         <div class="account-actions">
+          <details class="account-password account-access">
+            <summary>Доступи</summary>
+            <form method="post" action="{{ url_for('accounts.edit_user', email=user.email) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="action" value="access">
+              <fieldset class="account-access-options">
+                <legend>Бази для {{ user.email }}</legend>
+                <label><input type="checkbox" name="database_access" value="wwa" {{ 'checked' if 'wwa' in user.database_access else '' }}> WWA DB</label>
+                <label><input type="checkbox" name="database_access" value="s" {{ 'checked' if 's' in user.database_access else '' }}> S DB</label>
+              </fieldset>
+              <button type="submit" class="primary-button">Зберегти доступи</button>
+            </form>
+          </details>
           <details class="account-password">
             <summary>Змінити пароль</summary>
             <form method="post" action="{{ url_for('accounts.edit_user', email=user.email) }}">
@@ -63,11 +92,26 @@
             <input type="hidden" name="active" value="{{ 0 if user.active else 1 }}">
             <button type="submit" class="secondary-button {{ 'account-disable' if user.active else '' }}">{{ 'Вимкнути' if user.active else 'Увімкнути' }}</button>
           </form>
+          <button type="button" class="secondary-button account-delete" data-delete-email="{{ user.email }}" data-delete-url="{{ url_for('accounts.edit_user', email=user.email) }}" aria-haspopup="dialog" aria-controls="accountDeleteDialog">Видалити</button>
           {% endif %}
         </div>
       </article>
-      {% else %}<p class="accounts-empty">Користувачів поки немає.</p>{% endfor %}
+      {% else %}<p class="accounts-empty">У цій групі поки немає користувачів.</p>{% endfor %}
     </section>
   </main>
+  <dialog class="account-delete-dialog" id="accountDeleteDialog" aria-labelledby="accountDeleteTitle" aria-describedby="accountDeleteDescription">
+    <h2 id="accountDeleteTitle">Видалити користувача?</h2>
+    <p class="account-delete-email" id="accountDeleteEmail"></p>
+    <p id="accountDeleteDescription">Акаунт і пароль буде видалено без можливості відновлення. Внесені користувачем додатки залишаться в базі.</p>
+    <form method="post" id="accountDeleteForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="action" value="delete">
+      <input type="hidden" name="confirm_email" id="accountDeleteConfirmEmail">
+      <div class="account-delete-actions">
+        <button type="button" class="secondary-button" id="accountDeleteCancel" autofocus>Скасувати</button>
+        <button type="submit" class="secondary-button account-delete" id="accountDeleteSubmit">Видалити назавжди</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

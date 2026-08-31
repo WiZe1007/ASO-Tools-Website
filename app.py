@@ -29,7 +29,7 @@ from werkzeug.security import generate_password_hash
 
 import database_site.app as shared_accounts
 from account_access import (
-    account_session_token, account_session_valid, account_validation_error,
+    account_database_access, account_session_token, account_session_valid, account_validation_error,
     create_accounts_blueprint, is_account_admin, login_csrf_token,
     valid_form_csrf, verify_account_password,
 )
@@ -1201,6 +1201,9 @@ def ensure_auth_db():
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+            if "database_access" not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN database_access TEXT")
 
 
 def normalize_auth_email(email: str) -> str:
@@ -1221,11 +1224,14 @@ def email_domain_allowed(email: str) -> bool:
 
 
 def user_can_access_s_live_db(email: str | None = None) -> bool:
-    allowed = parse_email_allowlist(S_LIVE_DB_ALLOWED_EMAILS)
-    if not allowed:
-        return False
-    current_email = normalize_auth_email(email or flask_session.get("user_email") or "")
-    return current_email in allowed
+    return user_can_access_live_database("s", email)
+
+
+def user_can_access_live_database(database_key: str, email: str | None = None) -> bool:
+    user = getattr(g, "current_user", None)
+    if not AUTH_REQUIRED:
+        user = {"email": normalize_auth_email(email or flask_session.get("user_email") or "")}
+    return database_key in account_database_access(user, S_LIVE_DB_ALLOWED_EMAILS)
 
 
 def auth_uses_google_sheets():
@@ -1240,42 +1246,42 @@ def get_user_by_email(email: str, fresh=False):
     ensure_auth_db()
     with auth_db_connect() as conn:
         row = conn.execute(
-            "SELECT id, email, password_hash, active, created_at, last_login_at FROM users WHERE email = ?",
+            "SELECT id, email, password_hash, active, created_at, last_login_at, database_access FROM users WHERE email = ?",
             (normalize_auth_email(email),),
         ).fetchone()
     return dict(row) if row else None
 
 
-def get_user_by_id(user_id):
+def get_user_by_id(user_id, fresh=False):
     if not user_id:
         return None
     if auth_uses_google_sheets():
-        return get_user_by_email(str(user_id))
+        return get_user_by_email(str(user_id), fresh=fresh)
     ensure_auth_db()
     with auth_db_connect() as conn:
         row = conn.execute(
-            "SELECT id, email, password_hash, active, created_at, last_login_at FROM users WHERE id = ?",
+            "SELECT id, email, password_hash, active, created_at, last_login_at, database_access FROM users WHERE id = ?",
             (user_id,),
         ).fetchone()
     return dict(row) if row else None
 
 
-def create_user(email: str, password: str):
+def create_user(email: str, password: str, *, database_access="wwa"):
     normalized = normalize_auth_email(email)
     error = account_validation_error(normalized, password, AUTH_ALLOWED_EMAIL_DOMAIN)
     if error:
         raise ValueError(error)
     password_hash = generate_password_hash(password)
     if auth_uses_google_sheets():
-        user = shared_accounts.build_user_store().create_user(normalized, password_hash)
+        user = shared_accounts.build_user_store().create_user(normalized, password_hash, database_access=database_access)
         shared_accounts.cache_user(normalized, user)
         return user
     ensure_auth_db()
     try:
         with AUTH_DB_LOCK, auth_db_connect() as conn:
             conn.execute(
-                "INSERT INTO users (email, password_hash, active, created_at) VALUES (?, ?, 1, ?)",
-                (normalized, password_hash, utc_now_iso()),
+                "INSERT INTO users (email, password_hash, active, created_at, database_access) VALUES (?, ?, 1, ?, ?)",
+                (normalized, password_hash, utc_now_iso(), database_access),
             )
     except sqlite3.IntegrityError as exc:
         raise ValueError("USER_ALREADY_EXISTS") from exc
@@ -1290,23 +1296,38 @@ def list_users():
         return [dict(row) for row in conn.execute("SELECT * FROM users ORDER BY email")]
 
 
-def update_user(email: str, *, password=None, active=None):
+def update_user(email: str, *, password=None, active=None, database_access=None):
     normalized = normalize_auth_email(email)
     password_hash = generate_password_hash(password) if password is not None else None
     if auth_uses_google_sheets():
         try:
-            return shared_accounts.build_user_store().update_user(normalized, password_hash=password_hash, active=active)
+            return shared_accounts.build_user_store().update_user(normalized, password_hash=password_hash, active=active, database_access=database_access)
         finally:
             shared_accounts.clear_cached_user(normalized)
     ensure_auth_db()
     with AUTH_DB_LOCK, auth_db_connect() as conn:
         changed = conn.execute(
-            "UPDATE users SET password_hash = COALESCE(?, password_hash), active = COALESCE(?, active) WHERE email = ?",
-            (password_hash, active, normalized),
+            "UPDATE users SET password_hash = COALESCE(?, password_hash), active = COALESCE(?, active), database_access = COALESCE(?, database_access) WHERE email = ?",
+            (password_hash, active, database_access, normalized),
         )
         if not changed.rowcount:
             raise ValueError("USER_NOT_FOUND")
     return get_user_by_email(normalized)
+
+
+def delete_user(email: str):
+    normalized = normalize_auth_email(email)
+    if auth_uses_google_sheets():
+        try:
+            shared_accounts.build_user_store().delete_user(normalized)
+        finally:
+            shared_accounts.clear_cached_user(normalized)
+        return
+    ensure_auth_db()
+    with AUTH_DB_LOCK, auth_db_connect() as conn:
+        deleted = conn.execute("DELETE FROM users WHERE email = ?", (normalized,))
+        if not deleted.rowcount:
+            raise ValueError("USER_NOT_FOUND")
 
 
 def mark_user_login(user_id: int):
@@ -1360,6 +1381,7 @@ def inject_auth_context():
         "auth_required": AUTH_REQUIRED,
         "auth_allowed_email_domain": AUTH_ALLOWED_EMAIL_DOMAIN,
         "can_access_s_live_db": user_can_access_s_live_db(),
+        "can_access_wwa_live_db": user_can_access_live_database("wwa"),
         "can_manage_users": is_account_admin(),
     }
 
@@ -1382,7 +1404,8 @@ def require_site_auth():
         return None
 
     try:
-        user = get_user_by_id(flask_session.get("user_id"))
+        fresh = request.endpoint in {"live_apps_page", "live_apps_api", "s_live_apps_page", "s_live_apps_api"}
+        user = get_user_by_id(flask_session.get("user_id"), fresh=fresh)
     except shared_accounts.DatabaseConfigError:
         return jsonify({"ok": False, "error": "AUTH_STORAGE_UNAVAILABLE"}), 503
     if account_session_valid(user):
@@ -1425,6 +1448,8 @@ def login():
 
 app.register_blueprint(create_accounts_blueprint(
     list_users=list_users, get_user=get_user_by_email, create_user=create_user, update_user=update_user,
+    delete_user=delete_user,
+    database_access=lambda user: account_database_access(user, S_LIVE_DB_ALLOWED_EMAILS),
     domain=lambda: AUTH_ALLOWED_EMAIL_DOMAIN, site_name="WWA Tools", home_endpoint="index",
     storage_errors=(shared_accounts.DatabaseConfigError, sqlite3.Error),
 ))
@@ -4494,12 +4519,16 @@ def build_s_live_apps_store() -> GoogleSheetsAvailabilityStore:
     )
 
 
-def require_s_live_db_access():
-    if user_can_access_s_live_db():
+def require_live_db_access(database_key):
+    if user_can_access_live_database(database_key):
         return None
     if request_wants_json():
-        return jsonify({"ok": False, "error": "S_LIVE_DB_FORBIDDEN"}), 403
+        return jsonify({"ok": False, "error": f"{database_key.upper()}_LIVE_DB_FORBIDDEN"}), 403
     abort(403)
+
+
+def require_s_live_db_access():
+    return require_live_db_access("s")
 
 
 def availability_error_is_transient(error: str | None) -> bool:
@@ -6794,6 +6823,9 @@ def app_overview_page():
 
 @app.get("/live-apps")
 def live_apps_page():
+    access_response = require_live_db_access("wwa")
+    if access_response is not None:
+        return access_response
     return render_template(
         "live_apps.html",
         live_db_title="Live Apps Database",
@@ -6806,6 +6838,9 @@ def live_apps_page():
 
 @app.get("/api/live-apps")
 def live_apps_api():
+    access_response = require_live_db_access("wwa")
+    if access_response is not None:
+        return access_response
     try:
         return jsonify(build_live_apps_database_payload())
     except BotConfigError as e:

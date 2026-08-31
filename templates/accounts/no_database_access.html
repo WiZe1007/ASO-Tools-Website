@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="uk" data-theme="dark" data-theme-storage="wwa-db-theme">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Доступ до баз даних | {{ site_name }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='db/accounts.css', v='20260831-access') }}">
+  <script src="{{ url_for('static', filename='db/accounts.js', v='20260831-access') }}" defer></script>
+</head>
+<body class="database-page accounts-page">
+  <div class="page-background" aria-hidden="true"></div>
+  <header class="app-header">
+    <strong>{{ site_name }}</strong>
+    <div class="header-actions"><a class="secondary-button" href="{{ url_for('logout') }}">Вийти</a></div>
+  </header>
+  <main class="app-main accounts-main">
+    <h1>Доступ до баз даних не надано</h1>
+    <p>Звернися до адміністратора, щоб отримати доступ до WWA DB або S DB.</p>
+    {% if can_manage_users %}<a class="secondary-button" href="{{ url_for('accounts.users') }}">Користувачі</a>{% endif %}
+  </main>
+</body>
+</html>

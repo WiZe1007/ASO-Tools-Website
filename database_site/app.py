@@ -21,7 +21,7 @@ from google.oauth2 import service_account
 from werkzeug.security import generate_password_hash
 
 from account_access import (
-    account_session_token, account_session_valid, account_validation_error,
+    account_database_access, account_session_token, account_session_valid, account_validation_error,
     create_accounts_blueprint, is_account_admin, login_csrf_token,
     valid_form_csrf, verify_account_password,
 )
@@ -150,7 +150,9 @@ USERS_SHEET_HEADERS = [
     "active",
     "created_at",
     "last_login_at",
+    "database_access",
 ]
+LEGACY_USERS_SHEET_HEADERS = USERS_SHEET_HEADERS[:5]
 
 ALLOWED_STATUSES = {"watch", "live", "banned", "paused"}
 APP_TYPE_LABELS = {
@@ -330,6 +332,11 @@ class GoogleSheetsStore:
             json={"values": values},
         )
 
+    def clear_value_ranges(self, sheet_name: str, cell_ranges: list[str]):
+        self._request("POST", "/values:batchClear", json={
+            "ranges": [sheet_range(sheet_name, cells) for cells in cell_ranges],
+        })
+
     def append_values(self, sheet_name: str, values: list[list]):
         self._request(
             "POST",
@@ -457,18 +464,20 @@ class GoogleSheetsUserStore:
         titles = self.sheets_store.get_sheet_titles()
         if self.users_sheet not in titles:
             self.sheets_store.add_sheet(self.users_sheet)
-        headers = self.sheets_store.get_values(self.users_sheet, "A1:E1")
+        headers = self.sheets_store.get_values(self.users_sheet, "A1:F1")
         if not headers:
-            self.sheets_store.update_values(self.users_sheet, "A1:E1", [USERS_SHEET_HEADERS])
+            self.sheets_store.update_values(self.users_sheet, "A1:F1", [USERS_SHEET_HEADERS])
+        elif [str(item).strip() for item in headers[0]] in (LEGACY_USERS_SHEET_HEADERS, LEGACY_USERS_SHEET_HEADERS + [""]):
+            self.sheets_store.update_values(self.users_sheet, "F1:F1", [["database_access"]])
         elif [str(item).strip() for item in headers[0]] != USERS_SHEET_HEADERS:
             raise DatabaseConfigError(
-                f"Заголовки аркуша {self.users_sheet} не відповідають очікуваній схемі A:E."
+                f"Заголовки аркуша {self.users_sheet} не відповідають очікуваній схемі A:F."
             )
         self._ready = True
 
     def load_users(self) -> list[dict]:
         self.ensure_ready()
-        rows = self.sheets_store.get_values(self.users_sheet, "A2:E")
+        rows = self.sheets_store.get_values(self.users_sheet, "A2:F")
         users = []
         for row in rows:
             item = {
@@ -490,7 +499,7 @@ class GoogleSheetsUserStore:
         normalized = normalize_email(identifier)
         return next((user for user in self.load_users() if user["email"] == normalized), None)
 
-    def create_user(self, email: str, password_hash: str) -> dict:
+    def create_user(self, email: str, password_hash: str, *, database_access="wwa") -> dict:
         normalized = normalize_email(email)
         created_at = utc_now_iso()
         with AUTH_DB_LOCK:
@@ -502,6 +511,7 @@ class GoogleSheetsUserStore:
                 "TRUE",
                 created_at,
                 "",
+                database_access,
             ]])
         return {
             "id": normalized,
@@ -510,6 +520,7 @@ class GoogleSheetsUserStore:
             "active": 1,
             "created_at": created_at,
             "last_login_at": "",
+            "database_access": database_access,
         }
 
     def update_last_login(self, email: str, last_login_at: str):
@@ -526,11 +537,11 @@ class GoogleSheetsUserStore:
                     )
                     return
 
-    def update_user(self, email: str, *, password_hash=None, active=None):
+    def update_user(self, email: str, *, password_hash=None, active=None, database_access=None):
         normalized = normalize_email(email)
         with AUTH_DB_LOCK:
             self.ensure_ready()
-            rows = self.sheets_store.get_values(self.users_sheet, "A2:E")
+            rows = self.sheets_store.get_values(self.users_sheet, "A2:F")
             for row_index, row in enumerate(rows, start=2):
                 if not row or normalize_email(row[0]) != normalized:
                     continue
@@ -539,8 +550,26 @@ class GoogleSheetsUserStore:
                     self.sheets_store.update_values(self.users_sheet, f"B{row_index}:B{row_index}", [[password_hash]])
                 if active is not None:
                     self.sheets_store.update_values(self.users_sheet, f"C{row_index}:C{row_index}", [["TRUE" if active else "FALSE"]])
+                if database_access is not None:
+                    self.sheets_store.update_values(self.users_sheet, f"F{row_index}:F{row_index}", [[database_access]])
                 return self.get_user(normalized)
         raise ValueError("USER_NOT_FOUND")
+
+    def delete_user(self, email: str):
+        normalized = normalize_email(email)
+        if not normalized:
+            raise ValueError("USER_NOT_FOUND")
+        with AUTH_DB_LOCK:
+            self.ensure_ready()
+            rows = self.sheets_store.get_values(self.users_sheet, "A2:A")
+            ranges = [
+                f"A{index}:F{index}" for index, row in enumerate(rows, start=2)
+                if row and normalize_email(row[0]) == normalized
+            ]
+            if not ranges:
+                raise ValueError("USER_NOT_FOUND")
+            # Erase account data without shifting other users' row addresses.
+            self.sheets_store.clear_value_ranges(self.users_sheet, ranges)
 
 
 @contextmanager
@@ -569,6 +598,9 @@ def ensure_auth_db():
             )
             """
         )
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+        if "database_access" not in columns:
+            connection.execute("ALTER TABLE users ADD COLUMN database_access TEXT")
 
 
 def normalize_email(value: str) -> str:
@@ -584,20 +616,21 @@ def parse_email_allowlist(value: str) -> set[str]:
 
 
 def user_can_access_database(database_key: str, email: str | None = None) -> bool:
-    if database_key == "wwa":
-        return True
-    if database_key != "s":
-        return False
-    return normalize_email(email or current_email()) in parse_email_allowlist(S_ALLOWED_EMAILS)
+    user = getattr(g, "current_user", None)
+    if not AUTH_REQUIRED:
+        user = {"email": normalize_email(email or current_email())}
+    return database_key in account_database_access(user, S_ALLOWED_EMAILS)
 
 
 def database_options(email: str | None = None) -> list[dict]:
-    options = [{
-        "key": "wwa",
-        "label": "WWA DB",
-        "title": "WWA Apps Database",
-        "configured": bool(SPREADSHEET_ID and (SERVICE_ACCOUNT_JSON or SERVICE_ACCOUNT_FILE)),
-    }]
+    options = []
+    if user_can_access_database("wwa", email):
+        options.append({
+            "key": "wwa",
+            "label": "WWA DB",
+            "title": "WWA Apps Database",
+            "configured": bool(SPREADSHEET_ID and (SERVICE_ACCOUNT_JSON or SERVICE_ACCOUNT_FILE)),
+        })
     if user_can_access_database("s", email):
         options.append({
             "key": "s",
@@ -699,33 +732,33 @@ def get_user_by_email(email: str, fresh=False):
     return dict(row) if row else None
 
 
-def get_user_by_id(user_id):
+def get_user_by_id(user_id, fresh=False):
     if not user_id:
         return None
     if auth_uses_google_sheets():
-        return get_user_by_email(user_id)
+        return get_user_by_email(user_id, fresh=fresh)
     ensure_auth_db()
     with auth_db_connect() as connection:
         row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     return dict(row) if row else None
 
 
-def create_user(email: str, password: str):
+def create_user(email: str, password: str, *, database_access="wwa"):
     normalized = normalize_email(email)
     error = account_validation_error(normalized, password, AUTH_ALLOWED_EMAIL_DOMAIN)
     if error:
         raise ValueError(error)
     password_hash = generate_password_hash(password)
     if auth_uses_google_sheets():
-        user = build_user_store().create_user(normalized, password_hash)
+        user = build_user_store().create_user(normalized, password_hash, database_access=database_access)
         cache_user(normalized, user)
         return user
     ensure_auth_db()
     try:
         with AUTH_DB_LOCK, auth_db_connect() as connection:
             connection.execute(
-                "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
-                (normalized, password_hash, utc_now_iso()),
+                "INSERT INTO users (email, password_hash, created_at, database_access) VALUES (?, ?, ?, ?)",
+                (normalized, password_hash, utc_now_iso(), database_access),
             )
     except sqlite3.IntegrityError as exc:
         raise ValueError("USER_ALREADY_EXISTS") from exc
@@ -740,23 +773,38 @@ def list_users():
         return [dict(row) for row in connection.execute("SELECT * FROM users ORDER BY email")]
 
 
-def update_user(email: str, *, password=None, active=None):
+def update_user(email: str, *, password=None, active=None, database_access=None):
     normalized = normalize_email(email)
     password_hash = generate_password_hash(password) if password is not None else None
     if auth_uses_google_sheets():
         try:
-            return build_user_store().update_user(normalized, password_hash=password_hash, active=active)
+            return build_user_store().update_user(normalized, password_hash=password_hash, active=active, database_access=database_access)
         finally:
             clear_cached_user(normalized)
     ensure_auth_db()
     with AUTH_DB_LOCK, auth_db_connect() as connection:
         changed = connection.execute(
-            "UPDATE users SET password_hash = COALESCE(?, password_hash), active = COALESCE(?, active) WHERE email = ?",
-            (password_hash, active, normalized),
+            "UPDATE users SET password_hash = COALESCE(?, password_hash), active = COALESCE(?, active), database_access = COALESCE(?, database_access) WHERE email = ?",
+            (password_hash, active, database_access, normalized),
         )
         if not changed.rowcount:
             raise ValueError("USER_NOT_FOUND")
     return get_user_by_email(normalized)
+
+
+def delete_user(email: str):
+    normalized = normalize_email(email)
+    if auth_uses_google_sheets():
+        try:
+            build_user_store().delete_user(normalized)
+        finally:
+            clear_cached_user(normalized)
+        return
+    ensure_auth_db()
+    with AUTH_DB_LOCK, auth_db_connect() as connection:
+        deleted = connection.execute("DELETE FROM users WHERE email = ?", (normalized,))
+        if not deleted.rowcount:
+            raise ValueError("USER_NOT_FOUND")
 
 
 def login_user(user: dict):
@@ -799,7 +847,7 @@ def require_database_access(database_key: str):
     if database_key not in {"wwa", "s"}:
         return api_error("Базу даних не знайдено.", 404, "DATABASE_NOT_FOUND")
     if not user_can_access_database(database_key):
-        return api_error("У тебе немає доступу до S DB.", 403, "DATABASE_FORBIDDEN")
+        return api_error(f"У тебе немає доступу до {'WWA DB' if database_key == 'wwa' else 'S DB'}.", 403, "DATABASE_FORBIDDEN")
     return None
 
 
@@ -839,7 +887,8 @@ def require_authentication():
     if request.endpoint in {"login", "health", "static"}:
         return None
     try:
-        user = get_user_by_id(session.get("user_id"))
+        fresh = request.endpoint in {"dashboard", "list_apps", "add_app", "update_app"}
+        user = get_user_by_id(session.get("user_id"), fresh=fresh)
     except DatabaseConfigError:
         return api_error("Сховище користувачів тимчасово недоступне.", 503, "AUTH_STORAGE_UNAVAILABLE")
     if account_session_valid(user):
@@ -887,6 +936,8 @@ def inject_account_context():
 
 app.register_blueprint(create_accounts_blueprint(
     list_users=list_users, get_user=get_user_by_email, create_user=create_user, update_user=update_user,
+    delete_user=delete_user,
+    database_access=lambda user: account_database_access(user, S_ALLOWED_EMAILS),
     domain=lambda: AUTH_ALLOWED_EMAIL_DOMAIN, site_name="WWA Apps Database", home_endpoint="dashboard",
     storage_errors=(DatabaseConfigError, sqlite3.Error),
 ))
@@ -903,6 +954,8 @@ def dashboard():
     if not session.get("csrf_token"):
         session["csrf_token"] = secrets.token_urlsafe(24)
     databases = database_options(current_email())
+    if not databases:
+        return render_template("accounts/no_database_access.html", site_name="WWA Apps Database"), 403
     return render_template(
         "dashboard.html",
         csrf_token=session["csrf_token"],

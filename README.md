@@ -54,9 +54,21 @@ These are optional. Do not commit real values.
 
 Self-registration is removed, including both GET and POST `/register`.
 Administrators sign in normally and open `/admin/users` to add an email/password,
-reset a password, or disable/reactivate an account. S DB permissions remain a
-separate exact-email allowlist; adding an account or making it an account admin
-does not grant S DB access.
+reset a password, disable/reactivate an account, or permanently delete another
+account after confirmation. Deletion removes its credentials and access settings,
+not the apps it submitted. Administrators cannot delete their own account.
+
+The Users page has All, WWA DB, and S DB groups. Select WWA DB and/or S DB when
+creating an account, or edit them under Access. An account can have either, both,
+or no database permissions. These permissions apply to the database editor and
+the corresponding read-only Live DB pages/APIs in WWA Tools. Account management
+privileges still depend only on `AUTH_ADMIN_EMAILS`; they do not imply database access.
+
+`Users` gains a `database_access` column F automatically (SQLite gains the same
+column). Existing rows/passwords remain untouched: blank legacy access keeps WWA
+access and the old S email allowlist until an administrator saves explicit rights.
+Saved rights override the old allowlist, including explicit removal of S access.
+Both web services must be deployed and use the same Users store for consistent rights.
 
 For both Render Web Services, configure the same `AUTH_SPREADSHEET_ID`,
 `AUTH_USERS_SHEET`, and credentials. Use `AUTH_STORAGE=google_sheets` on WWA Tools
@@ -125,8 +137,9 @@ the current live app database, search by bundle/package name, and see closed
 GEOs saved by the Telegram availability checks.
 
 The website can also expose `/s-live-apps` as a separate read-only page for the
-second team's live app database. Access to this page is controlled by employee
-email through `S_LIVE_DB_ALLOWED_EMAILS`.
+second team's live app database. Assign S DB access on `/admin/users`.
+`S_LIVE_DB_ALLOWED_EMAILS` is only a compatibility fallback for legacy accounts
+whose database permissions have not been saved yet.
 
 ### Google Service Account
 
@@ -259,9 +272,10 @@ S_AVAILABILITY_DB_APPS_SHEET=Apps
 S_AVAILABILITY_DB_LOG_SHEET=Checks
 ```
 
-Only logged-in users whose email is listed in `S_LIVE_DB_ALLOWED_EMAILS` will
-see `S Live DB` in the navigation. Direct access to `/s-live-apps` and
-`/api/s-live-apps` returns forbidden for everyone else.
+Only logged-in users with S DB access see `S Live DB` in the navigation.
+Direct access to `/s-live-apps` and `/api/s-live-apps` is forbidden for others.
+WWA Live DB pages and APIs similarly require WWA DB access. Database requests
+refresh account permissions, so cached sessions cannot bypass revoked rights.
 
 ### Separate Telegram Bot
 
