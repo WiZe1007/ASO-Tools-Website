@@ -289,9 +289,12 @@
     const drawer = byId("drawer");
     const hamburger = byId("hamb");
     if (!drawer || !hamburger) return;
-    const drawerManagedPage = ["overview", "live-db"].includes(document.body?.dataset?.page || "");
+    const drawerManagedPage = ["overview", "live-db", "s-live-db"].includes(document.body?.dataset?.page || "");
 
     const sync = () => {
+      if (window.getComputedStyle(hamburger).display === "none" && drawer.style.display !== "none") {
+        drawer.style.display = "none";
+      }
       const isOpen = window.getComputedStyle(drawer).display !== "none";
       const wrap = qs(".wrap");
       document.body.classList.toggle("drawer-open", isOpen);

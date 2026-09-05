@@ -4813,7 +4813,24 @@ html[data-theme="light"] body[data-page] .theme-toggle::before{
   }
 }
 
-/* Final nav edge guard: keep the last round utility fully inside the glass bar. */
+/* Reserve utility space; the brand must not push the theme button out of the bar. */
+body[data-page] .topnav-inner{
+  padding-right:18px !important;
+  gap:18px !important;
+}
+
+body[data-page] .brand{
+  flex:0 0 auto !important;
+  min-width:0 !important;
+  padding-right:0 !important;
+}
+
+body[data-page] .navlinks{
+  flex:1 1 auto !important;
+  min-width:0 !important;
+  gap:14px !important;
+}
+
 body[data-page] .navright{
   flex:0 0 auto !important;
   min-width:max-content !important;
@@ -4831,20 +4848,6 @@ body[data-page] .navright .theme-toggle{
 }
 
 @media (max-width: 1500px){
-  body[data-page] .topnav-inner{
-    padding-right:18px !important;
-    gap:18px !important;
-  }
-
-  body[data-page] .brand{
-    min-width:250px !important;
-    padding-right:20px !important;
-  }
-
-  body[data-page] .navlinks{
-    gap:14px !important;
-  }
-
   body[data-page] .navbtn{
     padding:0 3px !important;
     font-size:13px !important;
@@ -4867,7 +4870,42 @@ body[data-page] .navright .theme-toggle{
   }
 }
 
-@media (max-width: 900px) and (min-width: 621px){
+@media (max-width: 1200px){
+  body[data-page] .brand{
+    flex:1 1 auto !important;
+  }
+
+  body[data-page] .navlinks{
+    display:none !important;
+  }
+
+  body[data-page] .hamb{
+    display:inline-grid !important;
+    flex:0 0 40px !important;
+  }
+
+  body[data-page] .drawer{
+    position:fixed;
+    left:10px;
+    right:10px;
+    width:auto;
+    margin:0 auto;
+    z-index:999;
+    padding:12px;
+    max-height:calc(100dvh - 90px);
+    overflow-y:auto;
+    border:1px solid rgba(255,255,255,.14);
+  }
+
+  body[data-page] .drawer .grid{
+    display:grid;
+    gap:8px;
+  }
+
+  body[data-page] .drawer .navbtn{
+    justify-content:flex-start !important;
+  }
+
   body[data-page] .navright{
     flex:0 0 auto !important;
     gap:8px !important;
@@ -4875,7 +4913,8 @@ body[data-page] .navright .theme-toggle{
     overflow:visible !important;
   }
 
-  body[data-page] .navright .theme-toggle{
+  body[data-page] .navright .nav-utility{
+    display:inline-grid !important;
     flex:0 0 40px !important;
     width:40px !important;
     height:40px !important;
@@ -4884,16 +4923,23 @@ body[data-page] .navright .theme-toggle{
 }
 
 @media (max-width: 620px){
+  body[data-page] .topnav-inner{
+    padding:8px 10px !important;
+    gap:8px !important;
+  }
+
+  body[data-page] .brand{
+    gap:8px !important;
+  }
+
   body[data-page] .navright{
-    min-width:40px !important;
-    flex:0 0 40px !important;
-    gap:0 !important;
+    flex:0 0 auto !important;
+    gap:6px !important;
     padding-right:0 !important;
   }
 
   body[data-page] .navright .auth-logout,
-  body[data-page] .navright .nav-utility[aria-label="Help"],
-  body[data-page] .navright .theme-toggle{
+  body[data-page] .navright .nav-utility[aria-label="Help"]{
     display:none !important;
   }
 }
