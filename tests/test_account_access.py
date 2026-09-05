@@ -157,7 +157,7 @@ class SeparateAccountTests(unittest.TestCase):
                         self.assertEqual(response.status_code, 200 if key in scopes else 403)
                         if key not in scopes:
                             build.assert_not_called()
-                            for method, suffix in ((db_client.post, ""), (db_client.patch, "/2")):
+                            for method, suffix in ((db_client.post, ""), (db_client.patch, "/2"), (db_client.delete, "/2")):
                                 response = method(f"/api/databases/{key}/apps{suffix}", json={},
                                                   headers={"X-CSRF-Token": self.csrf(db_client)})
                                 self.assertEqual(response.status_code, 403)
@@ -187,6 +187,11 @@ class SeparateAccountTests(unittest.TestCase):
         self.assertEqual(self.clients[0].get("/api/apps").status_code, 403)
         self.assertEqual(self.clients[0].get("/api/databases/s/apps").status_code, 403)
         database_app.cache_user(self.employee, {**self.store.get_user(self.employee), "database_access": "s,wwa"})
+        with patch.object(database_app, "build_store") as build:
+            response = self.clients[0].delete("/api/apps/2", json={"expected_app_id": "com.test.app"},
+                                              headers={"X-CSRF-Token": self.csrf(self.clients[0])})
+            self.assertEqual(response.status_code, 403)
+            build.assert_not_called()
         with patch.object(tools_app, "build_live_apps_database_payload", return_value={}):
             self.assertEqual(self.clients[1].get("/api/live-apps").status_code, 200)
         self.assertEqual(self.clients[1].get("/api/s-live-apps").status_code, 403)
@@ -207,6 +212,10 @@ class SeparateAccountTests(unittest.TestCase):
             self.assertEqual(FakeStore.apps, [])
             self.assertEqual(FakeStore.logs, [])
             self.assertEqual(len(FakeStore.s_logs), 2)
+            response = client.delete("/api/databases/s/apps/2", json={"expected_app_id": "com.test.app"}, headers=headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(FakeStore.s_apps, [])
+            self.assertEqual(FakeStore.apps, [])
 
     def test_admin_without_database_permissions_can_still_manage_accounts(self):
         self.store.update_user(self.admin, database_access="none")

@@ -8,7 +8,7 @@
   <title>WWA Apps Database</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='db/data-base-favicon.png', v='20260804') }}">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='db/data-base-favicon.png', v='20260804') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css', v='20260811a') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css', v='20260905a') }}">
 </head>
 <body class="database-page">
   <div class="page-background" aria-hidden="true"></div>
@@ -174,14 +174,9 @@
 
         <label class="form-field" id="appInputField">
           <span>Google Play URL або package name <b>*</b></span>
-          <input id="appInput" type="text" placeholder="com.example.app або https://play.google.com/..." autocomplete="off">
-          <small>Bundle буде збережений у стандартному Google Play URL.</small>
+          <input id="appInput" type="text" placeholder="com.example.app або https://play.google.com/..." autocomplete="off" required aria-describedby="packageChangeHint">
+          <small id="packageChangeHint" hidden>Зміна package name скине статус до Watch та результати моніторингу. Бот перевірить новий package name заново.</small>
         </label>
-
-        <div class="readonly-bundle" id="readonlyBundle" hidden>
-          <span>Package name</span>
-          <code id="readonlyBundleValue"></code>
-        </div>
 
         <div class="form-grid">
           <label class="form-field">
@@ -248,6 +243,24 @@
     </section>
   </div>
 
+  <dialog class="modal delete-modal" id="deleteAppModal" aria-labelledby="deleteModalTitle" aria-describedby="deleteDescription">
+    <form id="deleteAppForm">
+      <header class="modal-header">
+        <h2 id="deleteModalTitle">Видалити додаток?</h2>
+      </header>
+      <div class="delete-body">
+        <strong id="deleteAppName"></strong>
+        <code id="deleteAppPackage"></code>
+        <p id="deleteDescription">Запис буде повністю видалений із <span id="deleteDatabaseLabel"></span>. Відновити його цією дією неможливо. Історія перевірок залишиться в журналі.</p>
+        <div class="form-alert" id="deleteError" role="alert" hidden></div>
+        <footer class="modal-footer">
+          <button class="secondary-button" id="cancelDeleteButton" type="button" autofocus>Скасувати</button>
+          <button class="danger-button" id="confirmDeleteButton" type="submit">Видалити назавжди</button>
+        </footer>
+      </div>
+    </form>
+  </dialog>
+
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
 
   <svg class="svg-sprite" aria-hidden="true">
@@ -263,6 +276,7 @@
     <symbol id="icon-log-out" viewBox="0 0 24 24"><path d="M10 17l5-5-5-5M15 12H3M14 3h7v18h-7"/></symbol>
     <symbol id="icon-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
     <symbol id="icon-edit" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></symbol>
     <symbol id="icon-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
     <symbol id="icon-external" viewBox="0 0 24 24"><path d="M14 3h7v7M21 3l-9 9M18 13v7H4V6h7"/></symbol>
   </svg>
@@ -274,6 +288,6 @@
       "databases": databases
     } | tojson }};
   </script>
-  <script src="{{ url_for('static', filename='db/database-site.js', v='20260811a') }}"></script>
+  <script src="{{ url_for('static', filename='db/database-site.js', v='20260905a') }}"></script>
 </body>
 </html>

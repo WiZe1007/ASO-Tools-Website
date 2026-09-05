@@ -75,6 +75,46 @@ def design_marker(fingerprint="design-v1", country="US"):
 
 
 class LiveStatusMonitorTests(unittest.TestCase):
+    def test_deleted_or_edited_app_during_check_is_not_written_or_announced(self):
+        row = app_row(status="watch", open_codes="", closed_codes="")
+        snapshot = {
+            "total": 2, "open_codes": ["US", "CA"], "closed_codes": [],
+            "not_found_codes": [], "no_install_codes": [], "transient_codes": [], "is_live": True,
+        }
+        for runner in (app.run_live_status_bot_check, app.run_availability_bot_check):
+            for current_rows in ([], [{**row, "app_id": "com.example.changed"}], [{**row, "notes": "Edited"}]):
+                with self.subTest(runner=runner.__name__, current=current_rows):
+                    store = FakeStore([dict(row)])
+                    with (
+                        patch.object(store, "load_apps", side_effect=[[dict(row)], current_rows]),
+                        patch("app.GoogleSheetsAvailabilityStore", return_value=store),
+                        patch("app.probe_google_play_live_status", return_value={"state": "live", "country": "US", "error": ""}),
+                        patch("app.fetch_google_play_update_state", return_value=update_state()),
+                        patch("app.summarize_google_availability", return_value=snapshot),
+                        patch("app.send_telegram_event_message") as send,
+                    ):
+                        result = runner(send_messages=True, write_changes=True)
+                    self.assertEqual(result["notifications"], [])
+                    self.assertEqual(result["skipped"][-1]["reason"], "record_changed_or_deleted")
+                    self.assertEqual(store.updates, [])
+                    self.assertEqual(store.logs, [])
+                    send.assert_not_called()
+
+    def test_bot_batch_never_restores_identity_or_user_edited_fields(self):
+        store = object.__new__(app.GoogleSheetsAvailabilityStore)
+        store.apps_sheet = "Apps"
+        row = app_row()
+        with patch.object(store, "_request") as request:
+            store.batch_update_apps([(row, {
+                **row, "owner": "Old owner", "notes": "Old notes", "status": "live",
+                "last_checked_at": "2026-09-05T12:00:00+00:00",
+            })])
+        data = request.call_args.kwargs["json"]["data"]
+        ranges = {item["range"] for item in data}
+        for column in "ACDEFGN":
+            self.assertNotIn(f"'Apps'!{column}2", ranges)
+        self.assertIn("'Apps'!H2", ranges)
+
     def test_google_sheets_schema_adds_pending_update_columns(self):
         store = object.__new__(app.GoogleSheetsAvailabilityStore)
         store.apps_sheet = "Apps"

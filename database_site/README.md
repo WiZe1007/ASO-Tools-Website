@@ -138,4 +138,25 @@ on the server for every S DB read and write request.
 
 Each Google Sheet must be shared as Editor with `client_email` from the service account JSON that serves it.
 
-The site only writes columns `A:M` in the `Apps` sheet and audit entries in the `Checks` sheet. Disabling an app does not delete its history.
+The site writes columns `A:R` in the `Apps` sheet and audit entries in the `Checks` sheet. Disabling an app does not delete its history.
+
+## Editing and Deleting Apps
+
+Users can edit and delete apps in each database they have been granted access to.
+The edit form accepts a package name or Google Play URL. Changing the package
+updates the URL, rejects duplicates within that database, clears GEO and release
+monitoring state, and sets the status to `watch`. Owner, notes, app type and the
+monitoring switch are preserved unless explicitly edited. The next enabled bot
+check examines the new package; editing other fields preserves monitoring data.
+
+The trash button opens a confirmation identifying the app and the database.
+Confirming permanently clears the app record from `Apps`, including its stored
+monitoring data. Existing `Checks` history and the deletion audit entry remain.
+Rows are cleared in place so other apps keep their sheet row numbers. The deleted
+package can be added again later. No new environment variables are required.
+
+Both PATCH and DELETE require CSRF and the original `expected_app_id`; stale
+requests are rejected. Both bot schedules re-read the records before publishing
+results and skip apps edited or deleted during the check. Bots no longer write
+package identity or user-owned fields from their earlier snapshots. A Telegram
+message already being sent when a record changes cannot be recalled automatically.

@@ -167,6 +167,7 @@ APP_TYPE_LABELS = {
     "full": "Повноцінна",
 }
 ALLOWED_APP_TYPES = set(APP_TYPE_LABELS)
+MONITORING_FIELDS = APPS_SHEET_HEADERS[7:13] + APPS_SHEET_HEADERS[14:]
 HTTP = requests.Session()
 HTTP.headers.update({"User-Agent": "WWA-Apps-Database/1.0"})
 AUTH_DB_LOCK = threading.Lock()
@@ -454,10 +455,15 @@ class GoogleSheetsStore:
         self.append_values(self.apps_sheet, [[app_data.get(header, "") for header in APPS_SHEET_HEADERS]])
 
     def update_app(self, row_index: int, current: dict, updates: dict):
-        row = dict(current)
-        row.update(updates)
-        values = [row.get(header, "") for header in APPS_SHEET_HEADERS]
-        self.update_values(self.apps_sheet, f"A{row_index}:R{row_index}", [values])
+        data = [{
+            "range": sheet_range(self.apps_sheet, f"{chr(65 + APPS_SHEET_HEADERS.index(header))}{row_index}"),
+            "values": [[value]],
+        } for header, value in updates.items() if header in APPS_SHEET_HEADERS]
+        self._request("POST", "/values:batchUpdate", json={"valueInputOption": "RAW", "data": data})
+
+    def delete_app(self, row_index: int):
+        # Clear the record without shifting row addresses used by running bots.
+        self.clear_value_ranges(self.apps_sheet, [f"A{row_index}:R{row_index}"])
 
     def append_log(self, event: str, app_data: dict, details: str):
         countries = split_country_codes(app_data.get("last_closed_countries"))
@@ -961,7 +967,7 @@ def require_authentication():
     if request.endpoint in {"login", "health", "static"}:
         return None
     try:
-        fresh = request.endpoint in {"dashboard", "list_apps", "add_app", "update_app"}
+        fresh = request.endpoint in {"dashboard", "list_apps", "add_app", "update_app", "delete_app"}
         user = get_user_by_id(session.get("user_id"), fresh=fresh)
     except DatabaseConfigError:
         return api_error("Сховище користувачів тимчасово недоступне.", 503, "AUTH_STORAGE_UNAVAILABLE")
@@ -1149,8 +1155,18 @@ def update_app(row_index: int, database_key: str = "wwa"):
     if row_index < 2:
         return api_error("Некоректний номер рядка.", 422, "INVALID_ROW")
     payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return api_error("Некоректний формат запиту.", 422, "INVALID_PAYLOAD")
     expected_app_id = normalize_package_input(payload.get("expected_app_id"))
+    if not expected_app_id:
+        return api_error("Онови список перед редагуванням.", 422, "EXPECTED_APP_ID_REQUIRED")
     updates = {}
+    if "app_input" in payload or "app_id" in payload:
+        app_id = normalize_package_input(payload.get("app_input") if "app_input" in payload else payload.get("app_id"))
+        if not app_id:
+            return api_error("Введи коректний package name або Google Play URL.", 422, "INVALID_APP_ID")
+        updates["app_id"] = app_id
+        updates["app_url"] = google_play_url(app_id)
     if "app_name" in payload:
         updates["app_name"] = clean_text(payload.get("app_name"), 160)
     if "owner" in payload:
@@ -1179,8 +1195,17 @@ def update_app(row_index: int, database_key: str = "wwa"):
             current = next((item for item in apps if int(item.get("row_index") or 0) == row_index), None)
             if not current:
                 return api_error("Запис більше не існує. Онови список.", 404, "APP_NOT_FOUND")
-            if expected_app_id and expected_app_id.lower() != str(current.get("app_id") or "").lower():
+            if expected_app_id != current.get("app_id"):
                 return api_error("Таблиця змінилася. Онови список перед редагуванням.", 409, "STALE_ROW")
+            package_changed = "app_id" in updates and updates["app_id"] != current.get("app_id")
+            if package_changed:
+                if any(item.get("row_index") != row_index and str(item.get("app_id") or "").lower() == updates["app_id"].lower() for item in apps):
+                    return api_error("Цей додаток уже є в базі.", 409, "DUPLICATE_APP")
+                updates.update({field: "" for field in MONITORING_FIELDS})
+                updates["status"] = "watch"
+                name = updates.get("app_name", current.get("app_name"))
+                if not name or name == current.get("app_id"):
+                    updates["app_name"] = updates["app_id"]
             store.update_app(row_index, current, updates)
             changed = dict(current)
             changed.update(updates)
@@ -1188,9 +1213,44 @@ def update_app(row_index: int, database_key: str = "wwa"):
             store.append_log(event, changed, json.dumps({
                 "actor": current_email(),
                 "database": database_key,
+                "previous_app_id": current.get("app_id"),
                 "changes": updates,
             }, ensure_ascii=False))
         return jsonify({"ok": True, "database": database_key, "app": app_payload(changed)})
+    except DatabaseConfigError as exc:
+        return api_error(str(exc), 503, "SHEETS_UNAVAILABLE")
+
+
+@app.delete("/api/databases/<database_key>/apps/<int:row_index>")
+@app.delete("/api/apps/<int:row_index>")
+def delete_app(row_index: int, database_key: str = "wwa"):
+    access_error = require_database_access(database_key)
+    if access_error:
+        return access_error
+    csrf_error = require_csrf()
+    if csrf_error:
+        return csrf_error
+    if row_index < 2:
+        return api_error("Некоректний номер рядка.", 422, "INVALID_ROW")
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict):
+        return api_error("Некоректний формат запиту.", 422, "INVALID_PAYLOAD")
+    expected_app_id = normalize_package_input(payload.get("expected_app_id"))
+    if not expected_app_id:
+        return api_error("Онови список перед видаленням.", 422, "EXPECTED_APP_ID_REQUIRED")
+    store = build_store(database_key)
+    try:
+        with SHEET_WRITE_LOCK:
+            current = next((item for item in store.load_all_apps() if item.get("row_index") == row_index), None)
+            if not current:
+                return api_error("Запис більше не існує. Онови список.", 404, "APP_NOT_FOUND")
+            if expected_app_id != current.get("app_id"):
+                return api_error("Таблиця змінилася. Онови список перед видаленням.", 409, "STALE_ROW")
+            store.delete_app(row_index)
+            store.append_log("database_delete", current, json.dumps({
+                "actor": current_email(), "database": database_key,
+            }, ensure_ascii=False))
+        return jsonify({"ok": True, "database": database_key, "app_id": expected_app_id, "row_index": row_index})
     except DatabaseConfigError as exc:
         return api_error(str(exc), 503, "SHEETS_UNAVAILABLE")
 

@@ -12,6 +12,8 @@
     editingApp: null,
     databaseKey: "wwa",
     loadSequence: 0,
+    mutationPending: false,
+    deletingApp: null,
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -43,8 +45,15 @@
     appNotes: $("#appNotes"),
     editRowIndex: $("#editRowIndex"),
     expectedAppId: $("#expectedAppId"),
-    readonlyBundle: $("#readonlyBundle"),
-    readonlyBundleValue: $("#readonlyBundleValue"),
+    packageChangeHint: $("#packageChangeHint"),
+    deleteModal: $("#deleteAppModal"),
+    deleteForm: $("#deleteAppForm"),
+    deleteAppName: $("#deleteAppName"),
+    deleteAppPackage: $("#deleteAppPackage"),
+    deleteDatabaseLabel: $("#deleteDatabaseLabel"),
+    deleteError: $("#deleteError"),
+    cancelDeleteButton: $("#cancelDeleteButton"),
+    confirmDeleteButton: $("#confirmDeleteButton"),
     modalEyebrow: $("#modalEyebrow"),
     modalTitle: $("#modalTitle"),
     saveButton: $("#saveAppButton"),
@@ -154,8 +163,10 @@
   }
 
   function selectDatabase(databaseKey) {
+    if (state.mutationPending) return;
     if (databaseKey === state.databaseKey || !databases.some((database) => database.key === databaseKey)) return;
     closeModal(true);
+    closeDeleteModal();
     state.databaseKey = databaseKey;
     state.apps = [];
     state.expandedRow = null;
@@ -279,6 +290,7 @@
           <div class="row-actions">
             <button class="row-button" type="button" data-action="details" title="Деталі">${icon("chevron")}</button>
             <button class="row-button" type="button" data-action="edit" title="Редагувати">${icon("edit")}</button>
+            <button class="row-button is-danger" type="button" data-action="delete" title="Видалити додаток" aria-label="Видалити додаток">${icon("trash")}</button>
           </div>
         </td>
       </tr>${renderDetailRow(app)}`;
@@ -301,6 +313,7 @@
   }
 
   async function loadApps({ quiet = false } = {}) {
+    if (state.mutationPending) return;
     const requestId = ++state.loadSequence;
     const requestedDatabase = state.databaseKey;
     setLoading(true);
@@ -326,13 +339,26 @@
     }
   }
 
+  function setMutationBusy(busy) {
+    state.mutationPending = busy;
+    if (busy) {
+      state.loadSequence += 1;
+      setLoading(false);
+    }
+    elements.addButton.disabled = busy;
+    elements.refreshButton.disabled = busy;
+    document.querySelectorAll("[data-database-key], [data-action]").forEach((control) => { control.disabled = busy; });
+  }
+
   function setFormBusy(busy) {
+    setMutationBusy(busy);
     elements.saveButton.disabled = busy;
     elements.saveButton.querySelector(".button-label").hidden = busy;
     elements.saveButton.querySelector(".button-loading").hidden = !busy;
   }
 
   function openModal(app = null) {
+    if (state.mutationPending) return;
     state.editingApp = app;
     elements.form.reset();
     elements.formError.hidden = true;
@@ -342,13 +368,12 @@
     setSelectedAppType("full");
     elements.editRowIndex.value = "";
     elements.expectedAppId.value = "";
+    elements.packageChangeHint.hidden = !app;
 
     if (app) {
       elements.modalEyebrow.textContent = "Редагування запису";
       elements.modalTitle.textContent = app.app_name || app.app_id;
-      elements.appInputField.hidden = true;
-      elements.readonlyBundle.hidden = false;
-      elements.readonlyBundleValue.textContent = app.app_id;
+      elements.appInput.value = app.app_id;
       elements.editRowIndex.value = app.row_index;
       elements.expectedAppId.value = app.app_id;
       elements.appName.value = app.app_name || "";
@@ -360,8 +385,6 @@
     } else {
       elements.modalEyebrow.textContent = `Новий запис · ${activeDatabase().label}`;
       elements.modalTitle.textContent = `Додати до ${activeDatabase().label}`;
-      elements.appInputField.hidden = false;
-      elements.readonlyBundle.hidden = true;
     }
     elements.modal.hidden = false;
     document.body.style.overflow = "hidden";
@@ -377,9 +400,10 @@
 
   async function saveApp(event) {
     event.preventDefault();
+    if (state.mutationPending) return;
     elements.formError.hidden = true;
     const editing = Boolean(state.editingApp);
-    if (!editing && !elements.appInput.value.trim()) {
+    if (!elements.appInput.value.trim()) {
       elements.formError.textContent = "Введи package name або Google Play URL.";
       elements.formError.hidden = false;
       elements.appInput.focus();
@@ -392,9 +416,9 @@
       app_type: selectedAppType(),
       enabled: elements.appEnabled.checked,
       notes: elements.appNotes.value.trim(),
+      app_input: elements.appInput.value.trim(),
     };
     if (editing) payload.expected_app_id = elements.expectedAppId.value;
-    else payload.app_input = elements.appInput.value.trim();
 
     setFormBusy(true);
     try {
@@ -410,6 +434,7 @@
       setFormBusy(false);
       closeModal(true);
       render();
+      elements.addButton.focus();
       showToast(editing ? "Зміни збережено" : "Додаток додано до бази");
     } catch (error) {
       elements.formError.textContent = error.message;
@@ -420,6 +445,8 @@
   }
 
   async function toggleApp(app, input) {
+    if (state.mutationPending) return;
+    setMutationBusy(true);
     input.disabled = true;
     try {
       const payload = await api(databaseApiPath(app.row_index), {
@@ -434,10 +461,60 @@
       input.checked = !input.checked;
       input.disabled = false;
       showToast(error.message, "error");
+    } finally {
+      setMutationBusy(false);
+    }
+  }
+
+  function openDeleteModal(app) {
+    state.deletingApp = app;
+    elements.deleteAppName.textContent = app.app_name || app.app_id;
+    elements.deleteAppPackage.textContent = app.app_id;
+    elements.deleteDatabaseLabel.textContent = activeDatabase().label;
+    elements.deleteError.hidden = true;
+    elements.deleteModal.showModal();
+  }
+
+  function closeDeleteModal() {
+    if (state.mutationPending) return;
+    elements.deleteModal.close();
+    state.deletingApp = null;
+  }
+
+  async function deleteApp(event) {
+    event.preventDefault();
+    if (state.mutationPending || !state.deletingApp) return;
+    const app = state.deletingApp;
+    elements.deleteError.hidden = true;
+    setMutationBusy(true);
+    elements.confirmDeleteButton.disabled = true;
+    elements.cancelDeleteButton.disabled = true;
+    elements.confirmDeleteButton.textContent = "Видаляю...";
+    try {
+      await api(databaseApiPath(app.row_index), {
+        method: "DELETE",
+        body: JSON.stringify({ expected_app_id: app.app_id }),
+      });
+      state.apps = state.apps.filter((item) => item.row_index !== app.row_index);
+      if (state.expandedRow === app.row_index) state.expandedRow = null;
+      setMutationBusy(false);
+      closeDeleteModal();
+      render();
+      elements.addButton.focus();
+      showToast("Додаток видалено з бази");
+    } catch (error) {
+      elements.deleteError.textContent = error.message;
+      elements.deleteError.hidden = false;
+    } finally {
+      setMutationBusy(false);
+      elements.confirmDeleteButton.disabled = false;
+      elements.cancelDeleteButton.disabled = false;
+      elements.confirmDeleteButton.textContent = "Видалити назавжди";
     }
   }
 
   function handleTableAction(event) {
+    if (state.mutationPending) return;
     const actionElement = event.target.closest("[data-action]");
     if (!actionElement) return;
     const row = actionElement.closest("tr[data-row-index]");
@@ -445,7 +522,9 @@
     const app = state.apps.find((item) => item.row_index === Number(row.dataset.rowIndex));
     if (!app) return;
     const action = actionElement.dataset.action;
+    if ((action === "toggle") !== (event.type === "change")) return;
     if (action === "edit") openModal(app);
+    if (action === "delete") openDeleteModal(app);
     if (action === "details") {
       state.expandedRow = state.expandedRow === app.row_index ? null : app.row_index;
       render();
@@ -461,8 +540,14 @@
     elements.enabledFilter.addEventListener("change", render);
     elements.tableBody.addEventListener("click", handleTableAction);
     elements.tableBody.addEventListener("change", handleTableAction);
-    elements.closeModalButton.addEventListener("click", closeModal);
-    elements.cancelModalButton.addEventListener("click", closeModal);
+    elements.closeModalButton.addEventListener("click", () => closeModal());
+    elements.cancelModalButton.addEventListener("click", () => closeModal());
+    elements.cancelDeleteButton.addEventListener("click", closeDeleteModal);
+    elements.deleteForm.addEventListener("submit", deleteApp);
+    elements.deleteModal.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      closeDeleteModal();
+    });
     elements.modal.addEventListener("click", (event) => {
       if (event.target === elements.modal) closeModal();
     });
