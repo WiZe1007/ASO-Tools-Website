@@ -329,6 +329,66 @@ class LiveStatusMonitorTests(unittest.TestCase):
 
         self.assertNotIn("Тип:", message)
 
+    def test_geo_message_distinguishes_changed_and_all_closed_countries(self):
+        row = app_row(closed_codes="JP")
+        snapshot = {"total": 4, "open_codes": ["US"], "closed_codes": ["SG", "CA", "DE"]}
+        message = app.build_bot_message("new_closed", row, snapshot, ["SG"])
+        changed, all_closed = message.split("<b>Усі закриті країни зараз:</b>\n")
+
+        self.assertIn("Нові закриті країни", changed)
+        self.assertIn("Closed: <b>3</b>", changed)
+        self.assertIn("Singapore (SG)", changed)
+        self.assertNotIn("Canada (CA)", changed)
+        for code in ("CA", "DE", "SG"):
+            self.assertIn(f"({code})", all_closed)
+        self.assertNotIn("(JP)", all_closed)
+        self.assertNotIn("(US)", all_closed)
+
+    def test_opened_geo_message_shows_remaining_closed_countries_or_none(self):
+        for closed_codes in (["CA"], []):
+            with self.subTest(closed_codes=closed_codes):
+                message = app.build_bot_message(
+                    "new_opened", app_row(), {"closed_codes": closed_codes}, ["SG"],
+                )
+                all_closed = message.split("<b>Усі закриті країни зараз:</b>\n")[1]
+                self.assertEqual(all_closed, app.format_country_lines(closed_codes))
+                self.assertNotIn("(SG)", all_closed)
+
+    def test_all_closed_list_is_complete_and_fits_telegram_chunks(self):
+        codes = sorted({code for code, _ in app.COUNTRIES_FULL.values()})
+        self.assertGreater(len(codes), 80)
+        message = app.build_bot_message("new_closed", app_row(), {"closed_codes": codes}, codes)
+        all_closed = message.split("<b>Усі закриті країни зараз:</b>\n")[1]
+        self.assertEqual(len(all_closed.splitlines()), len(codes))
+        self.assertNotIn("та ще", all_closed)
+        chunks = app.telegram_chunk_text(message)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= 3900 for chunk in chunks))
+        for code in codes:
+            self.assertIn(f"({code})", all_closed)
+            self.assertIn(f"({code})", "\n".join(chunks))
+
+    @patch("app.send_telegram_event_message")
+    @patch("app.summarize_google_availability")
+    def test_geo_check_sends_full_current_closed_list_for_both_changes(self, summarize, send):
+        store = FakeStore([app_row(open_codes="US,SG", closed_codes="CA,DE")])
+        summarize.return_value = {
+            "total": 4, "open_codes": ["US", "DE"], "closed_codes": ["SG", "CA"],
+            "not_found_codes": [], "no_install_codes": ["SG", "CA"], "transient_codes": [],
+        }
+        with patch("app.GoogleSheetsAvailabilityStore", return_value=store):
+            result = app.run_availability_bot_check(send_messages=True, write_changes=True)
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual([call.kwargs["event"] for call in send.call_args_list], ["new_closed", "new_opened"])
+        for call in send.call_args_list:
+            all_closed = call.args[0].split("<b>Усі закриті країни зараз:</b>\n")[1]
+            self.assertIn("(CA)", all_closed)
+            self.assertIn("(SG)", all_closed)
+            self.assertNotIn("(DE)", all_closed)
+        self.assertEqual(store.apps[0]["last_closed_countries"], "CA,SG")
+        summarize.assert_called_once()
+
     @patch("app.fetch_google_play_update_state")
     @patch("app.summarize_google_availability")
     @patch("app.probe_google_play_live_status")

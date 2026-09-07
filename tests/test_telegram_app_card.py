@@ -63,6 +63,41 @@ class TelegramAppCardTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertEqual(app.normalize_content_rating_label(source), expected)
 
+    @unittest.skipIf(app.Image is None, "Pillow is required for card rendering")
+    def test_age_badge_visible_pixels_are_centered(self):
+        for label in ("3+", "7+", "16+", "18+"):
+            with self.subTest(label=label):
+                image = app.Image.new("RGB", (300, 160), (0, 0, 0))
+                width, height = app.draw_card_pill(
+                    app.ImageDraw.Draw(image), (30, 25), label,
+                    font=app.load_card_font(38, bold=True),
+                    fill=(230, 0, 0), min_width=150, pad_x=34, pad_y=14,
+                )
+                # White text is the only content with a nonzero green channel.
+                bounds = image.getchannel("G").point(lambda value: 255 if value > 128 else 0).getbbox()
+                self.assertIsNotNone(bounds)
+                self.assertAlmostEqual((bounds[0] + bounds[2]) / 2, 30 + width / 2, delta=2)
+                self.assertAlmostEqual((bounds[1] + bounds[3]) / 2, 25 + height / 2, delta=2)
+
+    @patch("app.send_telegram_message")
+    @patch("app.send_telegram_photo")
+    @patch("app.build_telegram_app_card", return_value=b"card")
+    def test_long_geo_message_is_sent_in_full_after_card(self, build_card, send_photo, send_text):
+        codes = sorted({code for code, _ in app.COUNTRIES_FULL.values()})
+        row = {"app_id": "com.example.game", "app_name": "Example"}
+        message = app.build_bot_message(
+            "new_closed", row, {"total": len(codes), "closed_codes": codes}, ["SG"],
+        )
+        self.assertGreater(len(message), 950)
+        send_photo.return_value = [{"photo": True}]
+        send_text.return_value = [{"text": True}]
+
+        result = app.send_telegram_event_message(message, row, event="new_closed")
+
+        send_photo.assert_called_once_with(b"card", caption="")
+        send_text.assert_called_once_with(message)
+        self.assertEqual(result, [{"photo": True}, {"text": True}])
+
     @patch("app.session.get")
     def test_card_media_rejects_untrusted_or_oversized_downloads(self, get):
         for url in (

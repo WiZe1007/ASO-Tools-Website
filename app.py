@@ -5825,7 +5825,8 @@ def fetch_card_media_image(url: str, size: tuple[int, int], radius: int):
 
 def draw_card_pill(draw, xy: tuple[int, int], label: str, font, fill, outline=None, text_fill=(255, 255, 255), min_width=0, pad_x=28, pad_y=12):
     x, y = xy
-    text_w, text_h = text_bbox_size(draw, label, font)
+    text_left, text_top, text_right, text_bottom = draw.textbbox((0, 0), label, font=font)
+    text_w, text_h = text_right - text_left, text_bottom - text_top
     width = max(min_width, text_w + pad_x * 2)
     height = text_h + pad_y * 2
     shadow_offset = 8
@@ -5841,7 +5842,12 @@ def draw_card_pill(draw, xy: tuple[int, int], label: str, font, fill, outline=No
         outline=outline,
         width=2 if outline else 1,
     )
-    draw.text((x + pad_x, y + pad_y - 2), label, font=font, fill=text_fill)
+    draw.text(
+        (x + (width - text_w) / 2 - text_left, y + (height - text_h) / 2 - text_top),
+        label,
+        font=font,
+        fill=text_fill,
+    )
     return width, height
 
 
@@ -6174,7 +6180,7 @@ def build_bot_message(event: str, app: dict, snapshot: dict, changed_codes: list
         identity_lines.append(f"Тип: <b>{html_lib.escape(app_type_line)}</b>")
     identity_lines.append(f'<a href="{escaped_url}">Google Play</a>')
 
-    return "\n".join([
+    lines = [
         f"<b>{title}</b>",
         "",
         *identity_lines,
@@ -6184,7 +6190,15 @@ def build_bot_message(event: str, app: dict, snapshot: dict, changed_codes: list
         "",
         f"<b>{country_intro}:</b>",
         country_text,
-    ])
+    ]
+    if event in {"new_closed", "new_opened"}:
+        # Separate lines keep the complete list safely splittable for Telegram.
+        closed_lines = [
+            html_lib.escape(country_label(code))
+            for code in sorted(set(snapshot.get("closed_codes") or []))
+        ]
+        lines.extend(["", "<b>Усі закриті країни зараз:</b>", *(closed_lines or ["немає"])])
+    return "\n".join(lines)
 
 
 def run_live_status_bot_check(
