@@ -4905,14 +4905,12 @@ def fit_text(draw, text: str, font, max_width: int, min_size: int, start_size: i
     value = str(text or "").strip() or "Untitled app"
     font_obj = font
     size = start_size
-    while font_obj and size > min_size and draw.textbbox((0, 0), value, font=font_obj)[2] > max_width:
-        size -= 4
+    while font_obj and size > min_size and text_bbox_size(draw, value, font_obj)[0] > max_width:
+        size = max(min_size, size - 4)
         font_obj = load_card_font(size, bold=bold)
     if not font_obj:
         return value, font
-    while draw.textbbox((0, 0), value, font=font_obj)[2] > max_width and len(value) > 8:
-        value = value[:-2].rstrip() + "…"
-    return value, font_obj
+    return ellipsize_card_text(draw, value, font_obj, max_width), font_obj
 
 
 def text_bbox_size(draw, text: str, font) -> tuple[int, int]:
@@ -4922,7 +4920,15 @@ def text_bbox_size(draw, text: str, font) -> tuple[int, int]:
     return (bbox[2] - bbox[0], bbox[3] - bbox[1])
 
 
-def wrap_card_text(draw, text: str, font, max_width: int, max_lines: int = 2) -> list[str]:
+def ellipsize_card_text(draw, text: str, font, max_width: int) -> str:
+    if text_bbox_size(draw, text, font)[0] <= max_width:
+        return text
+    while text and text_bbox_size(draw, text.rstrip() + "…", font)[0] > max_width:
+        text = text[:-1]
+    return text.rstrip() + "…"
+
+
+def wrap_card_text(draw, text: str, font, max_width: int, max_lines: int | None = 2) -> list[str]:
     value = re.sub(r"\s+", " ", str(text or "").strip()) or "Untitled app"
     words = value.split(" ")
     lines: list[str] = []
@@ -4935,20 +4941,13 @@ def wrap_card_text(draw, text: str, font, max_width: int, max_lines: int = 2) ->
             continue
         lines.append(current)
         current = word
-        if len(lines) >= max_lines:
-            break
-
-    if current and len(lines) < max_lines:
+    if current:
         lines.append(current)
 
-    if len(lines) > max_lines:
-        lines = lines[:max_lines]
-
-    if len(lines) == max_lines:
-        line = lines[-1]
-        while text_bbox_size(draw, line, font)[0] > max_width and len(line) > 8:
-            line = line[:-2].rstrip() + "…"
-        lines[-1] = line
+    if max_lines and len(lines) > max_lines:
+        lines = lines[:max_lines - 1] + [" ".join(lines[max_lines - 1:])]
+    if max_lines:
+        lines = [ellipsize_card_text(draw, line, font, max_width) for line in lines]
 
     return lines or [value]
 
@@ -4965,10 +4964,10 @@ def fit_wrapped_card_text(
     size = start_size
     font = load_card_font(size, bold=bold)
     while font and size > min_size:
-        lines = wrap_card_text(draw, text, font, max_width, max_lines=max_lines)
-        if all(text_bbox_size(draw, line, font)[0] <= max_width for line in lines):
+        lines = wrap_card_text(draw, text, font, max_width, max_lines=None)
+        if len(lines) <= max_lines and all(text_bbox_size(draw, line, font)[0] <= max_width for line in lines):
             return lines, font
-        size -= 4
+        size = max(min_size, size - 4)
         font = load_card_font(size, bold=bold)
     return wrap_card_text(draw, text, font, max_width, max_lines=max_lines), font
 
@@ -5823,13 +5822,12 @@ def fetch_card_media_image(url: str, size: tuple[int, int], radius: int):
         return None
 
 
-def draw_card_pill(draw, xy: tuple[int, int], label: str, font, fill, outline=None, text_fill=(255, 255, 255), min_width=0, pad_x=28, pad_y=12):
+def draw_card_pill(draw, xy: tuple[int, int], label: str, font, fill, outline=None, text_fill=(255, 255, 255), min_width=0, pad_x=28, pad_y=12, shadow_offset=8, min_height=0):
     x, y = xy
     text_left, text_top, text_right, text_bottom = draw.textbbox((0, 0), label, font=font)
     text_w, text_h = text_right - text_left, text_bottom - text_top
     width = max(min_width, text_w + pad_x * 2)
-    height = text_h + pad_y * 2
-    shadow_offset = 8
+    height = max(min_height, text_h + pad_y * 2)
     draw.rounded_rectangle(
         (x + shadow_offset, y + shadow_offset, x + width + shadow_offset, y + height + shadow_offset),
         radius=max(12, height // 3),
@@ -5851,6 +5849,48 @@ def draw_card_pill(draw, xy: tuple[int, int], label: str, font, fill, outline=No
     return width, height
 
 
+def render_telegram_card_header(meta: dict, app_id: str):
+    # Supersample only the text area, leaving all source imagery untouched.
+    scale = 2
+    layer = Image.new("RGBA", (580 * scale, 386 * scale), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+
+    def write(text, y, font, fill=(255, 255, 255, 255)):
+        left, top, _, _ = draw.textbbox((0, 0), text, font=font)
+        draw.text((-left, y * scale - top), text, font=font, fill=fill)
+
+    title_lines, title_font = fit_wrapped_card_text(
+        draw, meta.get("name"), 560 * scale, 2, 72 * scale, 50 * scale, bold=True,
+    )
+    for index, line in enumerate(title_lines):
+        write(line, 8 + index * 82, title_font)
+
+    category, category_font = fit_text(
+        draw, f"Android  •  {meta.get('category') or '—'}",
+        load_card_font(36 * scale), 560 * scale, 28 * scale, 36 * scale,
+    )
+    write(category, 186, category_font, (232, 237, 243, 255))
+
+    draw_card_pill(
+        draw, (0, 244 * scale), normalize_content_rating_label(meta.get("content_rating")),
+        font=load_card_font(38 * scale, bold=True),
+        fill=(230, 0, 0, 255), outline=(255, 52, 52, 255),
+        min_width=150 * scale, min_height=60 * scale,
+        pad_x=34 * scale, pad_y=14 * scale, shadow_offset=0,
+    )
+    if app_id:
+        package, package_font = fit_text(
+            draw, app_id, load_card_font(30 * scale, bold=True),
+            512 * scale, 24 * scale, 30 * scale, bold=True,
+        )
+        draw_card_pill(
+            draw, (0, 326 * scale), package, font=package_font,
+            fill=(9, 16, 23, 255), outline=(117, 131, 143, 255),
+            min_height=56 * scale, pad_x=24 * scale, pad_y=12 * scale, shadow_offset=0,
+        )
+    return layer.resize((580, 386), Image.Resampling.LANCZOS)
+
+
 def build_telegram_app_card(app: dict, event: str = "") -> bytes | None:
     if not TELEGRAM_SEND_APP_CARD or Image is None or ImageDraw is None:
         return None
@@ -5858,7 +5898,7 @@ def build_telegram_app_card(app: dict, event: str = "") -> bytes | None:
     app_id = str(app.get("app_id") or "").strip().lower()
     media_source = "google_play" if event in {"new_live", "app_restored", "app_updated"} else "sensor_tower"
     cache_key = (
-        "telegram_app_card",
+        "telegram_app_card_text_v2",
         media_source,
         app_id,
         str(app.get("last_store_version") or ""),
@@ -5884,11 +5924,6 @@ def build_telegram_app_card(app: dict, event: str = "") -> bytes | None:
         else sensor_tower_app_card_meta(app)
     )
     width, height = card.size
-
-    title_font = load_card_font(74, bold=True)
-    meta_font = load_card_font(42, bold=True)
-    rating_font = load_card_font(38, bold=True)
-    small_font = load_card_font(30, bold=True)
 
     panel = Image.new("RGBA", card.size, (0, 0, 0, 0))
     panel_draw = ImageDraw.Draw(panel)
@@ -5925,47 +5960,7 @@ def build_telegram_app_card(app: dict, event: str = "") -> bytes | None:
             font=initials_font,
         )
 
-    text_x = 420
-    title_lines, title_font = fit_wrapped_card_text(draw, meta.get("name"), 560, 2, 74, 50, bold=True)
-    title_y = 100
-    title_line_height = max(70, text_bbox_size(draw, "Ag", title_font)[1] + 18)
-    line_gap = 14
-    for index, line in enumerate(title_lines):
-        draw_shadowed_text(draw, (text_x, title_y + index * title_line_height), line, title_font)
-
-    after_title_y = title_y + len(title_lines) * title_line_height + line_gap
-    category = meta.get("category") or "—"
-    category_text, meta_font = fit_text(draw, f"Android  •  {category}", meta_font, 560, 30, 42, bold=True)
-    draw_shadowed_text(draw, (text_x, after_title_y), category_text, meta_font)
-
-    rating_label = normalize_content_rating_label(meta.get("content_rating"))
-    badge_y = after_title_y + 72
-    draw_card_pill(
-        draw,
-        (text_x, badge_y),
-        rating_label,
-        font=rating_font,
-        fill=(230, 0, 0, 238),
-        outline=(255, 52, 52, 215),
-        min_width=150,
-        pad_x=34,
-        pad_y=14,
-    )
-
-    if app_id:
-        package_text, small_font = fit_text(draw, app_id, small_font, 500, 23, 30, bold=True)
-        package_y = badge_y + 88
-        draw_card_pill(
-            draw,
-            (text_x, package_y),
-            package_text,
-            font=small_font,
-            fill=(6, 12, 20, 170),
-            outline=(255, 255, 255, 42),
-            text_fill=(245, 245, 245),
-            pad_x=24,
-            pad_y=11,
-        )
+    card.alpha_composite(render_telegram_card_header(meta, app_id), (420, 94))
 
     screenshots = meta.get("screenshots") or []
     media_y = 505
