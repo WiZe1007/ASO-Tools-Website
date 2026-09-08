@@ -27,7 +27,6 @@ class SeparateAccountTests(unittest.TestCase):
         self.stack.enter_context(patch.object(tools_app, "AUTH_STORAGE", "google_sheets"))
         self.stack.enter_context(patch.object(tools_app, "TOOLS_AUTH_USER_STORE", self.tools_store))
         self.stack.enter_context(patch.object(tools_app, "TOOLS_AUTH_USER_CACHE", tools_app.TTLCache(60)))
-        self.stack.enter_context(patch.object(tools_app, "S_LIVE_DB_ALLOWED_EMAILS", ""))
         for module in (database_app, tools_app):
             self.stack.enter_context(patch.object(module, "AUTH_REQUIRED", True))
             self.stack.enter_context(patch.object(module, "AUTH_ALLOWED_EMAIL_DOMAIN", "@wildwildgroup.com"))
@@ -166,17 +165,7 @@ class SeparateAccountTests(unittest.TestCase):
                 dashboard = db_client.get("/")
                 self.assertEqual(dashboard.status_code, 200 if scopes else 403)
                 self.assertEqual(db_client.get("/admin/users").status_code, 403)
-                with patch.object(tools_app, "build_live_apps_database_payload", return_value={}) as payload, \
-                     patch.object(tools_app, "build_s_live_apps_store", return_value=Mock()):
-                    for key, path in (("wwa", "live-apps"), ("s", "s-live-apps")):
-                        payload.reset_mock()
-                        self.assertEqual(tools_client.get(f"/{path}").status_code, 200 if key == "wwa" else 403)
-                        self.assertEqual(tools_client.get(f"/api/{path}").status_code, 200 if key == "wwa" else 403)
-                        if key == "s":
-                            payload.assert_not_called()
-                    nav = tools_client.get("/").data
-                    self.assertIn(b'href="/live-apps"', nav)
-                    self.assertNotIn(b'href="/s-live-apps"', nav)
+                self.assertEqual(tools_client.get("/rating").status_code, 200)
 
     def test_access_revocation_on_another_worker_bypasses_cached_permissions(self):
         self.store.update_user(self.employee, database_access="s,wwa")
@@ -192,9 +181,7 @@ class SeparateAccountTests(unittest.TestCase):
                                               headers={"X-CSRF-Token": self.csrf(self.clients[0])})
             self.assertEqual(response.status_code, 403)
             build.assert_not_called()
-        with patch.object(tools_app, "build_live_apps_database_payload", return_value={}):
-            self.assertEqual(self.clients[1].get("/api/live-apps").status_code, 200)
-        self.assertEqual(self.clients[1].get("/api/s-live-apps").status_code, 403)
+        self.assertEqual(self.clients[1].get("/rating").status_code, 200)
 
     def test_s_only_user_can_create_and_edit_s_apps_without_touching_wwa(self):
         self.store.update_user(self.employee, database_access="s")
@@ -513,16 +500,34 @@ class SeparateAccountTests(unittest.TestCase):
         self.assertEqual(self.admin_post(client, email="blocked@wildwildgroup.com", password=self.password, database_access=["wwa"]).status_code, 400)
         self.assertNotIn("blocked@wildwildgroup.com", self.tools_store.users)
 
-    def test_tools_s_live_db_uses_only_its_own_allowlist(self):
-        self.store.update_user(self.employee, database_access="none")
+    def test_retired_tools_database_pages_and_apis_are_unavailable(self):
         client = self.clients[1]
-        self.login(client)
-        with patch.object(tools_app, "S_LIVE_DB_ALLOWED_EMAILS", self.employee), \
-             patch.object(tools_app, "build_live_apps_database_payload", return_value={}), \
-             patch.object(tools_app, "build_s_live_apps_store", return_value=Mock()):
-            self.assertEqual(client.get("/api/s-live-apps").status_code, 200)
-            self.assertIn(b'href="/s-live-apps"', client.get("/").data)
-        self.assertEqual(client.get("/api/s-live-apps").status_code, 403)
+        for email in (None, self.employee, self.admin):
+            if email:
+                self.login(client, email)
+                nav = client.get("/").data
+                self.assertNotIn(b'href="/live-apps"', nav)
+                self.assertNotIn(b'href="/s-live-apps"', nav)
+            for path in ("/live-apps", "/s-live-apps", "/api/live-apps", "/api/s-live-apps"):
+                self.assertEqual(client.get(path).status_code, 404)
+
+    def test_only_versioned_public_assets_get_immutable_caching(self):
+        for client in self.clients:
+            path = "/static/js/background-video.js?v=20260908-steady-scene1"
+            response = client.get(path)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.cache_control.max_age, 31536000)
+            self.assertTrue(response.cache_control.public)
+            self.assertTrue(response.cache_control.immutable)
+            unchanged = client.get(path, headers={"If-None-Match": response.headers["ETag"]})
+            self.assertEqual(unchanged.status_code, 304)
+            self.assertTrue(unchanged.cache_control.immutable)
+            self.assertFalse(client.get("/static/js/background-video.js").cache_control.immutable)
+            self.assertFalse(client.get("/static/missing.js?v=1").cache_control.immutable)
+            self.login(client, self.admin)
+            for private in ("/?v=1", "/admin/users?v=1"):
+                response = client.get(private)
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
 
     def test_user_cache_is_separate_even_for_the_same_email(self):
         self.tools_store.users[self.employee]["password_hash"] = "tools-only-hash"

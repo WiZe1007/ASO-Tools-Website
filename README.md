@@ -6,7 +6,6 @@ Flask web app for ASO checks:
 - install availability checker by country
 - Google Play GEO link generator
 - App Overview page with public Sensor Tower data
-- Live Apps Database page backed by the Availability Google Sheet
 - optional App Magic data-countries integration for download shares
 - Telegram Availability monitor backed by Google Sheets
 
@@ -15,6 +14,10 @@ opens the GEO rating checker at `/rating`. All tools remain available from the
 shared navigation. Tools and Apps Database use the same glass styling, local
 video background, light/dark themes, and animation controls. Appearance settings
 persist between visits, and reduced-motion preferences keep the still background.
+
+Public static URLs with a `v` query parameter use immutable browser caching.
+When changing one of these assets, update its `v` value in every template that
+loads it. Account pages and API responses remain uncached.
 
 ## Local Run
 
@@ -69,8 +72,8 @@ not automatically get an account on the other.
 
 WWA Tools has a plain email/password user list. Only the Apps Database admin page
 has WWA DB/S DB groups and database permission checkboxes. Those permissions apply
-only to the database editor. Within WWA Tools, any active Tools account can view
-WWA Live DB; S Live DB uses this service's `S_LIVE_DB_ALLOWED_EMAILS` allowlist.
+only to the separate database editor. WWA Tools no longer hosts Live DB or S Live DB
+pages; their former page and API addresses return 404.
 Administrators are selected independently by `AUTH_ADMIN_EMAILS` on each service.
 
 On the first WWA Tools account-store initialization, if `ToolsUsers` is absent,
@@ -142,14 +145,7 @@ Use:
 
 The bot also writes events to the `Checks` sheet.
 
-The website also exposes `/live-apps`, a read-only page for employees to view
-the current live app database, search by bundle/package name, and see closed
-GEOs saved by the Telegram availability checks.
-
-The website can also expose `/s-live-apps` as a separate read-only page for the
-second team's live app database. Set `S_LIVE_DB_ALLOWED_EMAILS` on WWA Tools to
-the exact emails of active Tools accounts allowed to view it. Apps Database
-permissions do not grant or revoke access to this read-only Tools page.
+Use the separate Apps Database site to manage WWA/S apps and view saved GEO checks.
 
 ### Google Service Account
 
@@ -266,26 +262,8 @@ AVAILABILITY_DB_LOG_SHEET=Checks_Team2
 
 The service account email must have `Editor` access to the spreadsheet.
 
-To show the second team's database inside the website, add these variables to
-the Render **Web Service** too:
-
-```text
-S_LIVE_DB_ALLOWED_EMAILS=email1@wildwildgroup.com,email2@wildwildgroup.com
-S_AVAILABILITY_DB_SPREADSHEET_ID=<second team spreadsheet id>
-S_GOOGLE_SERVICE_ACCOUNT_JSON=<second team service account JSON>
-```
-
-Optional website variables for that page:
-
-```text
-S_AVAILABILITY_DB_APPS_SHEET=Apps
-S_AVAILABILITY_DB_LOG_SHEET=Checks
-```
-
-Only logged-in Tools users in `S_LIVE_DB_ALLOWED_EMAILS` see `S Live DB` in the navigation.
-Direct access to `/s-live-apps` and `/api/s-live-apps` is forbidden for others.
-WWA Live DB pages and APIs require an active WWA Tools account. Database requests
-refresh account status, so cached sessions cannot bypass disabled/deleted accounts.
+For access to the second team's database in the separate Apps Database service,
+follow [its configuration guide](database_site/README.md).
 
 ### Separate Telegram Bot
 

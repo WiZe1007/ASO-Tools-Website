@@ -25,44 +25,72 @@
   let unavailable = false;
   let pageActive = true;
   let heroVisible = true;
+  let initializing = null;
+  let pendingInput = null;
+  let generation = 0;
+  const frameInterval = 1000 / 30 - 1;
   const allowed = () => pageActive && heroVisible && !document.hidden && !reduced.matches &&
     !root.dataset.navigationTransition && root.dataset.motion === 'playing';
 
   function stop(state) {
     cancelAnimationFrame(frameId);
     frameId = 0;
+    pendingInput = null;
     if (engine) engine.clear();
     canvas.dataset.state = state;
   }
   function tick(now) {
     frameId = 0;
     if (!allowed()) { stop('paused'); return; }
-    if (now - lastInput > 3000) { stop('idle'); return; }
-    // Avoid exceeding 60 updates/sec on high-refresh screens.
-    if (now - lastFrame >= 15) {
-      try { engine.frame(Math.min((now - lastFrame) / 1000, 1 / 30)); }
+    if (now - lastInput > 2000) { stop('idle'); return; }
+    // Coalesce pointer events and bound the decorative simulation to 30 fps.
+    if (now - lastFrame >= frameInterval) {
+      try {
+        if (pendingInput) {
+          engine.input(pendingInput.x, pendingInput.y, pendingInput.burst);
+          pendingInput = null;
+        }
+        engine.frame(Math.min((now - lastFrame) / 1000, 1 / 30));
+      }
       catch (_) { disable(); return; }
       lastFrame = now;
     }
+    frameId = requestAnimationFrame(tick);
+  }
+  function start() {
+    if (!engine || frameId || !allowed() || performance.now() - lastInput > 2000) return;
+    canvas.dataset.state = 'running';
+    lastFrame = performance.now() - frameInterval;
     frameId = requestAnimationFrame(tick);
   }
   function input(event) {
     if (!allowed() || unavailable || event.isPrimary === false) return;
     // Navigation and form interactions must never compile or run the fluid renderer.
     if (event.target.closest?.('.wwa-topbar,a,button,input,textarea,select,[role="button"],[role="radio"]')) {
-      if (frameId) stop('idle');
+      if (frameId || initializing) { lastInput = 0; stop('idle'); }
       return;
     }
     if (event.type === 'pointermove' && event.pointerType === 'touch' && !event.buttons) return;
-    try {
-      if (!engine) engine = createFluid(canvas);
-      engine.input(event.clientX, event.clientY, event.type === 'pointerdown');
-    } catch (_) { disable(); return; }
     lastInput = performance.now();
-    canvas.dataset.state = 'running';
-    if (!frameId) { lastFrame = lastInput - 17; frameId = requestAnimationFrame(tick); }
+    pendingInput = { x: event.clientX, y: event.clientY, burst: pendingInput?.burst || event.type === 'pointerdown' };
+    if (!engine && !initializing) {
+      const current = generation;
+      canvas.dataset.state = 'loading';
+      initializing = createFluid(canvas, () => current === generation && pageActive)
+        .then(created => {
+          if (current !== generation || !pageActive) { created.destroy(); return; }
+          engine = created;
+          start();
+        })
+        .catch(() => { if (current === generation) disable(); })
+        .finally(() => { if (current === generation) initializing = null; });
+    }
+    start();
   }
   function disable() {
+    generation++;
+    initializing = null;
+    pendingInput = null;
     cancelAnimationFrame(frameId);
     frameId = 0;
     engine?.destroy();
@@ -88,6 +116,8 @@
   }
   window.addEventListener('pagehide', () => {
     pageActive = false;
+    generation++;
+    initializing = null;
     stop('paused');
     engine?.destroy();
     engine = null;
@@ -95,15 +125,12 @@
   window.addEventListener('pageshow', () => { pageActive = true; policy(); });
   canvas.addEventListener('webglcontextlost', event => {
     event.preventDefault();
-    stop('unavailable');
-    engine?.destroy();
-    engine = null;
-    unavailable = true;
+    disable();
   });
   canvas.addEventListener('webglcontextrestored', () => { unavailable = false; policy(); });
   policy();
 
-  function createFluid(canvas) {
+  async function createFluid(canvas, isCurrent) {
     let gl;
     let contextGL;
     let positioned = false;
@@ -129,6 +156,10 @@
       release('Framebuffer', target.fbo);
     }
     try {
+      // Yield before WebGL setup so the initiating pointer event can finish.
+      const yieldTask = () => new Promise(resolve => setTimeout(resolve, 0));
+      await yieldTask();
+      if (!isCurrent()) throw new Error('Fluid initialization cancelled');
       function pointerPrototype() {
         this.id = -1;
         this.texcoordX = 0;
@@ -145,11 +176,11 @@
       const coarse = matchMedia('(pointer: coarse)').matches;
       const config = {
         SIM_RESOLUTION: coarse ? 64 : 128,
-        DYE_RESOLUTION: coarse ? 384 : 1024,
+        DYE_RESOLUTION: coarse ? 256 : 512,
         DENSITY_DISSIPATION: 3.5,
         VELOCITY_DISSIPATION: 2,
         PRESSURE: 0.1,
-        PRESSURE_ITERATIONS: coarse ? 12 : 20,
+        PRESSURE_ITERATIONS: coarse ? 6 : 10,
         CURL: 3,
         SPLAT_RADIUS: 0.2,
         SPLAT_FORCE: 6000,
@@ -254,6 +285,7 @@
         return status === gl.FRAMEBUFFER_COMPLETE;
       }
 
+      const pendingPrograms = [];
       class Material {
         constructor(vertexShader, fragmentShaderSource) {
           this.vertexShader = vertexShader;
@@ -272,7 +304,7 @@
             this.programs[hash] = program;
           }
           if (program === this.activeProgram) return;
-          this.uniforms = getUniforms(program);
+          pendingPrograms.push({ target: this, program });
           this.activeProgram = program;
         }
         bind() {
@@ -284,7 +316,7 @@
         constructor(vertexShader, fragmentShader) {
           this.uniforms = {};
           this.program = createProgram(vertexShader, fragmentShader);
-          this.uniforms = getUniforms(this.program);
+          pendingPrograms.push({ target: this, program: this.program });
         }
         bind() {
           gl.useProgram(this.program);
@@ -296,7 +328,6 @@
         gl.attachShader(program, vertexShader);
         gl.attachShader(program, fragmentShader);
         gl.linkProgram(program);
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error('Fluid program could not link');
         return program;
       }
 
@@ -315,7 +346,6 @@
         const shader = track('Shader', gl.createShader(type));
         gl.shaderSource(shader, source);
         gl.compileShader(shader);
-        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error('Fluid shader could not compile');
         return shader;
       }
 
@@ -785,6 +815,18 @@
       }
 
       updateKeywords();
+      // Checking LINK_STATUS/uniforms immediately forces shader compilation to
+      // block the main thread. Poll completion, then collect uniforms once ready.
+      const parallelCompile = gl.getExtension('KHR_parallel_shader_compile');
+      for (const { target, program } of pendingPrograms) {
+        do {
+          await yieldTask();
+          if (!isCurrent()) throw new Error('Fluid initialization cancelled');
+        } while (parallelCompile && !gl.getProgramParameter(program, parallelCompile.COMPLETION_STATUS_KHR));
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error('Fluid program could not link');
+        target.uniforms = getUniforms(program);
+      }
+      pendingPrograms.length = 0;
       resizeCanvas();
       initFramebuffers();
       let colorUpdateTimer = 0.0;
@@ -1082,7 +1124,7 @@
       }
 
       function scaleByPixelRatio(input) {
-        const pixelRatio = Math.min(window.devicePixelRatio || 1, coarse ? 1 : 1.5, 2048 / Math.max(canvas.clientWidth, canvas.clientHeight, 1));
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 1, 1280 / Math.max(canvas.clientWidth, canvas.clientHeight, 1));
         return Math.floor(input * pixelRatio);
       }
 

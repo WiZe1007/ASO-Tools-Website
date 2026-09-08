@@ -106,13 +106,18 @@
     return `<svg aria-hidden="true"><use href="#icon-${name}"></use></svg>`;
   }
 
+  const dateFormatter = new Intl.DateTimeFormat("uk-UA", { day: "2-digit", month: "short", year: "numeric" });
+  const timeFormatter = new Intl.DateTimeFormat("uk-UA", { hour: "2-digit", minute: "2-digit" });
+  const rowCache = new WeakMap();
+  const detailCache = new WeakMap();
+
   function formatDate(value) {
     if (!value) return { date: "Ще не перевірявся", time: "" };
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return { date: value, time: "" };
     return {
-      date: new Intl.DateTimeFormat("uk-UA", { day: "2-digit", month: "short", year: "numeric" }).format(date),
-      time: new Intl.DateTimeFormat("uk-UA", { hour: "2-digit", minute: "2-digit" }).format(date),
+      date: dateFormatter.format(date),
+      time: timeFormatter.format(date),
     };
   }
 
@@ -296,12 +301,42 @@
             <button class="row-button is-danger" type="button" data-action="delete" title="Видалити додаток" aria-label="Видалити додаток">${icon("trash")}</button>
           </div>
         </td>
-      </tr>${renderDetailRow(app)}`;
+      </tr>`;
+  }
+
+  function cachedRow(cache, app, markup) {
+    let row = cache.get(app);
+    if (!row) {
+      const body = document.createElement("tbody");
+      body.innerHTML = markup(app);
+      row = body.firstElementChild;
+      cache.set(app, row);
+    }
+    return row;
   }
 
   function render() {
     const apps = filteredApps();
-    elements.tableBody.innerHTML = apps.map((app) => renderRow(app)).join("");
+    // Server updates replace app objects. Reuse unchanged rows when searching,
+    // filtering or expanding details instead of rebuilding the entire table.
+    const rows = [];
+    apps.forEach(app => {
+      const row = cachedRow(rowCache, app, renderRow);
+      row.querySelectorAll("[data-action]").forEach(control => { control.disabled = state.mutationPending; });
+      row.querySelector('[data-action="toggle"]').checked = Boolean(app.enabled);
+      const expanded = String(state.expandedRow === app.row_index);
+      const button = row.querySelector('[data-action="details"]');
+      if (button.getAttribute("aria-expanded") !== expanded) button.setAttribute("aria-expanded", expanded);
+      rows.push(row);
+      if (expanded === "true") rows.push(cachedRow(detailCache, app, renderDetailRow));
+    });
+    const visible = new Set(rows);
+    for (const row of [...elements.tableBody.children]) if (!visible.has(row)) row.remove();
+    let next = elements.tableBody.firstElementChild;
+    rows.forEach(row => {
+      if (row !== next) elements.tableBody.insertBefore(row, next);
+      next = row.nextElementSibling;
+    });
     elements.emptyState.hidden = state.loading || apps.length > 0;
     elements.resultCount.textContent = `Показано ${apps.length} із ${state.apps.length} записів`;
     updateStats();
@@ -328,8 +363,6 @@
       elements.emptyState.querySelector("small").textContent = "Зміни пошуковий запит або фільтри.";
       const updated = formatDate(payload.updated_at);
       elements.lastUpdated.textContent = `Оновлено: ${updated.date}, ${updated.time}`;
-      render();
-      window.wwaDatabaseAppearance?.reveal(elements.tableBody);
       if (quiet) showToast("Дані оновлено");
     } catch (error) {
       if (requestId !== state.loadSequence || requestedDatabase !== state.databaseKey) return;
@@ -341,6 +374,7 @@
       if (requestId === state.loadSequence && requestedDatabase === state.databaseKey) {
         setLoading(false);
         render();
+        window.wwaDatabaseAppearance?.reveal(elements.tableBody);
       }
     }
   }
@@ -460,19 +494,20 @@
 
   async function toggleApp(app, input) {
     if (state.mutationPending) return;
+    const enabled = input.checked;
     setMutationBusy(true);
     input.disabled = true;
     try {
       const payload = await api(databaseApiPath(app.row_index), {
         method: "PATCH",
-        body: JSON.stringify({ expected_app_id: app.app_id, enabled: input.checked }),
+        body: JSON.stringify({ expected_app_id: app.app_id, enabled }),
       });
       const index = state.apps.findIndex((item) => item.row_index === app.row_index);
       if (index >= 0) state.apps[index] = payload.app;
       render();
-      showToast(input.checked ? "Моніторинг увімкнено" : "Додаток вимкнено без видалення історії");
+      showToast(enabled ? "Моніторинг увімкнено" : "Додаток вимкнено без видалення історії");
     } catch (error) {
-      input.checked = !input.checked;
+      input.checked = Boolean(app.enabled);
       input.disabled = false;
       showToast(error.message, "error");
     } finally {

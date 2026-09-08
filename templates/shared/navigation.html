@@ -1,12 +1,10 @@
 {% from 'shared/icons.html' import icon %}
-{% set page = {'/': 'home', '/rating': 'rating', '/availability': 'availability', '/geo-link': 'geolink', '/indexing': 'indexing', '/app-overview': 'overview', '/live-apps': 'live-db', '/s-live-apps': 's-live-db'}.get(request.path, 'home') %}
+{% set page = {'/': 'home', '/rating': 'rating', '/availability': 'availability', '/geo-link': 'geolink', '/indexing': 'indexing', '/app-overview': 'overview'}.get(request.path, 'home') %}
 {% set tool_links = [('rating', '/rating', 'Rating'), ('availability', '/availability', 'Availability'), ('geolink', '/geo-link', 'Geo Link'), ('indexing', '/indexing', 'Indexing'), ('overview', '/app-overview', 'Overview')] %}
 {% macro links() %}
   {% for key, href, label in tool_links %}
   <a class="wwa-nav-link" href="{{ href }}" style="view-transition-name: wwa-nav-{{ key }}" {% if page == key %}aria-current="page"{% endif %}>{{ icon(key) }}<span>{{ label }}</span></a>
   {% endfor %}
-  {% if can_access_wwa_live_db %}<a class="wwa-nav-link" href="/live-apps" style="view-transition-name: wwa-nav-live-db" {% if page == 'live-db' %}aria-current="page"{% endif %}>{{ icon('live-db') }}<span>Live DB</span></a>{% endif %}
-  {% if can_access_s_live_db %}<a class="wwa-nav-link" href="/s-live-apps" style="view-transition-name: wwa-nav-s-live-db" {% if page == 's-live-db' %}aria-current="page"{% endif %}>{{ icon('s-live-db') }}<span>S Live DB</span></a>{% endif %}
 {% endmacro %}
 {% macro utilities() %}
   {% if can_manage_users %}<a class="wwa-utility wwa-account-utility" href="{{ url_for('accounts.users') }}" aria-label="Користувачі" title="Користувачі">{{ icon('users') }}<span>Користувачі</span></a>{% endif %}
@@ -17,7 +15,7 @@
 {% endmacro %}
 {% if page != 'home' %}{% include 'shared/liquid_background.html' %}{% endif %}
 <a class="wwa-skip" href="{{ '#home' if page == 'home' else '#workspace' }}">Перейти до вмісту</a>
-<header class="wwa-topbar wwa-full-nav" data-nav-density="{{ 'extended' if can_access_s_live_db else 'standard' }}">
+<header class="wwa-topbar wwa-full-nav">
   <a class="wwa-brand" href="/" aria-label="WWA Tools — головна"><img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" width="36" height="36" alt=""><strong>WWA Tools</strong></a>
   <div class="wwa-dock">
     <nav class="wwa-navigation" aria-label="Основна навігація"><span class="liquid-indicator" data-nav-indicator data-visible="false" aria-hidden="true" style="opacity:0"></span>{{ links() }}</nav>
@@ -25,4 +23,4 @@
   </div>
 </header>
 
-<script src="{{ url_for('static', filename='js/splash-cursor.js', v='20260908-smooth-nav3') }}" defer></script>
+<script src="{{ url_for('static', filename='js/splash-cursor.js', v='20260909-perf1') }}" defer></script>
