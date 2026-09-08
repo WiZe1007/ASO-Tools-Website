@@ -7082,6 +7082,11 @@ def build_google_play_indexing_payload(
 
 @app.get("/")
 def index():
+    return render_template("home.html")
+
+
+@app.get("/rating")
+def rating_page():
     return render_template("index.html")
 
 

@@ -1,0 +1,97 @@
+<style>
+/* Paint a stable canvas before external styles or video frames become available. */
+html { background: #030406; color-scheme: dark; }
+body { background: #030406; }
+@view-transition { navigation: auto; }
+@media (prefers-reduced-motion: reduce) { @view-transition { navigation: none; } }
+</style>
+<script nonce="{{ csp_nonce }}">
+/* Register before first paint: pagereveal can precede deferred scripts. */
+(() => {
+  const root = document.documentElement;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  const read = (key) => { try { return localStorage.getItem(key); } catch (_) { return null; } };
+  root.dataset.theme = read('wwa.aso.tools.theme') === 'dark' ? 'dark' : 'light';
+  root.dataset.motion = reduced.matches || read('wwa.tools.liquid-motion') === 'paused' ? 'paused' : 'playing';
+  const state = window.wwaPageTransitions = { entering: false, active: null };
+  const stopped = () => reduced.matches || root.dataset.motion === 'paused';
+
+  // Captured navigation links cannot receive pointer hits while the browser
+  // animates their snapshots. A click lands on <html> instead. Forward that
+  // click to the intended link so a second navigation never waits for motion.
+  window.addEventListener('click', (event) => {
+    if (!state.entering || !state.active || event.defaultPrevented || event.button !== 0 || !event.detail) return;
+    const selector = '.wwa-full-nav .wwa-nav-link, .wwa-full-nav .wwa-brand';
+    const directLink = event.target.closest?.(selector);
+    let link = directLink;
+    if (!link && (event.target === root || event.target === document.body)) {
+      link = [...document.querySelectorAll(selector)].find((candidate) => {
+        const rect = candidate.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 &&
+          event.clientX >= rect.left && event.clientX <= rect.right &&
+          event.clientY >= rect.top && event.clientY <= rect.bottom;
+      });
+    }
+    if (!link) return;
+    state.active.skipTransition();
+    if (directLink) return;
+    event.preventDefault();
+    link.dispatchEvent(new MouseEvent('click', {
+      bubbles: true, cancelable: true, view: window, detail: event.detail,
+      clientX: event.clientX, clientY: event.clientY, button: event.button,
+      ctrlKey: event.ctrlKey, metaKey: event.metaKey,
+      shiftKey: event.shiftKey, altKey: event.altKey
+    }));
+  }, true);
+
+  state.prepare = () => {
+    const bar = document.querySelector('.wwa-full-nav');
+    if (bar) root.style.setProperty('--wwa-header-height', `${bar.offsetHeight}px`);
+    const nav = document.querySelector('.wwa-navigation');
+    const pill = nav?.querySelector('[data-nav-indicator]');
+    const selected = nav?.querySelector('[aria-current="page"]');
+    if (!pill) return;
+    pill.style.transition = 'none';
+    pill.style.opacity = selected ? '1' : '0';
+    pill.dataset.visible = String(Boolean(selected));
+    if (selected) {
+      pill.style.width = `${selected.offsetWidth}px`;
+      pill.style.setProperty('--indicator-x', `${selected.offsetLeft}px`);
+      pill.style.setProperty('--indicator-y', `${selected.offsetTop}px`);
+    }
+    pill.dataset.positioned = 'true';
+    nav.classList.add('has-liquid-indicator');
+    requestAnimationFrame(() => requestAnimationFrame(() => pill.style.removeProperty('transition')));
+  };
+  const settle = (transition) => {
+    if (state.active !== transition) return;
+    state.active = null;
+    state.entering = false;
+    delete root.dataset.navigationTransition;
+    window.dispatchEvent(new Event('wwa:navigation-settled'));
+  };
+  const track = (transition, phase) => {
+    state.active = transition;
+    state.entering = phase === 'entering';
+    root.dataset.navigationTransition = phase;
+    window.dispatchEvent(new Event('wwa:navigation-start'));
+    transition.ready.catch(() => {});
+    transition.finished.catch(() => {}).finally(() => settle(transition));
+  };
+  window.addEventListener('pageswap', (event) => {
+    if (!event.viewTransition) return;
+    if (stopped()) { event.viewTransition.ready.catch(() => {}); event.viewTransition.skipTransition(); return; }
+    track(event.viewTransition, 'leaving');
+  });
+  window.addEventListener('pagereveal', (event) => {
+    state.prepare();
+    if (!event.viewTransition) { root.dataset.navigationMode = 'standard'; return; }
+    if (stopped()) { event.viewTransition.ready.catch(() => {}); event.viewTransition.skipTransition(); return; }
+    root.dataset.navigationMode = 'native';
+    const hero = document.querySelector('[data-alpine-motion]');
+    if (hero) hero.dataset.introComplete = 'true';
+    track(event.viewTransition, 'entering');
+  });
+})();
+</script>
+<link rel="expect" href="#wwaPageReady" blocking="render">

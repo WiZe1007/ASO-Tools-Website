@@ -14,6 +14,7 @@
     loadSequence: 0,
     mutationPending: false,
     deletingApp: null,
+    modalTrigger: null,
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -122,6 +123,7 @@
   }
 
   function initTheme() {
+    if (document.documentElement.dataset.wwaDatabase) return;
     const saved = localStorage.getItem("wwa-db-theme") || localStorage.getItem("wwa-theme");
     setTheme(saved === "light" ? "light" : "dark");
     elements.themeButton.addEventListener("click", () => {
@@ -203,6 +205,7 @@
     toast.className = `toast ${type}`;
     toast.innerHTML = `<i>${type === "error" ? "!" : "✓"}</i><strong>${escapeHtml(message)}</strong><button type="button" aria-label="Закрити">×</button>`;
     elements.toastRegion.append(toast);
+    while (elements.toastRegion.children.length > 2) elements.toastRegion.firstElementChild.remove();
     const remove = () => toast.remove();
     toast.querySelector("button").addEventListener("click", remove);
     window.setTimeout(remove, type === "error" ? 7000 : 4000);
@@ -239,7 +242,7 @@
   function renderDetailRow(app) {
     if (state.expandedRow !== app.row_index) return "";
     return `
-      <tr class="detail-row">
+      <tr class="detail-row" id="app-details-${app.row_index}">
         <td colspan="7">
           <div class="detail-panel">
             <div class="detail-group">
@@ -282,13 +285,13 @@
         <td data-label="Остання перевірка"><span class="date-cell"><strong>${escapeHtml(checked.date)}</strong><small>${escapeHtml(checked.time)}</small></span></td>
         <td data-label="Моніторинг">
           <label class="table-toggle" title="${app.enabled ? "Вимкнути моніторинг" : "Увімкнути моніторинг"}">
-            <input type="checkbox" data-action="toggle" ${app.enabled ? "checked" : ""}>
+            <input type="checkbox" data-action="toggle" aria-label="Моніторинг: ${escapeHtml(app.app_name || app.app_id)}" ${app.enabled ? "checked" : ""}>
             <i></i>
           </label>
         </td>
         <td>
           <div class="row-actions">
-            <button class="row-button" type="button" data-action="details" title="Деталі">${icon("chevron")}</button>
+            <button class="row-button" type="button" data-action="details" title="Деталі" aria-expanded="${state.expandedRow === app.row_index}" aria-controls="app-details-${app.row_index}">${icon("chevron")}</button>
             <button class="row-button" type="button" data-action="edit" title="Редагувати">${icon("edit")}</button>
             <button class="row-button is-danger" type="button" data-action="delete" title="Видалити додаток" aria-label="Видалити додаток">${icon("trash")}</button>
           </div>
@@ -321,9 +324,12 @@
       const payload = await api(databaseApiPath());
       if (requestId !== state.loadSequence || requestedDatabase !== state.databaseKey) return;
       state.apps = Array.isArray(payload.apps) ? payload.apps : [];
+      elements.emptyState.querySelector("strong").textContent = "Нічого не знайдено";
+      elements.emptyState.querySelector("small").textContent = "Зміни пошуковий запит або фільтри.";
       const updated = formatDate(payload.updated_at);
       elements.lastUpdated.textContent = `Оновлено: ${updated.date}, ${updated.time}`;
       render();
+      window.wwaDatabaseAppearance?.reveal(elements.tableBody);
       if (quiet) showToast("Дані оновлено");
     } catch (error) {
       if (requestId !== state.loadSequence || requestedDatabase !== state.databaseKey) return;
@@ -359,6 +365,7 @@
 
   function openModal(app = null) {
     if (state.mutationPending) return;
+    state.modalTrigger = document.activeElement;
     state.editingApp = app;
     elements.form.reset();
     elements.formError.hidden = true;
@@ -388,14 +395,21 @@
     }
     elements.modal.hidden = false;
     document.body.style.overflow = "hidden";
-    window.setTimeout(() => (app ? elements.appName : elements.appInput).focus(), 30);
+    document.querySelectorAll('.app-header, #databaseWorkspace, .db-skip').forEach(element => { element.inert = true; });
+    window.setTimeout(() => {
+      if (!elements.modal.hidden) (app ? elements.appName : elements.appInput).focus();
+    }, 30);
   }
 
   function closeModal(force = false) {
     if (elements.saveButton.disabled && !force) return;
+    const wasOpen = !elements.modal.hidden;
     elements.modal.hidden = true;
     document.body.style.overflow = "";
+    document.querySelectorAll('.app-header, #databaseWorkspace, .db-skip').forEach(element => { element.inert = false; });
     state.editingApp = null;
+    if (wasOpen) (state.modalTrigger?.isConnected ? state.modalTrigger : elements.addButton).focus({ preventScroll: true });
+    state.modalTrigger = null;
   }
 
   async function saveApp(event) {
@@ -528,6 +542,7 @@
     if (action === "details") {
       state.expandedRow = state.expandedRow === app.row_index ? null : app.row_index;
       render();
+      elements.tableBody.querySelector(`tr[data-row-index="${app.row_index}"] [data-action="details"]`)?.focus({ preventScroll: true });
     }
     if (action === "toggle") toggleApp(app, actionElement);
   }
@@ -559,7 +574,15 @@
       });
     }
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !elements.modal.hidden) closeModal();
+      if (elements.modal.hidden) return;
+      if (event.key === "Escape") { event.preventDefault(); closeModal(); }
+      if (event.key === "Tab") {
+        const focusable = [...elements.modal.querySelectorAll('button, input, select, textarea, a[href], [tabindex]')]
+          .filter(element => !element.disabled && element.tabIndex >= 0 && element.getClientRects().length);
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+      }
     });
   }
 

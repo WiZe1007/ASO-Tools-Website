@@ -1,0 +1,11 @@
+<div class="wwa-background-media" data-background-media aria-hidden="true">
+  <picture>
+    <source media="(max-width: 600px) and (orientation: portrait)" srcset="{{ url_for('static', filename='video/mountain-mist-mobile.webp', v='20260908-loop1') }}">
+    <img src="{{ url_for('static', filename='video/mountain-mist-poster.webp', v='20260908-loop1') }}" width="1600" height="900" alt="" fetchpriority="high" decoding="async">
+  </picture>
+  <video data-background-video
+    data-desktop-src="{{ url_for('static', filename='video/mountain-mist-desktop.mp4', v='20260908-loop1') }}"
+    data-mobile-src="{{ url_for('static', filename='video/mountain-mist-mobile.mp4', v='20260908-loop1') }}"
+    width="1600" height="900" muted loop playsinline preload="none" tabindex="-1" disablepictureinpicture disableremoteplayback></video>
+</div>
+<script src="{{ url_for('static', filename='js/background-video.js', v='20260908-steady-scene1') }}" defer></script>

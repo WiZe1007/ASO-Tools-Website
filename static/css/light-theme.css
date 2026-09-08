@@ -1,0 +1,125 @@
+/* Local contrast corrections; the existing transparent glass palette stays intact. */
+html[data-theme="light"] {
+  --wwa-text: #f4f7fc;
+  --wwa-muted: #cbd4e1;
+  --wwa-faint: #bac6d7;
+  --wwa-positive: #b5edd1;
+  --wwa-danger: #ffbac5;
+  --wwa-readable-link: #a8d3ff;
+  --wwa-readable-warning: #f6d89a;
+  --wwa-light-ink: #17263a;
+  --wwa-light-muted-ink: #34445b;
+}
+
+/* Legacy light-theme rules set dark ink directly on these result descendants.
+   Reset the text roles here, without changing the glass behind them. */
+html[data-theme="light"] body#wwa-app[data-page] :is(
+  .metric-mono, .tbl-country, .tg-rank, .table-toolbar-title,
+  .gl-chip b, .gl-hint b, .pill b, .dl-title,
+  .publisher-link, .publisher-name, .app-meta b, .hero-country b,
+  .detail-row b, .description, .description-short, .bundle
+) {
+  color: var(--wwa-text) !important;
+}
+html[data-theme="light"] body#wwa-app[data-page] :is(
+  #statusText, .table-count, .quick-filter-label span, .note-muted,
+  .sort-ind, .dl-info, .app-meta, .hero-country, .publisher-sub,
+  .detail-row, .description-label, .summary-text, .indexing-top-apps,
+  .result-head span
+) {
+  color: var(--wwa-muted) !important;
+}
+/* Free-standing status text sits on smoked glass. Rating/status badges below
+   keep darker ink because their existing fill is pale. */
+html[data-theme="light"] body#wwa-app[data-page] :is(
+  .note-err, .note-below, .geo-chip, .pill.error, .indexing-pill.err,
+  .status-line.error, .metric-danger .metric-v
+) {
+  color: var(--wwa-danger) !important;
+}
+html[data-theme="light"] body#wwa-app[data-page] :is(
+  .note-ok, .status-done, .geo-empty, .pill.live, .copy-btn.copied,
+  .metric-ok .metric-v
+) {
+  color: var(--wwa-positive) !important;
+}
+html[data-theme="light"] body#wwa-app[data-page] :is(.note-warn, .pill.watch) {
+  color: var(--wwa-readable-warning) !important;
+}
+html[data-theme="light"] body#wwa-app[data-page] .am-note b:first-of-type {
+  color: var(--wwa-positive) !important;
+}
+html[data-theme="light"] body#wwa-app[data-page] .am-note b:nth-of-type(2) {
+  color: var(--wwa-danger) !important;
+}
+html[data-theme="light"] body#wwa-app[data-page] :is(
+  a.indexing-open-link, .publisher-link:hover, .publisher-link:focus-visible
+) {
+  color: var(--wwa-readable-link) !important;
+}
+
+/* Existing pale pills, mini cards and saturated blue action buttons need
+   inverse ink, not the light text used by transparent panels. */
+html[data-theme="light"] body#wwa-app[data-page] :is(
+  .am-period, .dl-total-chip, .dl-total-chip b, .am-auth-code code,
+  .am-hosted-note code, .meta b, .indexing-metric b,
+  .am-auth-title, .am-hosted-title, .loading-popover,
+  .am-auth-card .am-badge, .am-auth-card .input,
+  .run-btn, .indexing-btn, .search-panel .btn, .refresh-btn
+) {
+  color: var(--wwa-light-ink) !important;
+  text-shadow: none !important;
+}
+html[data-theme="light"] body#wwa-app[data-page] :is(
+  .meta span, .indexing-metric span, .publisher-stat span,
+  .publisher-stat small, .publisher-app-text small, .publisher-badge,
+  .publisher-app-icon.placeholder, .locked-card span, .loading-text,
+  .am-auth-body p, .am-auth-note, .am-auth-actions span, .am-auth-alt,
+  .am-hosted-note p
+) {
+  color: var(--wwa-light-muted-ink) !important;
+}
+html[data-theme="light"] body#wwa-app[data-page] .am-auth-card .input::placeholder {
+  color: var(--wwa-light-muted-ink) !important;
+  opacity: 1;
+}
+html[data-theme="light"] body#wwa-app[data-page] :is(
+  .star-chip.ok, .gc-rating.ok, .status-chip.open, .publisher-badge.active
+) {
+  color: #145c40 !important;
+}
+html[data-theme="light"] body#wwa-app[data-page] :is(
+  .star-chip.below, .gc-rating.below, .status-chip.closed
+) {
+  color: #932936 !important;
+}
+html[data-theme="light"] body#wwa-app[data-page] .status-chip.unknown {
+  color: #68470d !important;
+}
+
+html[data-theme="light"] body#wwa-app[data-page] .country-search {
+  color: var(--wwa-text) !important;
+  caret-color: var(--wwa-text);
+  background: var(--wwa-input) !important;
+  border-color: var(--wwa-border) !important;
+  color-scheme: dark;
+}
+html[data-theme="light"] body#wwa-app[data-page] .country-search::placeholder {
+  color: var(--wwa-muted) !important;
+  opacity: 1;
+}
+html[data-theme="light"] body#wwa-app[data-page] .country-search:focus {
+  border-color: var(--wwa-accent) !important;
+}
+html[data-theme="light"] body#wwa-app[data-page] :is(.country-option-code,.country-empty) {
+  color: var(--wwa-muted) !important;
+}
+html[data-theme="light"] body#wwa-app[data-page="overview"] .search-panel .status {
+  color: var(--wwa-muted) !important;
+}
+html[data-theme="light"] body#wwa-app[data-page="overview"] .search-panel .status.ok {
+  color: var(--wwa-positive) !important;
+}
+html[data-theme="light"] body#wwa-app[data-page="overview"] .search-panel .status.err {
+  color: var(--wwa-danger) !important;
+}

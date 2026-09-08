@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="uk" data-theme="dark">
+<html lang="uk" data-theme="light" data-wwa-database="true">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,30 +9,39 @@
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='db/data-base-favicon.png', v='20260804') }}">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='db/data-base-favicon.png', v='20260804') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css', v='20260905a') }}">
+  {% include 'database/appearance.html' %}
 </head>
 <body class="database-page">
-  <div class="page-background" aria-hidden="true"></div>
+  {% include 'database/background.html' %}
+  <a class="db-skip" href="#databaseWorkspace">Перейти до бази</a>
 
   <header class="app-header">
     <a class="brand" href="/" aria-label="WWA Apps Database">
       <img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" alt="">
       <span>
         <strong>WWA Apps Database</strong>
-        <small>Google Play workspace</small>
       </span>
     </a>
 
+    <nav class="database-switcher" id="databaseSwitcher" aria-label="Вибір бази даних">
+      <span class="db-nav-indicator" aria-hidden="true"></span>
+      {% for database in databases %}
+      <button class="database-tab {{ 'is-active' if loop.first else '' }}" type="button" data-database-key="{{ database.key }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">
+        <svg aria-hidden="true"><use href="#icon-database"></use></svg>
+        <span>
+          <strong>{{ database.label }}</strong>
+        </span>
+      </button>
+      {% endfor %}
+    </nav>
+
+
     <div class="header-actions">
-      <span class="connection-state {{ '' if spreadsheet_configured else 'is-warning' }}" id="connectionState">
-        <i></i><span id="connectionStateLabel">{{ "Google Sheets connected" if spreadsheet_configured else "Configuration required" }}</span>
-      </span>
-      <span class="user-email" title="Поточний користувач">{{ current_user_email }}</span>
       {% if can_manage_users %}
       <a class="secondary-button" href="{{ url_for('accounts.users') }}" style="text-decoration:none">Користувачі</a>
       {% endif %}
-      <button class="icon-button" id="themeButton" type="button" title="Змінити тему" aria-label="Змінити тему">
-        <svg aria-hidden="true"><use href="#icon-sun"></use></svg>
-      </button>
+      {% from 'database/controls.html' import controls %}
+      {{ controls() }}
       <form method="post" action="{{ url_for('logout') }}">
         <input type="hidden" name="csrf_token" value="{{ logout_csrf_token }}">
         <button class="icon-button" type="submit" title="Вийти" aria-label="Вийти">
@@ -42,10 +51,9 @@
     </div>
   </header>
 
-  <main class="app-main">
+  <main class="app-main" id="databaseWorkspace" tabindex="-1">
     <section class="hero-row">
       <div>
-        <span class="eyebrow">Company workspace</span>
         <h1 id="databaseTitle">{{ databases[0].title }}</h1>
         <p id="databaseDescription">Додавай Google Play застосунки, призначай відповідальних і контролюй стан перевірок команди {{ databases[0].label }}.</p>
       </div>
@@ -55,19 +63,12 @@
       </button>
     </section>
 
-    {% if databases|length > 1 %}
-    <nav class="database-switcher" id="databaseSwitcher" aria-label="Вибір бази даних">
-      {% for database in databases %}
-      <button class="database-tab {{ 'is-active' if loop.first else '' }}" type="button" data-database-key="{{ database.key }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">
-        <svg aria-hidden="true"><use href="#icon-database"></use></svg>
-        <span>
-          <strong>{{ database.label }}</strong>
-          <small>{{ "Основна база" if database.key == "wwa" else "Друга команда" }}</small>
-        </span>
-      </button>
-      {% endfor %}
-    </nav>
-    {% endif %}
+    <div class="database-meta">
+      <span class="connection-state {{ '' if spreadsheet_configured else 'is-warning' }}" id="connectionState">
+        <i></i><span id="connectionStateLabel">{{ "Google Sheets connected" if spreadsheet_configured else "Configuration required" }}</span>
+      </span>
+      <span class="user-email" title="Поточний користувач">{{ current_user_email }}</span>
+    </div>
 
     <section class="stats-grid" aria-label="Статистика бази">
       <article class="stat-item">
@@ -96,7 +97,7 @@
       <div class="toolbar">
         <label class="search-field">
           <svg aria-hidden="true"><use href="#icon-search"></use></svg>
-          <input id="searchInput" type="search" placeholder="Пошук за назвою, bundle, власником або нотатками" autocomplete="off">
+          <input id="searchInput" type="search" aria-label="Пошук додатків" placeholder="Пошук за назвою, bundle, власником або нотатками" autocomplete="off">
         </label>
         <label class="select-field">
           <span>Статус</span>
@@ -154,6 +155,7 @@
         </div>
       </div>
     </section>
+    <footer class="database-footer">WWA Apps Database</footer>
   </main>
 
   <div class="modal-backdrop" id="appModal" hidden>
@@ -288,6 +290,6 @@
       "databases": databases
     } | tojson }};
   </script>
-  <script src="{{ url_for('static', filename='db/database-site.js', v='20260905a') }}"></script>
+  <script src="{{ url_for('static', filename='db/database-site.js', v='20260908-database-glass1') }}" defer></script>
 </body>
 </html>

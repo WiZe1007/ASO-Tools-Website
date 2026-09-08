@@ -10,6 +10,12 @@ Flask web app for ASO checks:
 - optional App Magic data-countries integration for download shares
 - Telegram Availability monitor backed by Google Sheets
 
+The homepage (`/`) opens the WWA Tools workspace overview; **Почати роботу**
+opens the GEO rating checker at `/rating`. All tools remain available from the
+shared navigation. Tools and Apps Database use the same glass styling, local
+video background, light/dark themes, and animation controls. Appearance settings
+persist between visits, and reduced-motion preferences keep the still background.
+
 ## Local Run
 
 ```bash

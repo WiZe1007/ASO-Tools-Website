@@ -1,0 +1,15 @@
+*{box-sizing:border-box}
+html{min-height:100%}
+body#wwa-app[data-page="auth"]{margin:0;display:grid;grid-template-rows:1fr auto;place-items:center;gap:32px;padding:48px 20px 24px;min-height:100dvh}
+.wwa-auth-panel{width:min(480px,100%);padding:42px;background:var(--wwa-surface);border:1px solid var(--wwa-border);border-radius:28px;backdrop-filter:blur(28px) saturate(1.6);-webkit-backdrop-filter:blur(28px) saturate(1.6);box-shadow:var(--wwa-shadow)}
+.wwa-auth-panel .wwa-brand{padding:0;margin-bottom:34px}
+.wwa-auth-panel h1{font-size:32px;line-height:1.2;font-weight:650;letter-spacing:-1px;margin:0 0 12px}
+.wwa-auth-intro{font-size:14px;line-height:1.7;color:var(--wwa-muted);margin:0 0 28px}
+.wwa-auth-panel form{display:grid;gap:22px}
+.wwa-auth-panel label{display:grid;gap:8px;font-size:13px;font-weight:500}
+body#wwa-app .wwa-auth-panel .input{height:50px!important;min-height:50px!important}
+body#wwa-app .wwa-auth-panel .run-btn{width:100%!important;height:50px!important;margin-top:8px}
+.wwa-auth-note{border-top:1px solid var(--wwa-border);padding-top:24px;margin:28px 0 0;color:var(--wwa-muted);font-size:11px;line-height:1.8;text-align:center}
+.wwa-auth-error{font-size:13px;color:var(--wwa-danger);padding:12px 14px;background:#a8324217;border:1px solid #a832424d;border-radius:8px;margin-bottom:20px}
+.wwa-auth-footer{position:static;text-align:center;font-size:11px;color:var(--wwa-faint)}
+@media(max-width:540px){body#wwa-app[data-page="auth"]{padding:32px 16px 64px}.wwa-auth-panel{padding:28px 24px}.wwa-auth-panel h1{font-size:28px}.wwa-auth-footer{position:static;margin-top:0}}

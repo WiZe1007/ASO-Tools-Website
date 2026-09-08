@@ -1,0 +1,250 @@
+/* Stellar / Skyscape material, reconstructed for the existing WWA tools.
+   Neutral glass, restrained blue light, and thin rims from the supplied screenshots. */
+:root {
+  --wwa-bg: #030406;
+  --wwa-surface: rgba(255,255,255,.045);
+  --wwa-input: rgba(0,0,0,.19);
+  --wwa-hover: rgba(255,255,255,.075);
+  --wwa-border: rgba(255,255,255,.10);
+  --wwa-line: rgba(255,255,255,.08);
+  --wwa-text: #f3f4f7;
+  --wwa-muted: #acb0bd;
+  --wwa-faint: #9398a7;
+  --wwa-accent: #3296ff;
+  --wwa-selected: rgba(92,98,172,.20);
+  --wwa-positive: #a5dac0;
+  --wwa-danger: #ffabb6;
+  --wwa-table: #171b26;
+  --wwa-shadow: none;
+  --wwa-field-shadow: none;
+  --wwa-primary: #3296ff;
+  --glass-shell: linear-gradient(145deg,rgba(164,178,200,.21),rgba(34,37,51,.30) 50%,rgba(7,9,15,.56));
+  --glass-edge: rgba(255,255,255,.13);
+  --glass-inner: linear-gradient(125deg,rgba(255,255,255,.035),rgba(0,0,0,.18));
+  --glass-drawer: rgba(21,23,32,.94);
+  --dock-bg: rgba(3,4,6,.80);
+  --dock-ink: #d5d7df;
+  --dock-active: #fff;
+  --dock-pill: rgba(255,255,255,.05);
+  --dock-spring: cubic-bezier(.2,.8,.2,1);
+  color-scheme: dark;
+}
+html[data-theme="light"] { color-scheme: dark; }
+/* Both appearances keep the reference's black canvas; dark mode dims its glass. */
+html[data-theme="dark"] {
+  --wwa-bg: #010203;
+  --wwa-surface: rgba(255,255,255,.028);
+  --wwa-input: rgba(0,0,0,.32);
+  --wwa-hover: rgba(255,255,255,.06);
+  --wwa-border: rgba(255,255,255,.075);
+  --wwa-line: rgba(255,255,255,.06);
+  --wwa-text: #f1f2f6;
+  --wwa-muted: #a2a7b5;
+  --wwa-faint: #9096a5;
+  --wwa-accent: #3296ff;
+  --wwa-selected: rgba(81,87,160,.20);
+  --wwa-positive: #a5dac0;
+  --wwa-danger: #ffabb6;
+  --wwa-table: #10131b;
+  --wwa-shadow: none;
+  --wwa-field-shadow: none;
+  --wwa-primary: #3296ff;
+  --glass-shell: linear-gradient(145deg,rgba(143,154,174,.13),rgba(22,26,36,.22) 50%,rgba(1,3,8,.64));
+  --glass-edge: rgba(255,255,255,.10);
+  --glass-inner: linear-gradient(125deg,rgba(255,255,255,.022),rgba(0,0,0,.26));
+  --glass-drawer: rgba(10,13,20,.96);
+  --dock-bg: rgba(1,2,3,.85);
+  --dock-pill: rgba(255,255,255,.04);
+  color-scheme: dark;
+}
+html body#wwa-app[data-page]:not([data-page="auth"]) { display: flow-root; }
+/* Soft pools of light supply depth through the glass; no image is displayed. */
+.liquid-scene { position: fixed; inset: 0; height: auto; border-radius: 0; background: var(--wwa-bg); }
+.liquid-scene__wallpaper {
+  background: radial-gradient(ellipse 680px 640px at 7% 24%,rgba(62,111,165,.27),transparent 74%),
+    radial-gradient(ellipse 610px 580px at 20% 78%,rgba(77,35,165,.23),transparent 76%),
+    radial-gradient(ellipse 580px 400px at 78% 12%,rgba(51,68,112,.09),transparent 80%);
+  filter: none; opacity: 1;
+}
+html[data-theme="dark"] .liquid-scene__wallpaper { filter: none; opacity: .68; }
+.liquid-scene::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg,transparent 65%,var(--wwa-bg)); pointer-events: none; }
+/* Slim, straight navigation follows the reference's quiet black top bar. */
+.wwa-topbar {
+  position: sticky; top: 0; width: calc(100% - 48px); max-width: 1000px; min-height: 58px;
+  margin: 0 auto 36px; padding: 8px 0; gap: 28px; border: 0; border-bottom: 1px solid var(--wwa-line); border-radius: 0;
+  background: var(--dock-bg); box-shadow: none; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  view-transition-name: liquid-navigation;
+}
+.wwa-topbar::before { display: none; }
+.wwa-brand { gap: 8px; }
+.wwa-brand strong { font-size: 16px; font-weight: 600; letter-spacing: -.5px; }
+.wwa-brand img { width: 28px; height: 28px; border-radius: 6px; box-shadow: none; }
+.wwa-topbar .wwa-brand { display: flex; align-items: center; width: auto; height: 36px; border-radius: 0; background: none; border: 0 !important; }
+.wwa-topbar .wwa-brand strong { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
+.wwa-topbar .wwa-brand img,.wwa-topbar .wwa-brand>svg { width: 28px; height: 28px; border-radius: 6px; }
+.wwa-dock { position: relative; display: flex; align-items: center; flex: 1; min-width: 0; gap: 10px; margin-left: auto; padding: 0; border: 0; background: transparent; box-shadow: none; view-transition-name: none; }
+.wwa-navigation { gap: 3px; flex: 1; z-index: 3; }
+html body#wwa-app[data-page] .wwa-navigation .wwa-nav-link {
+  height: 40px; min-height: 40px; padding: 0 12px; gap: 8px; border: 0 !important; border-radius: 7px !important;
+  color: var(--dock-ink) !important; font-size: 12px !important; font-weight: 400;
+}
+.wwa-navigation .wwa-nav-link svg { display: none; }
+html body#wwa-app[data-page] .wwa-navigation .wwa-nav-link:is(:hover,:focus-visible,[aria-current="page"]) { color: var(--dock-active) !important; }
+html body#wwa-app[data-page] .wwa-navigation .wwa-nav-link[aria-current="page"] { background: var(--dock-pill) !important; box-shadow: none !important; }
+html body#wwa-app[data-page] .wwa-navigation.has-liquid-indicator .wwa-nav-link[aria-current="page"] { background: transparent !important; }
+html body#wwa-app[data-page] .wwa-navigation.has-liquid-indicator .wwa-nav-link:hover:not([aria-current="page"]) { background: rgba(255,255,255,.035) !important; }
+.wwa-navigation>.liquid-indicator { height: 40px; border: 1px solid rgba(255,255,255,.05); border-radius: 7px; background: var(--dock-pill); box-shadow: none; transition: transform 280ms var(--dock-spring),width 280ms var(--dock-spring); }
+.wwa-dock-divider { width: 1px; height: 22px; flex: 0 0 1px; background: var(--wwa-line); }
+.wwa-dock .wwa-utilities { gap: 5px; margin: 0; z-index: 3; }
+html body#wwa-app[data-page] .wwa-dock :is(.wwa-utility,.wwa-menu) {
+  width: 40px !important; min-width: 40px !important; height: 40px !important; min-height: 40px !important; border-radius: 8px !important;
+  color: var(--dock-ink) !important; background: rgba(255,255,255,.035) !important; box-shadow: none !important; border: 0 !important; z-index: 3;
+}
+html body#wwa-app[data-page] .wwa-dock :is(.wwa-utility,.wwa-menu):hover { color: #fff !important; background: var(--wwa-hover) !important; transform: none; }
+.wwa-theme-icons { position: relative; display: block; width: 20px; height: 20px; flex: 0 0 20px; }
+.wwa-theme-icons svg { position: absolute; inset: 0; transition: transform 300ms var(--dock-spring),opacity 250ms ease; }
+.wwa-theme-icons svg:first-child { opacity: 1; transform: rotate(0) scale(1); }
+.wwa-theme-icons svg:last-child { opacity: 0; transform: rotate(-45deg) scale(.8); }
+html[data-theme="dark"] .wwa-theme-icons svg:first-child { opacity: 0; transform: rotate(45deg) scale(.8); }
+html[data-theme="dark"] .wwa-theme-icons svg:last-child { opacity: 1; transform: rotate(0) scale(1); }
+html body#wwa-app[data-page] [data-theme-toggle]:hover svg { rotate: none; scale: none; }
+/* A large glass frame contains flatter 12px panels, as in the Skyscape example. */
+html body#wwa-app[data-page] :is(.wrap,.indexing-wrap) {
+  width: calc(100% - 64px) !important; max-width: 1120px !important; padding: 28px !important; margin: 0 auto 32px !important;
+  border: 1px solid var(--glass-edge); border-radius: 22px; background: var(--glass-shell);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: 0 24px 70px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.055);
+}
+html body#wwa-app[data-page] :is(.header,.hero,.indexing-header) { padding: 0 !important; margin: 0 0 28px !important; text-align: left; }
+html body#wwa-app[data-page] :is(.title,.indexing-title) { font-size: 30px !important; font-weight: 500 !important; letter-spacing: -.8px !important; line-height: 1.2 !important; text-shadow: none !important; }
+html body#wwa-app[data-page] :is(.subtitle,.indexing-subtitle) { max-width: 850px !important; margin: 10px 0 0 !important; color: var(--wwa-muted) !important; font-size: 14px !important; line-height: 1.6 !important; }
+/* Thin rims and a slight light falloff, with no refraction or specular overlays. */
+html body#wwa-app[data-page] :is(.card,.panel,.indexing-panel,.wwa-empty,.table-wrap,.appmagic-widget,.gl-result,.wwa-auth-panel) {
+  position: relative; isolation: isolate; border: 1px solid var(--glass-edge) !important; border-radius: 12px !important;
+  background: var(--glass-inner) !important; box-shadow: inset 0 1px 0 rgba(255,255,255,.025) !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+  color: var(--wwa-text) !important; text-shadow: none;
+}
+html body#wwa-app[data-page] .wwa-auth-panel { background: var(--glass-shell) !important; backdrop-filter: blur(16px) !important; -webkit-backdrop-filter: blur(16px) !important; }
+html body#wwa-app[data-page] :is(.card,.panel,.indexing-panel,.wwa-empty,.table-wrap,.appmagic-widget,.gl-result,.wwa-auth-panel)::before,
+html body#wwa-app[data-page] :is(.card,.panel,.indexing-panel,.wwa-empty,.table-wrap,.appmagic-widget,.gl-result,.wwa-auth-panel)::after { content: none !important; display: none !important; }
+.wwa-panel-heading { padding: 24px 24px 0; }
+.wwa-panel-heading h2,.wwa-empty-heading h2 { font-size: 20px; font-weight: 500; letter-spacing: -.4px; }
+.wwa-panel-heading>span { font-size: 11px; color: var(--wwa-faint); }
+html body#wwa-app[data-page] .card-body { padding: 22px 24px 24px !important; }
+html body#wwa-app[data-page] :is(.input,.indexing-input,.indexing-select,.indexing-textarea,.country-toggle) { border-radius: 10px !important; box-shadow: none !important; }
+html body#wwa-app[data-page] :is(.input,.indexing-input,.indexing-select,.indexing-textarea):focus { border-color: rgba(50,150,255,.60) !important; box-shadow: 0 0 0 3px #3296ff12 !important; }
+html body#wwa-app[data-page] .mode-box { border-radius: 10px !important; box-shadow: none !important; }
+html body#wwa-app[data-page] .mode-box>.liquid-indicator { border: 1px solid rgba(255,255,255,.065); border-radius: 7px; box-shadow: inset 0 1px 0 rgba(255,255,255,.035); }
+html body#wwa-app[data-page] .mode-item { border-radius: 7px !important; }
+html body#wwa-app[data-page] .mode-item.selected { color: #fff !important; box-shadow: none !important; border-color: transparent !important; text-shadow: none; }
+html body#wwa-app[data-page] :is(.run-btn,.indexing-btn,.search-panel .btn,.refresh-btn) {
+  color: #fff !important; background: var(--wwa-primary) !important; border: 1px solid rgba(97,176,255,.6) !important; border-radius: 9px !important;
+  box-shadow: none !important; text-shadow: none; font-weight: 500 !important;
+}
+html body#wwa-app[data-page] :is(.run-btn,.indexing-btn,.search-panel .btn,.refresh-btn):hover { background: #4da4ff !important; box-shadow: 0 4px 18px rgba(50,150,255,.15) !important; transform: translateY(-1px) !important; }
+html body#wwa-app[data-page] :is(.run-btn,.indexing-btn,.search-panel .btn,.refresh-btn)::after { content: none !important; display: none !important; }
+html body#wwa-app[data-page] .switch-track { background: rgba(255,255,255,.09) !important; box-shadow: none !important; }
+html body#wwa-app[data-page] .switch input:checked+.switch-track { background: #3296ff !important; border-color: rgba(97,176,255,.6) !important; box-shadow: none !important; }
+/* Rating follows the reference's main-pane + supporting-list composition. */
+@media(min-width:1041px) {
+  html body#wwa-app[data-page="rating"] #workspace:has(#wwaEmpty:not([hidden])) { display: grid !important; grid-template-columns: minmax(0,1.8fr) minmax(300px,1fr) !important; gap: 24px; align-items: start; }
+  html body#wwa-app[data-page="rating"] #workspace:has(#wwaEmpty:not([hidden]))>* { grid-column: 1/-1; margin-top: 0 !important; }
+  html body#wwa-app[data-page="rating"] #workspace:has(#wwaEmpty:not([hidden]))>.header { margin-bottom: 4px !important; }
+  html body#wwa-app[data-page="rating"] #workspace:has(#wwaEmpty:not([hidden]))>.wwa-check-panel { grid-column: 1; }
+  html body#wwa-app[data-page="rating"] #workspace:has(#wwaEmpty:not([hidden]))>.wwa-empty { grid-column: 2; }
+  html body#wwa-app[data-page="rating"] .form-row1 { grid-template-columns: 1fr !important; }
+  html body#wwa-app[data-page="rating"] .wwa-empty-heading { display: block; }
+  html body#wwa-app[data-page="rating"] .wwa-empty-heading>span { display: block; margin-top: 5px; }
+}
+html body#wwa-app[data-page] .wwa-empty { margin-top: 24px; }
+.wwa-empty-heading { padding: 22px 24px 18px; border-bottom: 1px solid var(--wwa-line); }
+.wwa-empty-heading>span { font-size: 11px; color: var(--wwa-faint); }
+.wwa-empty-content { text-align: left; padding: 20px 24px; }
+.wwa-empty-content h3 { font-size: 15px; font-weight: 500; line-height: 1.5; }
+.wwa-empty-content p { margin-top: 8px; font-size: 12px; color: var(--wwa-muted); }
+html body#wwa-app[data-page] .wwa-glass-orb { display: none; }
+.wwa-steps { display: block; margin: 0 24px; padding: 0 0 6px; border: 0; }
+.wwa-steps li,.wwa-steps li:first-child,.wwa-steps li:last-child { grid-template-columns: 22px 1fr; column-gap: 12px; padding: 16px 0; border-left: 0; border-top: 1px solid var(--wwa-line); }
+.wwa-steps li>span { width: 22px; height: 24px; background: none; border: 0; box-shadow: none; font-family: inherit; font-size: 11px; font-weight: 400; color: var(--wwa-faint); }
+.wwa-steps h3 { margin: 2px 0 5px; font-size: 13px; font-weight: 500; }
+.wwa-steps p { font-size: 12px; line-height: 1.5; }
+.wwa-footer,.wwa-auth-footer { color: var(--wwa-faint); text-shadow: none; }
+.wwa-footer { padding: 0 2px; margin-top: 24px; }
+html body#wwa-app[data-page] .wwa-drawer { background: var(--wwa-table) !important; border-color: var(--glass-edge) !important; box-shadow: 0 12px 32px rgba(0,0,0,.16) !important; }
+html body#wwa-app[data-page] .wwa-drawer .wwa-nav-link[aria-current="page"] { background: var(--wwa-selected) !important; box-shadow: none !important; }
+@media(max-width:1120px) {
+  .wwa-dock-divider { display: none; }
+  .wwa-dock { gap: 6px; }
+  html body#wwa-app[data-page] .wwa-drawer { top: 68px !important; }
+}
+/* Permission-expanded navigation collapses before its controls can overlap. */
+@media(min-width:1121px) and (max-width:1320px) {
+  .wwa-topbar[data-nav-density="extended"] .wwa-navigation,.wwa-topbar[data-nav-density="extended"] .wwa-dock-divider { display: none; }
+  html body#wwa-app[data-page] .wwa-topbar[data-nav-density="extended"] .wwa-menu { display: inline-flex !important; }
+}
+@media(min-width:1321px) { .wwa-topbar[data-nav-density="extended"] { max-width: 1120px; } }
+@media(min-width:1121px) and (max-width:1220px) {
+  .wwa-topbar:has(.wwa-account-utility) .wwa-navigation,.wwa-topbar:has(.wwa-account-utility) .wwa-dock-divider { display: none; }
+  html body#wwa-app[data-page] .wwa-topbar:has(.wwa-account-utility) .wwa-menu { display: inline-flex !important; }
+}
+@media(max-width:760px) {
+  .wwa-topbar { width: calc(100% - 32px); min-height: 58px; margin: 0 auto 24px; padding: 8px 0; gap: 10px; }
+  .wwa-brand { gap: 8px; }
+  .wwa-brand strong { font-size: 16px; }
+  .wwa-brand img { width: 28px; height: 28px; border-radius: 9px; }
+  .wwa-dock { gap: 3px; }
+  .wwa-dock .wwa-utilities { gap: 3px; }
+  html body#wwa-app[data-page] .wwa-dock :is(.wwa-utility,.wwa-menu) { width: 32px !important; min-width: 32px !important; height: 34px !important; min-height: 34px !important; }
+  html body#wwa-app[data-page] .wwa-drawer { top: 68px !important; }
+  html body#wwa-app[data-page] :is(.wrap,.indexing-wrap) { width: calc(100% - 24px) !important; padding: 20px !important; margin-bottom: 16px !important; }
+  html body#wwa-app[data-page] :is(.header,.hero,.indexing-header) { margin-bottom: 22px !important; }
+  html body#wwa-app[data-page] :is(.title,.indexing-title) { font-size: 29px !important; letter-spacing: -.6px !important; }
+  html body#wwa-app[data-page] :is(.subtitle,.indexing-subtitle) { font-size: 13px !important; }
+  .wwa-panel-heading { padding: 20px 18px 0; }
+  html body#wwa-app[data-page] .card-body { padding: 20px 18px !important; }
+  .wwa-panel-heading h2,.wwa-empty-heading h2 { font-size: 18px; }
+  .wwa-panel-heading>span { font-size: 10px; }
+  .wwa-empty-heading { padding: 20px 18px 16px; }
+  .wwa-empty-content { padding: 20px 18px; }
+  .wwa-steps { margin-inline: 18px; }
+}
+@media(max-width:540px) {
+  html body#wwa-app[data-page] :is(.wrap,.indexing-wrap) { padding: 18px 12px !important; }
+  html body#wwa-app[data-page] :is(.header,.hero,.indexing-header) { padding-inline: 6px !important; }
+  html body#wwa-app[data-page] :is(.title,.indexing-title) { font-size: 27px !important; }
+  html body#wwa-app[data-page] .wwa-panel-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .wwa-empty-heading>span { display: none; }
+  .wwa-footer { padding: 0 6px; }
+}
+@media(max-width:360px) {
+  .wwa-brand strong { font-size: 14px; }
+  .wwa-topbar { padding-inline: 10px; }
+  .wwa-brand img { width: 24px; height: 24px; }
+  html body#wwa-app[data-page] :is(.title,.indexing-title) { font-size: 25px !important; }
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .wwa-topbar,html body#wwa-app[data-page] :is(.wrap,.indexing-wrap,.wwa-auth-panel) { background: var(--wwa-table) !important; }
+}
+@media(prefers-reduced-motion:reduce) { .wwa-theme-icons svg { transition: none !important; } }
+
+/* Compact bevelled action and menu, retaining every existing tool route. */
+html body#wwa-app[data-page] .wwa-dock .wwa-menu { display: inline-flex !important; background: transparent !important; margin-left: auto !important; }
+html body#wwa-app[data-page] .wwa-nav-cta { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; min-width: 100px; height: 36px; padding: 0 16px; border-radius: 7px; border: 1px solid rgba(164,184,217,.36); background: linear-gradient(180deg,rgba(122,139,165,.17),rgba(16,19,27,.55)); color: #f7f8fb !important; font-size: 12px; font-weight: 400; text-decoration: none; box-shadow: inset 0 1px 3px rgba(214,226,255,.19),0 0 16px rgba(115,137,202,.10); transition: background 200ms,transform 250ms,box-shadow 250ms; }
+html body#wwa-app[data-page] .wwa-nav-cta:hover { background: linear-gradient(180deg,rgba(148,166,193,.24),rgba(27,33,45,.65)); box-shadow: inset 0 1px 3px rgba(214,226,255,.24),0 0 20px rgba(115,137,202,.15); transform: translateY(-1px); }
+html body#wwa-app[data-page] .wwa-nav-cta:active { transform: scale(.98); }
+html body#wwa-app[data-page] .wwa-drawer { top: 68px !important; max-width: 390px !important; left: auto !important; right: max(24px,calc((100vw - 1000px)/2)) !important; width: calc(100% - 48px) !important; border-radius: 14px !important; background: var(--glass-drawer) !important; backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
+html body#wwa-app[data-page] .wwa-drawer :is(.wwa-nav-link,.wwa-utility) { border-radius: 8px !important; }
+.wwa-mobile-utilities .wwa-theme-icons { flex-shrink: 0; }
+@media(max-width:1120px) { .wwa-dock { justify-content: flex-end; } }
+@media(max-width:760px) {
+  .wwa-topbar { padding: 8px 0; min-height: 58px; gap: 12px; }
+  .wwa-topbar .wwa-brand { width: auto; height: 36px; }
+  .wwa-topbar .wwa-brand img,.wwa-topbar .wwa-brand>svg { width: 24px; height: 24px; }
+  .wwa-topbar .wwa-brand strong { font-size: 15px; }
+  .wwa-dock { gap: 4px; }
+  html body#wwa-app[data-page] .wwa-nav-cta { min-width: 92px; height: 34px; padding-inline: 12px; font-size: 11px; }
+  html body#wwa-app[data-page] .wwa-drawer { top: 68px !important; right: 12px !important; width: calc(100% - 24px) !important; }
+}
+/* Real result components share the reference's tighter geometry. */
+html body#wwa-app[data-page] :is(.metric,.geo-card,.stat,.overview-hero,.overview-card,.section,.app-card,.indexing-stat) { border-radius: 12px !important; box-shadow: inset 0 1px 0 rgba(255,255,255,.02) !important; }
+html body#wwa-app[data-page] :is(.contact-modal__panel,#asoToast) { border-radius: 16px !important; }
+html body#wwa-app[data-page] .wwa-auth-panel { border-radius: 22px !important; }

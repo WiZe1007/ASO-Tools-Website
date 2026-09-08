@@ -1,0 +1,12 @@
+{% from 'shared/icons.html' import icon %}
+<main class="wwa-home-hero" id="home" data-alpine-motion aria-labelledby="wwaHomeTitle" tabindex="-1">
+  <div class="alpine-backdrop" aria-hidden="true">{% include 'shared/background_media.html' %}</div>
+  <div class="wwa-home-content">
+    <h1 class="wwa-home-title" id="wwaHomeTitle"><span class="alpine-title-word" style="--word-index:0">Інструменти</span> <span class="alpine-title-word" style="--word-index:1">для</span><br><span class="alpine-title-word" style="--word-index:2">аналізу</span> <span class="alpine-title-word" style="--word-index:3">додатків</span></h1>
+    <div class="wwa-home-bottom">
+      <p>Рейтинги, доступність та видимість додатків</p>
+      <a class="wwa-hero-cta" href="{{ url_for('rating_page') }}">Почати роботу {{ icon('arrow',18) }}</a>
+    </div>
+  </div>
+  <div class="wwa-home-signature" aria-hidden="true"><span>WWA TOOLS</span></div>
+</main>

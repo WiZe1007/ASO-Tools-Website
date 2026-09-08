@@ -1,0 +1,105 @@
+/* Alpine refinement: original user photograph, native glass and restrained motion. */
+:root { --alpine-ink: #f7f9ff; --alpine-muted: #d5dfec; --alpine-ease: cubic-bezier(.16,1,.3,1); }
+html body#wwa-app[data-page="home"] { background: #080f1c !important; }
+html body#wwa-app[data-page="home"]>.wwa-topbar {
+  position: fixed; z-index: 1000; top: 24px; left: 50%; transform: translateX(-50%);
+  width: calc(100% - 80px); max-width: 880px; height: 64px; min-height: 64px;
+  padding: 9px 16px; gap: 28px; margin: 0; border: 1px solid #ffffff3b; border-radius: 24px;
+  background: linear-gradient(115deg,#bacde12b,#b9d0ed12); backdrop-filter: blur(22px) saturate(135%);
+  -webkit-backdrop-filter: blur(22px) saturate(135%); box-shadow: inset 0 1px 0 #ffffff25,0 10px 35px #08111f14;
+  transition: background 400ms,box-shadow 400ms,border-color 400ms;
+}
+html body#wwa-app[data-page="home"][data-alpine-scrolled="true"]>.wwa-topbar {
+  background: linear-gradient(120deg,#23344ddb,#111d31d9); border-color: #bacdeb38; box-shadow: 0 8px 35px #03091838,inset 0 1px 0 #ffffff14;
+}
+html body#wwa-app[data-page="home"]>.wwa-topbar::after { display: none; }
+html body#wwa-app[data-page="home"] .wwa-topbar .wwa-brand { gap: 11px; }
+html body#wwa-app[data-page="home"] .wwa-topbar .wwa-brand strong { font-size: 16px; letter-spacing: -.5px; color: #fff; }
+html body#wwa-app[data-page="home"] .wwa-topbar .wwa-brand img { width: 30px; height: 30px; border-radius: 9px; box-shadow: 0 3px 12px #05112438,inset 0 1px 0 #fff5; }
+html body#wwa-app[data-page="home"] .wwa-navigation { justify-content: center; gap: 6px; }
+html body#wwa-app[data-page="home"] .wwa-navigation .wwa-nav-link { height: 38px; min-height: 38px; padding-inline: 14px; font-size: 13px !important; color: #f0f5ff !important; border-radius: 13px !important; transition: background 220ms,color 220ms; }
+html body#wwa-app[data-page="home"] .wwa-navigation .wwa-nav-link:hover { background: #e6f1ff19 !important; }
+html body#wwa-app[data-page="home"] .wwa-navigation>.liquid-indicator { height: 38px; border-radius: 13px; background: #e0efff1f; border: 1px solid #e2efff26; box-shadow: inset 0 1px 0 #fff2; transition: transform 420ms var(--alpine-ease),width 420ms var(--alpine-ease),opacity 180ms; }
+
+/* Consistent mountain atmosphere on every independent tool page. */
+html body#wwa-app[data-page]:not([data-page="home"])>.wwa-topbar { top: 16px; margin: 16px auto 32px; padding: 10px 18px; width: calc(100% - 48px); max-width: 1080px; min-height: 64px; border: 1px solid #dcecff38; border-radius: 21px; background: linear-gradient(115deg,#6384aa47,#16273d9c); box-shadow: inset 0 1px 0 #ffffff17,0 8px 32px #04112724; backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); }
+.liquid-scene__wallpaper { background: #102034; }
+.liquid-scene__wallpaper::after { content: ''; position: absolute; inset: 0; background: linear-gradient(110deg,#09162b9e,#0a1325c9); pointer-events: none; }
+.wwa-background-media { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.wwa-background-media :is(img,video) { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%; }
+.wwa-background-media video { opacity: 0; transition: opacity 800ms ease; }
+.wwa-background-media[data-video-ready="true"] video { opacity: 1; }
+.wwa-background-media[data-video-resumed="true"] video { transition: none; }
+@media(prefers-reduced-motion:reduce) { .wwa-background-media video { transition: none; } }
+
+/* Every destination and utility is directly available in the header. */
+html body#wwa-app[data-page]>.wwa-topbar.wwa-full-nav {
+  display: grid; grid-template-columns: auto minmax(0,1fr) auto;
+  align-items: center; column-gap: 18px; row-gap: 8px;
+  width: calc(100% - 48px); max-width: 1240px; height: auto; min-height: 64px;
+  padding: 10px 16px;
+}
+html body#wwa-app[data-page] .wwa-full-nav .wwa-dock { display: contents; }
+html body#wwa-app[data-page] .wwa-full-nav .wwa-navigation {
+  display: flex !important; flex-wrap: wrap; justify-content: center; gap: 3px;
+  min-width: 0; width: auto; overflow: visible;
+}
+html body#wwa-app[data-page] .wwa-full-nav .wwa-navigation .wwa-nav-link {
+  display: inline-flex; height: 38px; min-height: 38px; padding: 0 11px;
+  font-size: 12px !important; white-space: nowrap; border-radius: 12px !important;
+}
+html body#wwa-app[data-page] .wwa-full-nav .wwa-navigation>.liquid-indicator {
+  top: 0; height: 38px; border-radius: 12px;
+  transform: translate3d(var(--indicator-x,0px),var(--indicator-y,0px),0);
+  view-transition-name: wwa-nav-highlight;
+  border: 1px solid #e5f2ff26; background: linear-gradient(135deg,#e6f4ff25,#c0ddff10);
+  box-shadow: inset 0 1px 0 #ffffff22,0 3px 12px #071b2b12;
+  transition: transform 500ms cubic-bezier(.22,1,.36,1),width 500ms cubic-bezier(.22,1,.36,1),opacity 220ms ease;
+}
+html body#wwa-app[data-page] .wwa-full-nav .wwa-utilities {
+  display: flex !important; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+  gap: 4px; margin: 0; padding: 0; border: 0;
+}
+html body#wwa-app[data-page] .wwa-full-nav .wwa-utilities .wwa-utility {
+  display: inline-flex !important; align-items: center; justify-content: center;
+  width: 36px !important; min-width: 36px !important; height: 36px !important;
+  min-height: 36px !important; padding: 0 !important; border-radius: 11px !important;
+  color: #edf4ff !important; background: #d0e4ff12 !important;
+}
+html body#wwa-app[data-page] .wwa-full-nav .wwa-utilities .wwa-utility:hover,
+html body#wwa-app[data-page] .wwa-full-nav .wwa-utilities .wwa-utility:focus-visible { background: #d0e4ff26 !important; }
+html body#wwa-app[data-page] .wwa-full-nav .wwa-utilities .wwa-logout { display: flex !important; width: auto; margin: 0; }
+html body#wwa-app[data-page]:not([data-page="home"]) #workspace { scroll-margin-top: calc(var(--wwa-header-height,64px) + 40px); }
+@media(max-width:1120px) {
+  html body#wwa-app[data-page]>.wwa-topbar.wwa-full-nav { grid-template-columns: minmax(0,1fr) auto; gap: 8px 12px; }
+  html body#wwa-app[data-page] .wwa-full-nav .wwa-brand { grid-area: 1 / 1; }
+  html body#wwa-app[data-page] .wwa-full-nav .wwa-utilities { grid-area: 1 / 2; }
+  html body#wwa-app[data-page] .wwa-full-nav .wwa-navigation { grid-area: 2 / 1 / 3 / -1; justify-content: space-evenly; border-top: 1px solid #d0e4ff22; padding-top: 7px; }
+}
+@media(max-width:600px) {
+  html body#wwa-app[data-page]>.wwa-topbar.wwa-full-nav { top: 12px; width: calc(100% - 24px); grid-template-columns: minmax(0,1fr); padding: 10px; gap: 7px 8px; border-radius: 20px; }
+  html body#wwa-app[data-page] .wwa-full-nav .wwa-brand { grid-area: 1 / 1; }
+  html body#wwa-app[data-page] .wwa-full-nav .wwa-navigation { display: grid !important; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 3px; grid-area: 2 / 1 / 3 / -1; }
+  html body#wwa-app[data-page] .wwa-full-nav .wwa-navigation .wwa-nav-link { width: 100%; min-width: 0; height: 35px; min-height: 35px; padding: 0 5px; justify-content: center; font-size: 11px !important; }
+  html body#wwa-app[data-page] .wwa-full-nav .wwa-navigation>.liquid-indicator { height: 35px; }
+  html body#wwa-app[data-page] .wwa-full-nav .wwa-utilities { grid-area: 3 / 1 / 4 / -1; justify-content: center; gap: 5px; padding-top: 7px; border-top: 1px solid #d0e4ff22; }
+  html body#wwa-app[data-page] .wwa-full-nav .wwa-utilities .wwa-utility { width: auto !important; min-width: 34px !important; height: 34px !important; min-height: 34px !important; gap: 6px; padding: 0 8px !important; }
+  html body#wwa-app[data-page] .wwa-full-nav .wwa-utilities .wwa-utility>.wwa-utility-caption { position: static; width: auto; height: auto; clip-path: none; overflow: visible; font-size: 10px; }
+  html body#wwa-app[data-page] .wwa-full-nav .wwa-utilities .wwa-utility>svg { width: 15px; height: 15px; }
+}
+
+/* Splash is painted between the photograph and the interface, never above controls. */
+.wwa-splash-canvas { position: fixed; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; opacity: .3; mix-blend-mode: screen; }
+.wwa-home-hero>.wwa-splash-canvas { z-index: 1; }
+.wwa-home-hero>:is(.wwa-home-content,.wwa-home-signature) { z-index: 2; }
+.liquid-scene>.wwa-splash-canvas { z-index: 1; opacity: .18; }
+.wwa-splash-canvas[data-state="unavailable"],html:not([data-motion="playing"]) .wwa-splash-canvas { visibility: hidden; }
+@media(prefers-reduced-motion:reduce) { .wwa-splash-canvas { display: none; } }
+
+/* One glass highlight owns hover and selection; labels do not paint competing pills. */
+html body#wwa-app[data-page] .wwa-full-nav .wwa-navigation.has-liquid-indicator .wwa-nav-link:is(:hover,:focus-visible,[aria-current="page"]) { background: transparent !important; box-shadow: none !important; border-color: transparent !important; }
+html body#wwa-app[data-page] .wwa-full-nav .wwa-navigation .wwa-nav-link { transition: color 260ms ease !important; }
+/* The supplied footage provides background movement without an additional CSS drift. */
+.liquid-scene__wallpaper { animation: none; will-change: auto; }
+
+html body#wwa-app[data-page] .wwa-full-nav .wwa-navigation>[data-nav-indicator][data-visible="false"] { view-transition-name: none; }

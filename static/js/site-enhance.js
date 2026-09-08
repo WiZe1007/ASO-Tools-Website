@@ -12,14 +12,18 @@
   const byId = (id) => document.getElementById(id);
   const qs = (selector, root = document) => root.querySelector(selector);
   const qsa = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+  const safeStorage = {
+    get(key) { try { return window.localStorage.getItem(key); } catch (_) { return null; } },
+    set(key, value) { try { window.localStorage.setItem(key, value); } catch (_) {} },
+  };
   const THEME_STORAGE_KEY = "wwa.aso.tools.theme";
 
   function storedTheme() {
     try {
       const value = window.localStorage.getItem(THEME_STORAGE_KEY);
-      return value === "light" ? "light" : "dark";
+      return value === "dark" ? "dark" : "light";
     } catch (_) {
-      return "dark";
+      return "light";
     }
   }
 
@@ -41,8 +45,10 @@
       document.body.classList.toggle("theme-dark", !isLight);
     }
 
-    qsa(".theme-toggle").forEach((button) => {
-      button.textContent = isLight ? "☾" : "☼";
+    qsa("[data-theme-toggle]").forEach((button) => {
+      const label = button.querySelector("[data-theme-label]");
+      if (label) label.textContent = isLight ? "Темна тема" : "Світла тема";
+      else button.textContent = isLight ? "☾" : "☼";
       button.setAttribute("aria-label", isLight ? "Switch to dark theme" : "Switch to light theme");
       button.setAttribute("title", isLight ? "Dark theme" : "Light theme");
       button.setAttribute("aria-pressed", String(isLight));
@@ -53,13 +59,15 @@
 
   function installThemeToggle() {
     applyTheme(storedTheme());
-    qsa(".theme-toggle").forEach((button) => {
+    qsa("[data-theme-toggle]").forEach((button) => {
       if (button.dataset.themeReady === "1") return;
       button.dataset.themeReady = "1";
       button.addEventListener("click", () => {
         const nextTheme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
         saveTheme(nextTheme);
-        applyTheme(nextTheme);
+        const update = () => applyTheme(nextTheme);
+        if (window.wwaMotion) window.wwaMotion.changeTheme(update, button);
+        else update();
       });
     });
   }
@@ -98,6 +106,11 @@
 
     const openModal = () => {
       lastActiveElement = document.activeElement;
+      const drawer = byId("drawer");
+      if (drawer?.contains(lastActiveElement)) {
+        drawer.style.display = "none";
+        lastActiveElement = byId("hamb");
+      }
       modal.hidden = false;
       document.body.classList.add("contact-modal-open");
       qs(".contact-modal__close", modal)?.focus({ preventScroll: true });
@@ -120,7 +133,15 @@
 
     closeButtons.forEach((button) => button.addEventListener("click", closeModal));
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !modal.hidden) closeModal();
+      if (modal.hidden) return;
+      if (event.key === "Escape") closeModal();
+      if (event.key === "Tab") {
+        const focusable = qsa('button, a[href]', modal);
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
     });
   }
 
@@ -208,9 +229,12 @@
       const el = byId(id);
       if (!el) return;
       const key = `${storagePrefix}.${page}.${id}`;
-      const saved = window.localStorage.getItem(key);
-      if (saved !== null && !el.value) el.value = saved;
-      el.addEventListener("input", () => window.localStorage.setItem(key, el.value));
+      const saved = safeStorage.get(key);
+      if (saved !== null && !el.value) {
+        el.value = saved;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      el.addEventListener("input", () => safeStorage.set(key, el.value));
     };
 
     ["url", "threshold", "country"].forEach(persistTextInput);
@@ -219,9 +243,9 @@
       const el = byId(id);
       if (!el) return;
       const key = `${storagePrefix}.${page}.${id}`;
-      const saved = window.localStorage.getItem(key);
+      const saved = safeStorage.get(key);
       if (saved !== null) el.checked = saved === "1";
-      el.addEventListener("change", () => window.localStorage.setItem(key, el.checked ? "1" : "0"));
+      el.addEventListener("change", () => safeStorage.set(key, el.checked ? "1" : "0"));
     });
 
     const modeKey = `${storagePrefix}.${page}.mode`;
@@ -230,7 +254,7 @@
       ["modeFull", "full"],
       ["modeAppMagic", "appmagic"],
     ];
-    const savedMode = window.localStorage.getItem(modeKey);
+    const savedMode = safeStorage.get(modeKey);
     if (savedMode && typeof window.syncModeCheckboxes === "function") {
       window.syncModeCheckboxes(savedMode);
     }
@@ -238,7 +262,7 @@
       const el = byId(id);
       if (!el) return;
       el.addEventListener("change", () => {
-        if (el.checked) window.localStorage.setItem(modeKey, mode);
+        if (el.checked) safeStorage.set(modeKey, mode);
         refreshModeVisualState();
       });
     });
@@ -249,6 +273,8 @@
     qsa(".mode-item").forEach((item) => {
       const input = qs("input", item);
       item.classList.toggle("selected", Boolean(input && input.checked));
+      item.setAttribute("aria-checked", String(Boolean(input && input.checked)));
+      item.tabIndex = input?.checked ? 0 : -1;
     });
   }
 
@@ -266,8 +292,11 @@
 
   function enhanceModeSegments() {
     qsa(".mode-item").forEach((item) => {
-      item.setAttribute("role", "button");
-      item.setAttribute("tabindex", "0");
+      item.setAttribute("role", "radio");
+      const checkbox = qs("input", item);
+      if (checkbox) { checkbox.tabIndex = -1; checkbox.setAttribute("aria-hidden", "true"); }
+      item.closest(".mode-box")?.setAttribute("role", "radiogroup");
+      item.closest(".mode-box")?.setAttribute("aria-label", "Режим перевірки");
 
       const activate = (event) => {
         const input = qs("input", item);
@@ -278,6 +307,15 @@
 
       item.addEventListener("click", activate);
       item.addEventListener("keydown", (event) => {
+        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+          event.preventDefault();
+          const items = qsa(".mode-item", item.parentElement);
+          const direction = ["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1;
+          const next = items[(items.indexOf(item) + direction + items.length) % items.length];
+          next.focus();
+          next.click();
+          return;
+        }
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         activate(event);
@@ -295,18 +333,18 @@
       if (window.getComputedStyle(hamburger).display === "none" && drawer.style.display !== "none") {
         drawer.style.display = "none";
       }
-      const isOpen = window.getComputedStyle(drawer).display !== "none";
+      // A discrete exit transition remains painted after logical closure.
+      const isOpen = drawer.style.display ? drawer.style.display !== "none" : window.getComputedStyle(drawer).display !== "none";
+      drawer.inert = !isOpen;
+      drawer.setAttribute("aria-hidden", String(!isOpen));
+      if (!isOpen && drawer.contains(document.activeElement)) hamburger.focus({ preventScroll: true });
       const wrap = qs(".wrap");
       document.body.classList.toggle("drawer-open", isOpen);
       hamburger.classList.toggle("is-open", isOpen);
       hamburger.setAttribute("aria-expanded", String(isOpen));
       hamburger.setAttribute("aria-label", isOpen ? "Close menu" : "Open menu");
 
-      if (wrap && window.matchMedia("(max-width: 680px)").matches) {
-        wrap.style.paddingTop = isOpen ? `${Math.ceil(drawer.getBoundingClientRect().bottom + 16)}px` : "";
-      } else if (wrap) {
-        wrap.style.paddingTop = "";
-      }
+      if (wrap) wrap.style.paddingTop = "";
     };
 
     const setDrawerOpen = (open) => {
@@ -319,7 +357,7 @@
       hamburger.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        const isOpen = window.getComputedStyle(drawer).display !== "none";
+        const isOpen = drawer.style.display === "block";
         setDrawerOpen(!isOpen);
       });
 
@@ -387,29 +425,6 @@
     applyFilter();
   }
 
-  function enhancePointerFeedback() {
-    const panelSelector = ".card, .appmagic-widget, .table-wrap, .result, .topnav-inner, .phone-frame";
-    qsa(panelSelector).forEach((panel) => {
-      panel.addEventListener("pointermove", (event) => {
-        const rect = panel.getBoundingClientRect();
-        panel.style.setProperty("--mx", `${event.clientX - rect.left}px`);
-        panel.style.setProperty("--my", `${event.clientY - rect.top}px`);
-      });
-    });
-
-    document.addEventListener("pointerdown", (event) => {
-      const target = event.target.closest(".btn, .copy, .navbtn, .am-period, .am-geo, .am-seg, .export-btn");
-      if (!target) return;
-
-      const rect = target.getBoundingClientRect();
-      target.style.setProperty("--rx", `${event.clientX - rect.left}px`);
-      target.style.setProperty("--ry", `${event.clientY - rect.top}px`);
-      target.classList.remove("is-pressing");
-      window.requestAnimationFrame(() => target.classList.add("is-pressing"));
-      window.setTimeout(() => target.classList.remove("is-pressing"), 420);
-    });
-  }
-
   function enhanceExternalLinks() {
     qsa('a[target="_blank"]').forEach((link) => {
       if (!link.rel.includes("noopener")) link.rel = `${link.rel} noopener noreferrer`.trim();
@@ -449,6 +464,29 @@
     });
   }
 
+  function enhanceWorkspace() {
+    const lineIcon = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10 13 4-4m-5 7-1 1a4.2 4.2 0 0 1-6-6l4-4a4.2 4.2 0 0 1 6 0m1 1 1-1a4.2 4.2 0 0 1 6 6l-4 4a4.2 4.2 0 0 1-6 0"/></svg>';
+    qsa(".url-ico").forEach(el => { el.innerHTML = lineIcon; });
+    qsa(".run-ico").forEach(el => {
+      el.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16m-6-6 6 6-6 6"/></svg>';
+    });
+    const empty = byId("wwaEmpty");
+    if (empty) {
+      const update = () => {
+        const hasResults = ["summary", "appmagicWidget", "tableWrap"].map(byId).some(el => el && el.textContent.trim() && getComputedStyle(el).display !== "none");
+        empty.hidden = hasResults;
+        const waiting = document.body.classList.contains("is-loading");
+        qs(".wwa-empty-heading > span", empty).textContent = waiting ? "Перевіряємо країни…" : "Очікуємо на посилання";
+        empty.classList.toggle("wwa-empty--loading", waiting);
+      };
+      ["summary", "appmagicWidget", "tableWrap"].map(byId).filter(Boolean).forEach(el => {
+        new MutationObserver(update).observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "hidden"] });
+      });
+      new MutationObserver(update).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+      update();
+    }
+  }
+
   ready(() => {
     installThemeToggle();
     installContactModal();
@@ -459,9 +497,9 @@
     enhanceRunOnEnter();
     enhanceDrawerState();
     enhanceTableToolbar();
-    enhancePointerFeedback();
     enhanceExternalLinks();
     installTableExport();
+    enhanceWorkspace();
 
     document.body.classList.add("ui-ready");
     document.addEventListener("change", refreshModeVisualState);

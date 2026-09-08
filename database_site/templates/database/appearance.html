@@ -1,0 +1,14 @@
+<style>html,body{background:#030406;color-scheme:dark}</style>
+<script nonce="{{ csp_nonce }}">
+(() => {
+  const root = document.documentElement;
+  const read = key => { try { return localStorage.getItem(key); } catch (_) { return null; } };
+  root.dataset.wwaDatabase = 'true';
+  root.dataset.theme = (read('wwa-db-theme') || read('wwa.aso.tools.theme') || read('wwa-theme')) === 'dark' ? 'dark' : 'light';
+  root.dataset.motion = matchMedia('(prefers-reduced-motion: reduce)').matches || read('wwa.tools.liquid-motion') === 'paused' ? 'paused' : 'playing';
+})();
+</script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/liquid-glass.css', v='20260908-glass-contrast3') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/light-theme.css', v='20260908-readable-results1') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='db/database-glass.css', v='20260908-database-glass1') }}">
+<script src="{{ url_for('static', filename='db/database-appearance.js', v='20260908-database-glass1') }}" defer></script>

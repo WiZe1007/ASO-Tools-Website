@@ -2,8 +2,9 @@
 <html lang="uk">
 <head>
   <meta charset="utf-8" />
+  {% include 'shared/motion_bootstrap.html' %}
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>GEO Rating Checker</title>
+  <title>Rating Checker · WWA Tools</title>
   <link rel="icon" href="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" />
 
   <style>
@@ -956,103 +957,31 @@
       .am-legend{ grid-template-columns:1fr; }
     }
   </style>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260905a') }}" />
-  <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260905a') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/site-enhance.css', v='20260908-still-scene') }}" />
+  <script src="{{ url_for('static', filename='js/site-enhance.js', v='20260908-still-scene') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/wwa-design.css', v='20260908-still-scene') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/liquid-motion.css', v='20260908-smooth-nav3') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/liquid-glass.css', v='20260908-glass-contrast3') }}">
+  <script src="{{ url_for('static', filename='js/liquid-motion.js', v='20260908-smooth-nav3') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/alpine-polish.css', v='20260908-smooth-nav3') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/rating-layout.css', v='20260908-rating-row1') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/light-theme.css', v='20260908-readable-results1') }}">
 </head>
 
-<body data-page="rating">
-  <div class="bg"></div>
-
-  <!-- NEW TOP NAV -->
-  <div class="topnav">
-    <div class="topnav-inner">
-      <a class="brand" href="/" aria-label="Go to Rating page">
-        <img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" alt="WWA" class="logo" />
-        <div class="txt">
-          <p class="name">WWA Tools</p>
-          <p class="tag">Ready • Fast • GEO-driven</p>
-        </div>
-      </a>
-
-      <div class="navlinks" aria-label="Site navigation">
-        <a class="navbtn" data-nav="rating" href="/">
-          <span class="dot"></span> Rating
-        </a>
-        <a class="navbtn" data-nav="availability" href="/availability">
-          <span class="dot"></span> Availability
-        </a>
-        <a class="navbtn" data-nav="geolink" href="/geo-link">
-          <span class="dot"></span> Geo Link
-        </a>
-        <a class="navbtn" data-nav="indexing" href="/indexing">
-          <span class="dot"></span> Indexing
-        </a>
-        <a class="navbtn" data-nav="overview" href="/app-overview">
-          <span class="dot"></span> Overview
-        </a>
-        {% if can_access_wwa_live_db %}
-        <a class="navbtn" data-nav="database" href="/live-apps">
-          <span class="dot"></span> Live DB
-        </a>
-        {% endif %}
-        {% if can_access_s_live_db %}
-        <a class="navbtn" data-nav="s-database" href="/s-live-apps">
-          <span class="dot"></span> S Live DB
-        </a>
-        {% endif %}
-      </div>
-
-      <div class="navright">
-        <div class="chip" title="Service status">
-          <span class="pulse"></span>
-          Live tools
-        </div>
-        {% include 'accounts/nav_link.html' %}
-        <form class="auth-logout" method="post" action="{{ url_for('logout') }}">
-          <input type="hidden" name="csrf_token" value="{{ logout_csrf_token }}">
-          <button class="nav-utility" type="submit" aria-label="Logout" title="{{ current_user_email or 'Logout' }}">↪</button>
-        </form>
-        <button class="nav-utility" type="button" aria-label="Help">?</button>
-        <button class="nav-utility theme-toggle" type="button" aria-label="Switch to light theme" title="Theme">☼</button>
-
-        <button class="hamb" id="hamb" aria-label="Open menu" type="button">
-          <span></span><span></span><span></span>
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Mobile drawer -->
-  <div class="drawer" id="drawer" aria-label="Mobile navigation">
-    <div class="grid">
-      <a class="navbtn" data-nav="rating" href="/"><span class="dot"></span> Rating</a>
-      <a class="navbtn" data-nav="availability" href="/availability"><span class="dot"></span> Availability</a>
-      <a class="navbtn" data-nav="geolink" href="/geo-link"><span class="dot"></span> Geo Link</a>
-      <a class="navbtn" data-nav="indexing" href="/indexing"><span class="dot"></span> Indexing</a>
-      <a class="navbtn" data-nav="overview" href="/app-overview"><span class="dot"></span> Overview</a>
-      {% if can_access_wwa_live_db %}
-      <a class="navbtn" data-nav="database" href="/live-apps"><span class="dot"></span> Live DB</a>
-      {% endif %}
-      {% if can_access_s_live_db %}
-      <a class="navbtn" data-nav="s-database" href="/s-live-apps"><span class="dot"></span> S Live DB</a>
-      {% endif %}
-    </div>
-  </div>
-
-  <div class="wrap">
+<body id="wwa-app" data-page="rating">
+  {% from 'shared/icons.html' import icon %}
+  {% include 'shared/navigation.html' %}
+  <main class="wrap" id="workspace" tabindex="-1">
     <div class="header">
       <div class="header-left">
         <div>
-          <h1 class="title">GEO (ASO) Checker</h1>
-          <p class="subtitle">
-            Вставте посилання на додаток з Google Play або App Store, оберіть поріг рейтингу та режим.
-            Система перевірить рейтинги по країнах і знайде ті, що нижче заданого порогу.
-          </p>
+          <h1 class="title">GEO Rating Checker</h1>
+          <p class="subtitle">Зрозумійте, як оцінюють ваш додаток у різних країнах.</p>
         </div>
       </div>
     </div>
 
-    <div class="card">
+    <div class="card wwa-check-panel">
       <div class="card-body">
         <div class="form2">
           <div class="form-row1">
@@ -1063,7 +992,7 @@
                   <svg viewBox="0 0 24 24" width="18" height="18"><path d="M3 3.5v17a1 1 0 0 0 1.5.87l14.6-8.5a1 1 0 0 0 0-1.74L4.5 2.63A1 1 0 0 0 3 3.5Z" fill="url(#gpg)"/><defs><linearGradient id="gpg" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#00d4ff"/><stop offset=".5" stop-color="#52e36a"/><stop offset="1" stop-color="#ffd166"/></linearGradient></defs></svg>
                 </span>
                 <input id="url" class="input url-input" type="text"
-                  placeholder="https://play.google.com/store/apps/details?id=com.wwa.asotools" />
+                  placeholder="https://play.google.com/store/apps/details?id=..." />
                 <button class="url-clear" id="urlClear" type="button" aria-label="Очистити">
                   <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>
                 </button>
@@ -1071,12 +1000,12 @@
             </label>
 
             <label class="f-thr">
-              <span class="f-label">Поріг (0..5)</span>
-              <input id="threshold" class="input" type="number" step="0.1" min="0" max="5" value="4.0" />
+              <span class="f-label">Поріг рейтингу</span>
+              <div class="wwa-threshold">{{ icon('rating', 18) }}<input id="threshold" class="input" type="number" step="0.1" min="0" max="5" value="4.0" /></div>
             </label>
 
             <div class="f-mode">
-              <span class="f-label">Режим</span>
+              <span class="f-label">Режим перевірки</span>
               <div class="mode-box" title="Вибери один режим">
                 <div class="mode-item">
                   <input type="checkbox" id="modeToolbox" />
@@ -1099,7 +1028,7 @@
 
           <div class="form-row2">
             <div class="f-toggle">
-              <label class="switch">
+              <label class="switch" aria-label="Показувати всі країни">
                 <input id="showAll" type="checkbox" checked />
                 <span class="switch-track"><span class="switch-thumb"></span></span>
               </label>
@@ -1127,6 +1056,8 @@
       </div>
     </div>
 
+    {% include 'shared/empty_results.html' %}
+
     <div id="summary" class="summary"></div>
 
     <div class="appmagic-widget" id="appmagicWidget"></div>
@@ -1153,7 +1084,8 @@
       </div>
     </div>
 
-  </div>
+    {% include 'shared/footer.html' %}
+  </main>
 
 <script nonce="{{ csp_nonce }}">
   const $ = (id) => document.getElementById(id);
@@ -2077,5 +2009,6 @@
     }
   });
 </script>
+<span id="wwaPageReady" hidden></span>
 </body>
 </html>

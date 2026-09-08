@@ -6,10 +6,11 @@
   <title>Доступ до баз даних | {{ site_name }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='db/accounts.css', v='20260831-access') }}">
-  <script src="{{ url_for('static', filename='db/accounts.js', v='20260831-access') }}" defer></script>
+  <script src="{{ url_for('static', filename='db/accounts.js', v='20260908-database-glass1') }}" defer></script>
+  {% include 'database/appearance.html' %}
 </head>
 <body class="database-page accounts-page">
-  <div class="page-background" aria-hidden="true"></div>
+  {% include 'database/background.html' %}
   <header class="app-header">
     <strong>{{ site_name }}</strong>
     <div class="header-actions">

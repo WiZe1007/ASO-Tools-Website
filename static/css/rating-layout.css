@@ -1,0 +1,74 @@
+/* Rating uses a full-width form; colors, glass and motion come from the shared theme. */
+html body#wwa-app[data-page="rating"] #workspace,
+html body#wwa-app[data-page="rating"] #workspace:has(#wwaEmpty:not([hidden])) {
+  display: block !important;
+}
+
+html body#wwa-app[data-page="rating"] #workspace:has(#wwaEmpty:not([hidden]))>.header {
+  margin-bottom: 28px !important;
+}
+
+html body#wwa-app[data-page="rating"] .form-row1 {
+  grid-template-columns: minmax(0,1fr) 128px minmax(330px,.7fr) !important;
+  gap: 18px !important;
+}
+
+html body#wwa-app[data-page="rating"] .f-url {
+  grid-column: auto !important;
+}
+
+html body#wwa-app[data-page="rating"] .form-row2 {
+  flex-direction: row;
+  align-items: center !important;
+  padding-top: 0 !important;
+  border-top: 0;
+}
+
+html body#wwa-app[data-page="rating"] .form-row2 .run-btn {
+  width: 260px !important;
+}
+
+html body#wwa-app[data-page="rating"] #workspace:has(#wwaEmpty:not([hidden]))>.wwa-empty {
+  margin-top: 24px !important;
+}
+
+html body#wwa-app[data-page="rating"] #workspace:has(#wwaEmpty:not([hidden]))>.wwa-footer {
+  margin-top: 20px !important;
+}
+
+/* Keep the supporting guidance below the form instead of in a side column. */
+@media(min-width:701px) {
+  html body#wwa-app[data-page="rating"] .wwa-empty-heading {
+    display: flex;
+  }
+  html body#wwa-app[data-page="rating"] .wwa-empty-heading>span {
+    margin-top: 0;
+  }
+  html body#wwa-app[data-page="rating"] .wwa-steps {
+    display: grid;
+    grid-template-columns: repeat(3,minmax(0,1fr));
+    gap: 24px;
+  }
+}
+
+@media(max-width:1000px) {
+  html body#wwa-app[data-page="rating"] .form-row1 {
+    grid-template-columns: 128px minmax(0,1fr) !important;
+  }
+  html body#wwa-app[data-page="rating"] .f-url {
+    grid-column: 1/-1 !important;
+  }
+}
+
+@media(max-width:600px) {
+  html body#wwa-app[data-page="rating"] .form-row1 {
+    grid-template-columns: minmax(0,1fr) !important;
+  }
+  html body#wwa-app[data-page="rating"] .form-row2 {
+    flex-direction: column;
+    align-items: stretch !important;
+  }
+  html body#wwa-app[data-page="rating"] .form-row2 .run-btn {
+    width: 100% !important;
+  }
+}

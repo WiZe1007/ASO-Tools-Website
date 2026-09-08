@@ -1,0 +1,28 @@
+{% from 'shared/icons.html' import icon %}
+{% set page = {'/': 'home', '/rating': 'rating', '/availability': 'availability', '/geo-link': 'geolink', '/indexing': 'indexing', '/app-overview': 'overview', '/live-apps': 'live-db', '/s-live-apps': 's-live-db'}.get(request.path, 'home') %}
+{% set tool_links = [('rating', '/rating', 'Rating'), ('availability', '/availability', 'Availability'), ('geolink', '/geo-link', 'Geo Link'), ('indexing', '/indexing', 'Indexing'), ('overview', '/app-overview', 'Overview')] %}
+{% macro links() %}
+  {% for key, href, label in tool_links %}
+  <a class="wwa-nav-link" href="{{ href }}" style="view-transition-name: wwa-nav-{{ key }}" {% if page == key %}aria-current="page"{% endif %}>{{ icon(key) }}<span>{{ label }}</span></a>
+  {% endfor %}
+  {% if can_access_wwa_live_db %}<a class="wwa-nav-link" href="/live-apps" style="view-transition-name: wwa-nav-live-db" {% if page == 'live-db' %}aria-current="page"{% endif %}>{{ icon('live-db') }}<span>Live DB</span></a>{% endif %}
+  {% if can_access_s_live_db %}<a class="wwa-nav-link" href="/s-live-apps" style="view-transition-name: wwa-nav-s-live-db" {% if page == 's-live-db' %}aria-current="page"{% endif %}>{{ icon('s-live-db') }}<span>S Live DB</span></a>{% endif %}
+{% endmacro %}
+{% macro utilities() %}
+  {% if can_manage_users %}<a class="wwa-utility wwa-account-utility" href="{{ url_for('accounts.users') }}" aria-label="Користувачі" title="Користувачі">{{ icon('users') }}<span>Користувачі</span></a>{% endif %}
+  <button class="wwa-utility" data-motion-toggle type="button" aria-label="Призупинити анімацію" title="Призупинити анімацію" aria-pressed="false"><svg class="motion-icon--pause" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg><svg class="motion-icon--play" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="m8 4 12 8-12 8Z"/></svg><span data-motion-label>Призупинити анімацію</span><span class="wwa-utility-caption" aria-hidden="true">Анімація</span></button>
+  <button class="wwa-utility nav-utility" type="button" aria-label="Help" title="Допомога">{{ icon('help') }}<span class="wwa-utility-caption">Допомога</span></button>
+  <button class="wwa-utility" data-theme-toggle type="button" aria-label="Switch to dark theme"><i class="wwa-theme-icons" aria-hidden="true">{{ icon('sun') }}{{ icon('moon') }}</i><span data-theme-label>Темна тема</span><span class="wwa-utility-caption" aria-hidden="true">Тема</span></button>
+  {% if auth_required %}<form class="wwa-logout wwa-account-utility" method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ logout_csrf_token }}"><button class="wwa-utility" type="submit" aria-label="Вийти" title="{{ current_user_email or 'Вийти' }}">{{ icon('logout') }}<span>Вийти</span></button></form>{% endif %}
+{% endmacro %}
+{% if page != 'home' %}{% include 'shared/liquid_background.html' %}{% endif %}
+<a class="wwa-skip" href="{{ '#home' if page == 'home' else '#workspace' }}">Перейти до вмісту</a>
+<header class="wwa-topbar wwa-full-nav" data-nav-density="{{ 'extended' if can_access_s_live_db else 'standard' }}">
+  <a class="wwa-brand" href="/" aria-label="WWA Tools — головна"><img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" width="36" height="36" alt=""><strong>WWA Tools</strong></a>
+  <div class="wwa-dock">
+    <nav class="wwa-navigation" aria-label="Основна навігація"><span class="liquid-indicator" data-nav-indicator data-visible="false" aria-hidden="true" style="opacity:0"></span>{{ links() }}</nav>
+    <div class="wwa-utilities" id="wwaTopUtilities" role="group" aria-label="Налаштування та допомога">{{ utilities() }}</div>
+  </div>
+</header>
+
+<script src="{{ url_for('static', filename='js/splash-cursor.js', v='20260908-smooth-nav3') }}" defer></script>

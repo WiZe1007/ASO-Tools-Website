@@ -6,7 +6,7 @@
     if (saved === "light" || saved === "dark") root.dataset.theme = saved;
   } catch {}
   const button = document.getElementById("accountsTheme");
-  button?.addEventListener("click", () => {
+  if (!root.dataset.wwaDatabase) button?.addEventListener("click", () => {
     root.dataset.theme = root.dataset.theme === "light" ? "dark" : "light";
     try { localStorage.setItem(storageKey, root.dataset.theme); } catch {}
   });

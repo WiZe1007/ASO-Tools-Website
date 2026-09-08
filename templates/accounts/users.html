@@ -8,10 +8,11 @@
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='db/data-base-favicon.png' if manage_database_access else 'img/WWA_icon_1024.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='db/database-site.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='db/accounts.css', v='20260831-sites') }}">
-  <script src="{{ url_for('static', filename='db/accounts.js', v='20260831-access') }}" defer></script>
+  <script src="{{ url_for('static', filename='db/accounts.js', v='20260908-database-glass1') }}" defer></script>
+  {% if home_endpoint == 'dashboard' %}{% include 'database/appearance.html' %}{% endif %}
 </head>
 <body class="database-page accounts-page">
-  <div class="page-background" aria-hidden="true"></div>
+  {% if home_endpoint == 'dashboard' %}{% include 'database/background.html' %}{% else %}<div class="page-background" aria-hidden="true"></div>{% endif %}
   <header class="app-header">
     <a class="brand" href="{{ url_for(home_endpoint) }}">
       <img src="{{ url_for('static', filename='img/WWA_icon_1024.png') }}" alt="">
@@ -19,9 +20,13 @@
     </a>
     <div class="header-actions">
       <span class="user-email">{{ current_email }}</span>
+      {% if home_endpoint == 'dashboard' %}
+      {% from 'database/controls.html' import controls %}{{ controls('accountsTheme') }}
+      {% else %}
       <button class="icon-button" type="button" id="accountsTheme" title="Змінити тему" aria-label="Змінити тему">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
       </button>
+      {% endif %}
       <a class="secondary-button" href="{{ url_for(home_endpoint) }}">До сервісу</a>
     </div>
   </header>
