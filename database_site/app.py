@@ -452,7 +452,32 @@ class GoogleSheetsStore:
         return apps
 
     def append_app(self, app_data: dict):
-        self.append_values(self.apps_sheet, [[app_data.get(header, "") for header in APPS_SHEET_HEADERS]])
+        # values.append detects a logical table inside its range. Sparse Apps
+        # rows can make it select column N instead of A, hiding new records.
+        # appendCells always appends a physical row, with cells starting at A.
+        metadata = self._request("GET", "?fields=sheets.properties(sheetId,title)")
+        sheet_id = next((
+            sheet["properties"]["sheetId"]
+            for sheet in metadata.get("sheets", [])
+            if sheet.get("properties", {}).get("title") == self.apps_sheet
+        ), None)
+        if sheet_id is None:
+            raise DatabaseConfigError(f"Не знайдено аркуш {self.apps_sheet}.")
+        cells = []
+        for header in APPS_SHEET_HEADERS:
+            value = app_data.get(header, "")
+            if isinstance(value, bool):
+                entered_value = {"boolValue": value}
+            elif isinstance(value, (int, float)):
+                entered_value = {"numberValue": value}
+            else:
+                entered_value = {"stringValue": str(value) if value is not None else ""}
+            cells.append({"userEnteredValue": entered_value})
+        self._request("POST", ":batchUpdate", json={"requests": [{"appendCells": {
+            "sheetId": sheet_id,
+            "rows": [{"values": cells}],
+            "fields": "userEnteredValue",
+        }}]})
 
     def update_app(self, row_index: int, current: dict, updates: dict):
         data = [{
@@ -1129,6 +1154,14 @@ def add_app(database_key: str = "wwa"):
             if any(str(app_item.get("app_id") or "").lower() == app_id.lower() for app_item in apps):
                 return api_error("Цей додаток уже є в базі.", 409, "DUPLICATE_APP")
             store.append_app(item)
+            refreshed = store.load_all_apps()
+            created = next((row for row in reversed(refreshed) if row.get("app_id") == app_id), None)
+            if created is None:
+                return api_error(
+                    "Не вдалося підтвердити збереження додатка. Онови базу перед повторним додаванням.",
+                    503,
+                    "APP_SAVE_UNCONFIRMED",
+                )
             store.append_log("database_add", item, json.dumps({
                 "actor": current_email(),
                 "database": database_key,
@@ -1136,8 +1169,6 @@ def add_app(database_key: str = "wwa"):
                 "enabled": enabled,
                 "app_type": app_type,
             }, ensure_ascii=False))
-            refreshed = store.load_all_apps()
-        created = next((row for row in reversed(refreshed) if row.get("app_id") == app_id), item)
         return jsonify({"ok": True, "database": database_key, "app": app_payload(created)}), 201
     except DatabaseConfigError as exc:
         return api_error(str(exc), 503, "SHEETS_UNAVAILABLE")

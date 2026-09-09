@@ -2,6 +2,12 @@
 
 This is a standalone Flask application for managing the Google Sheets database used by the availability bots.
 
+App creation uses Sheets `appendCells` to append a physical row starting in column A.
+Do not replace it with `values.append` over `A:Z`: Google's logical-table detection
+can start new records in a later column when the sheet contains sparse rows.
+The API confirms the saved package is readable from `A:R` before reporting success.
+See [Google Sheets append semantics](https://developers.google.com/workspace/sheets/api/guides/values#append_values).
+
 ## Local start
 
 ```bash

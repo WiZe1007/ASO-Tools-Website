@@ -195,6 +195,55 @@ class DatabaseSiteTests(unittest.TestCase):
         self.assertEqual(payload["app_type_label"], "Заглушка")
         self.assertEqual(FakeStore.apps[0]["app_type"], "placeholder")
 
+    def test_add_does_not_report_success_for_a_record_missing_from_sheet(self):
+        # A shifted Sheets append returned HTTP 200, but A:R contained no app.
+        with patch.object(FakeStore, "append_app"):
+            response = self.client.post(
+                "/api/apps", headers=self.headers(), json={"app_input": "com.example.missing"},
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["error"], "APP_SAVE_UNCONFIRMED")
+        self.assertNotIn("app", response.get_json())
+        self.assertEqual(FakeStore.logs, [])
+
+    def test_append_uses_physical_rows_and_preserves_raw_values(self):
+        # Apps may have blank identity cells and data in N:AE. values.append
+        # can choose that later logical table; appendCells does not detect one.
+        for sheet_id in (0, 2052072211):
+            with self.subTest(sheet_id=sheet_id):
+                store = self.original_store(apps_sheet="Team Apps", spreadsheet_id="test")
+                item = {
+                    "enabled": False, "status": "watch", "app_id": "com.example.new",
+                    "app_url": database_app.google_play_url("com.example.new"),
+                    "app_name": "New app", "notes": "=literal text", "app_type": "full",
+                    "last_closed_count": 0,
+                }
+                metadata = {"sheets": [
+                    {"properties": {"title": "Checks", "sheetId": 99}},
+                    {"properties": {"title": "Team Apps", "sheetId": sheet_id}},
+                ]}
+                with patch.object(store, "_request", side_effect=[metadata, {}]) as request:
+                    store.append_app(item)
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual(request.call_args.args, ("POST", ":batchUpdate"))
+                append = request.call_args.kwargs["json"]["requests"][0]["appendCells"]
+                self.assertEqual(append["sheetId"], sheet_id)
+                self.assertEqual(append["fields"], "userEnteredValue")
+                cells = append["rows"][0]["values"]
+                self.assertEqual(len(cells), 18)
+                self.assertEqual(cells[0]["userEnteredValue"], {"boolValue": False})
+                self.assertEqual(cells[3]["userEnteredValue"], {"stringValue": "com.example.new"})
+                self.assertEqual(cells[6]["userEnteredValue"], {"stringValue": "=literal text"})
+                self.assertEqual(cells[11]["userEnteredValue"], {"numberValue": 0})
+                self.assertEqual(cells[13]["userEnteredValue"], {"stringValue": "full"})
+
+    def test_append_refuses_unknown_sheet_instead_of_writing_another_sheet(self):
+        store = self.original_store(apps_sheet="Apps", spreadsheet_id="test")
+        with patch.object(store, "_request", return_value={"sheets": []}) as request:
+            with self.assertRaises(database_app.DatabaseConfigError):
+                store.append_app({"app_id": "com.example.new"})
+        request.assert_called_once_with("GET", "?fields=sheets.properties(sheetId,title)")
+
     def test_invalid_app_type_is_rejected(self):
         response = self.client.post(
             "/api/apps",
