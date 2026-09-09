@@ -1,0 +1,108 @@
+/* Orbital scan: all continuous movement uses transforms and opacity. */
+.rating-scan {
+  position: relative;
+  display: grid;
+  grid-template-columns: 248px minmax(0,1fr);
+  align-items: center;
+  gap: 24px;
+  min-height: 270px;
+  margin-top: 24px;
+  padding: 24px 36px 24px 24px;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid rgba(159,209,255,.26);
+  border-radius: 16px;
+  background: radial-gradient(ellipse at 16% 55%,rgba(44,128,201,.16),transparent 60%),linear-gradient(120deg,rgba(19,39,63,.7),rgba(12,22,37,.58));
+  box-shadow: inset 0 1px 0 rgba(216,238,255,.08);
+  color: #edf6ff;
+  scroll-margin-block: calc(var(--wwa-header-height,64px) + 40px) 24px;
+}
+.rating-scan[hidden] { display: none; }
+html body#wwa-app[data-page="rating"] #workspace:has(#wwaEmpty:not([hidden]))>.rating-scan { margin-top: 24px !important; }
+.rating-scan:not([hidden]) { animation: rating-scan-arrive 650ms cubic-bezier(.16,1,.3,1) both; }
+.rating-scan__visual { position: relative; width: 240px; height: 220px; justify-self: center; }
+.rating-scan__halo {
+  position: absolute; inset: -20px;
+  border-radius: 50%; background: radial-gradient(circle,rgba(64,185,255,.24),rgba(75,119,255,.09) 42%,transparent 69%);
+  animation: rating-scan-breathe 4s ease-in-out infinite;
+}
+.rating-scan__sphere {
+  position: absolute; width: 112px; height: 112px; left: 64px; top: 54px;
+  overflow: hidden; border-radius: 50%; border: 1px solid rgba(173,226,255,.6);
+  background: radial-gradient(circle at 30% 24%,rgba(208,239,255,.25),rgba(65,130,204,.12) 42%,rgba(8,26,59,.68) 82%);
+  box-shadow: inset 6px 5px 18px rgba(128,212,255,.12),inset -10px -10px 24px rgba(3,13,34,.5),0 0 28px rgba(52,171,255,.16);
+  color: rgba(170,221,255,.72);
+  animation: rating-scan-float 5s ease-in-out infinite;
+}
+.rating-scan__sphere svg { display: block; width: 100%; height: 100%; }
+.rating-scan__gloss {
+  position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(115deg,transparent 25%,rgba(208,245,255,.27) 47%,transparent 66%);
+  animation: rating-scan-gloss 4.8s ease-in-out infinite;
+}
+.rating-scan__plane { position: absolute; inset: 7px 17px; transform: rotate(-28deg) scaleY(.55); }
+.rating-scan__plane--two { transform: rotate(52deg) scaleY(.7); inset: 16px 26px; }
+.rating-scan__orbit { position: relative; width: 100%; height: 100%; border-radius: 50%; border: 1px solid rgba(148,207,255,.4); animation: rating-scan-orbit 6s linear infinite; }
+.rating-scan__plane--two .rating-scan__orbit { border-color: rgba(179,173,255,.38); animation-duration: 8.5s; animation-direction: reverse; }
+.rating-scan__orbit i { position: absolute; width: 8px; height: 8px; top: -4px; left: calc(50% - 4px); border-radius: 50%; background: #cbf2ff; box-shadow: 0 0 8px #87dfff,0 0 20px #52b4ff; }
+.rating-scan__orbit i+i { top: auto; bottom: -3px; width: 5px; height: 5px; opacity: .55; }
+.rating-scan__plane--two i { background: #e0d6ff; box-shadow: 0 0 8px #bbabff,0 0 18px #8577ff; }
+.rating-scan__spark { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #c2eaff; box-shadow: 0 0 9px rgba(141,218,255,.8); animation: rating-scan-spark 3.4s ease-in-out infinite; }
+.rating-scan__spark--one { left: 28px; top: 60px; }
+.rating-scan__spark--two { right: 28px; top: 45px; animation-delay: -1.1s; }
+.rating-scan__spark--three { right: 55px; bottom: 35px; animation-delay: -2.3s; }
+.rating-scan__copy { position: relative; min-width: 0; }
+.rating-scan__meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; color: #c0dbf3; font-size: 12px; line-height: 1.5; }
+.rating-scan__elapsed { display: inline-flex; align-items: baseline; gap: 10px; font-variant-numeric: tabular-nums; }
+.rating-scan__elapsed>span { color: #acbfd4; font-size: 11px; }
+.rating-scan__elapsed time { color: #deefff; min-width: 35px; }
+.rating-scan__copy h2 { margin: 18px 0 10px; color: #f2f8ff; font-size: clamp(21px,2.2vw,28px); font-weight: 600; line-height: 1.25; letter-spacing: -.5px; }
+.rating-scan__copy p { margin: 0; color: #c2d2e4; font-size: 14px; line-height: 1.65; }
+.rating-scan__signal { position: relative; height: 2px; max-width: 340px; margin: 24px 0 14px; overflow: hidden; border-radius: 2px; background: rgba(182,213,245,.13); }
+.rating-scan__signal span { display: block; width: 35%; height: 100%; background: linear-gradient(90deg,transparent,#9ce5ff 48%,#c3b3ff,transparent); animation: rating-scan-signal 3s cubic-bezier(.45,0,.25,1) infinite; }
+.rating-scan__copy .rating-scan__hint { color: #a8bed4; font-size: 12px; }
+html body#wwa-app[data-page="rating"].is-loading:has(#ratingScan:not([hidden])) :is(#wwaEmpty,.form2>.status) { display: none !important; }
+
+/* The same orbital light appears in the action that started the request. */
+.rating-run-orbit,.rating-run-glint { display: none; }
+html body#wwa-app[data-page="rating"].is-loading #run {
+  opacity: 1 !important; color: #eef8ff !important;
+  background: linear-gradient(105deg,#225b99,#287fc1) !important;
+  border-color: rgba(166,219,255,.65) !important;
+  box-shadow: inset 0 1px 0 rgba(217,240,255,.17),0 4px 20px rgba(34,118,199,.18) !important;
+}
+html body#wwa-app[data-page="rating"].is-loading #run .run-ico { display: none; animation: none; }
+html body#wwa-app[data-page="rating"].is-loading #run [data-run-label] { position: relative; z-index: 1; }
+html body#wwa-app[data-page="rating"].is-loading .rating-run-orbit { display: block; flex: 0 0 18px; width: 18px; height: 18px; border: 1px solid rgba(208,237,255,.3); border-radius: 50%; position: relative; animation: rating-scan-orbit 2.2s linear infinite; }
+.rating-run-orbit i { position: absolute; width: 5px; height: 5px; top: -3px; left: 6px; border-radius: 50%; background: #d9f6ff; box-shadow: 0 0 8px #b6e7ff; }
+html body#wwa-app[data-page="rating"].is-loading .rating-run-glint { display: block; position: absolute; inset: 0; background: linear-gradient(105deg,transparent 20%,rgba(201,237,255,.19) 50%,transparent 80%); animation: rating-scan-gloss 3.2s ease-in-out infinite; pointer-events: none; }
+
+@keyframes rating-scan-arrive { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes rating-scan-orbit { to { transform: rotate(360deg); } }
+@keyframes rating-scan-breathe { 0%,100% { opacity: .65; transform: scale(.92); } 50% { opacity: 1; transform: scale(1.06); } }
+@keyframes rating-scan-float { 0%,100% { transform: translateY(2px); } 50% { transform: translateY(-3px); } }
+@keyframes rating-scan-gloss { 0%,15% { transform: translateX(-110%); opacity: 0; } 45% { opacity: 1; } 80%,100% { transform: translateX(110%); opacity: 0; } }
+@keyframes rating-scan-spark { 0%,100% { opacity: .25; transform: translateY(4px); } 50% { opacity: .95; transform: translateY(-4px); } }
+@keyframes rating-scan-signal { 0% { transform: translateX(-110%); opacity: 0; } 20%,80% { opacity: 1; } 100% { transform: translateX(390%); opacity: 0; } }
+
+@media(max-width:700px) {
+  .rating-scan { grid-template-columns: minmax(0,1fr); gap: 0; padding: 14px 22px 24px; }
+  .rating-scan__visual { height: 200px; margin-top: -8px; margin-bottom: 2px; }
+  .rating-scan__meta { gap: 8px; }
+  .rating-scan__elapsed { gap: 6px; }
+  .rating-scan__copy h2 { margin-top: 16px; font-size: 22px; }
+  .rating-scan__signal { margin-top: 20px; }
+}
+@media(max-width:380px) {
+  .rating-scan { padding-inline: 16px; }
+  .rating-scan__visual { transform: scale(.9); margin-block: -14px -8px; }
+  .rating-scan__elapsed>span { display: none; }
+}
+html:not([data-motion="playing"]) :is(.rating-scan,.rating-scan *,.rating-run-orbit,.rating-run-glint),
+.rating-scan[data-in-view="false"] * { animation-play-state: paused !important; }
+/* A readable static scan remains when the user has chosen less motion. */
+html:not([data-motion="playing"]) .rating-scan { animation: none; }
+@media(prefers-reduced-motion:reduce) {
+  .rating-scan,.rating-scan *,.rating-run-orbit,.rating-run-glint { animation: none !important; }
+  .rating-scan__gloss,.rating-run-glint { display: none !important; }
+}

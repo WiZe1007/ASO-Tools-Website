@@ -966,6 +966,8 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='css/alpine-polish.css', v='20260908-smooth-nav3') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/rating-layout.css', v='20260909-url-contrast1') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/light-theme.css', v='20260908-readable-results1') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/rating-scan.css', v='20260909-orbit1') }}">
+  <script src="{{ url_for('static', filename='js/rating-scan.js', v='20260909-orbit1') }}" defer></script>
 </head>
 
 <body id="wwa-app" data-page="rating">
@@ -1036,8 +1038,10 @@
             </div>
 
             <button id="run" class="btn run-btn">
+              <span class="rating-run-glint" aria-hidden="true"></span>
+              <span class="rating-run-orbit" aria-hidden="true"><i></i></span>
               <span class="run-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 12a8.5 8.5 0 1 1-2.4-5.9"/><polyline points="20.5 3.5 20.5 8 16 8"/></svg></span>
-              <span>Перевірити</span>
+              <span data-run-label>Перевірити</span>
             </button>
           </div>
 
@@ -1056,6 +1060,7 @@
       </div>
     </div>
 
+    {% include 'shared/rating_scan.html' %}
     {% include 'shared/empty_results.html' %}
 
     <div id="summary" class="summary"></div>
@@ -1183,6 +1188,7 @@
   function setLoading(isLoading, text){
     $("spin").style.display = isLoading ? "inline-block" : "none";
     $("statusText").textContent = text || "";
+    window.wwaRatingScan?.setLoading(isLoading, getMode());
   }
 
   function clearSortIndicators(){
