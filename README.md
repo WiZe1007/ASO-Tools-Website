@@ -15,6 +15,11 @@ shared navigation. Tools and Apps Database use the same glass styling, local
 video background, light/dark themes, and animation controls. Appearance settings
 persist between visits, and reduced-motion preferences keep the still background.
 
+Versioned public assets (`?v=...`) are cached by the browser between page visits.
+When changing a versioned asset, update its `v` value in every template that loads
+it. Account pages and API responses remain uncached. Animations, visual effects,
+media quality, and their timing retain the original design settings.
+
 ## Local Run
 
 ```bash

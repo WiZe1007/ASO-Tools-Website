@@ -106,13 +106,17 @@
     return `<svg aria-hidden="true"><use href="#icon-${name}"></use></svg>`;
   }
 
+  // Reuse locale formatters without changing the table markup or its effects.
+  const dateFormatter = new Intl.DateTimeFormat("uk-UA", { day: "2-digit", month: "short", year: "numeric" });
+  const timeFormatter = new Intl.DateTimeFormat("uk-UA", { hour: "2-digit", minute: "2-digit" });
+
   function formatDate(value) {
     if (!value) return { date: "Ще не перевірявся", time: "" };
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return { date: value, time: "" };
     return {
-      date: new Intl.DateTimeFormat("uk-UA", { day: "2-digit", month: "short", year: "numeric" }).format(date),
-      time: new Intl.DateTimeFormat("uk-UA", { hour: "2-digit", minute: "2-digit" }).format(date),
+      date: dateFormatter.format(date),
+      time: timeFormatter.format(date),
     };
   }
 

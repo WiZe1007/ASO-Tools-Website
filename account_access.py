@@ -159,7 +159,10 @@ def apply_security_headers(response):
     response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
     if current_app.config.get("SESSION_COOKIE_SECURE"):
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-    if request.endpoint not in {"static", "health"}:
+    if request.endpoint == "static" and request.args.get("v") and response.status_code in {200, 206, 304}:
+        # Public assets use a new versioned URL whenever their contents change.
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif request.endpoint not in {"static", "health"}:
         response.headers.setdefault("Cache-Control", "no-store")
     return response
 
