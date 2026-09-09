@@ -159,11 +159,7 @@ def apply_security_headers(response):
     response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
     if current_app.config.get("SESSION_COOKIE_SECURE"):
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-    if request.endpoint == "static" and request.args.get("v") and response.status_code in {200, 206, 304}:
-        # Versioned public assets change URL on deployment. They can be reused
-        # across page visits without revalidating each file with the server.
-        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    elif request.endpoint not in {"static", "health"}:
+    if request.endpoint not in {"static", "health"}:
         response.headers.setdefault("Cache-Control", "no-store")
     return response
 

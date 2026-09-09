@@ -15,10 +15,6 @@ shared navigation. Tools and Apps Database use the same glass styling, local
 video background, light/dark themes, and animation controls. Appearance settings
 persist between visits, and reduced-motion preferences keep the still background.
 
-Public static URLs with a `v` query parameter use immutable browser caching.
-When changing one of these assets, update its `v` value in every template that
-loads it. Account pages and API responses remain uncached.
-
 ## Local Run
 
 ```bash

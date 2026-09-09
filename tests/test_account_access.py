@@ -511,24 +511,6 @@ class SeparateAccountTests(unittest.TestCase):
             for path in ("/live-apps", "/s-live-apps", "/api/live-apps", "/api/s-live-apps"):
                 self.assertEqual(client.get(path).status_code, 404)
 
-    def test_only_versioned_public_assets_get_immutable_caching(self):
-        for client in self.clients:
-            path = "/static/js/background-video.js?v=20260908-steady-scene1"
-            response = client.get(path)
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.cache_control.max_age, 31536000)
-            self.assertTrue(response.cache_control.public)
-            self.assertTrue(response.cache_control.immutable)
-            unchanged = client.get(path, headers={"If-None-Match": response.headers["ETag"]})
-            self.assertEqual(unchanged.status_code, 304)
-            self.assertTrue(unchanged.cache_control.immutable)
-            self.assertFalse(client.get("/static/js/background-video.js").cache_control.immutable)
-            self.assertFalse(client.get("/static/missing.js?v=1").cache_control.immutable)
-            self.login(client, self.admin)
-            for private in ("/?v=1", "/admin/users?v=1"):
-                response = client.get(private)
-                self.assertEqual(response.headers["Cache-Control"], "no-store")
-
     def test_user_cache_is_separate_even_for_the_same_email(self):
         self.tools_store.users[self.employee]["password_hash"] = "tools-only-hash"
         self.assertEqual(tools_app.get_user_by_email(self.employee)["password_hash"], "tools-only-hash")
