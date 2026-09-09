@@ -1,8 +1,8 @@
 {% macro controls(theme_id='themeButton') %}
 {% from 'shared/icons.html' import icon %}
 <button class="icon-button db-motion-button" data-motion-toggle type="button" aria-label="Призупинити анімацію" title="Призупинити анімацію" aria-pressed="false">
-  <svg class="db-motion-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>
-  <svg class="db-motion-play" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 12 8-12 8Z"/></svg>
+  {{ icon('pause', 20, 'db-motion-pause') }}
+  {{ icon('play', 20, 'db-motion-play') }}
 </button>
 <button class="icon-button db-theme-button" id="{{ theme_id }}" data-db-theme type="button" aria-label="Змінити тему" title="Змінити тему">
   <span class="db-theme-sun">{{ icon('sun') }}</span><span class="db-theme-moon">{{ icon('moon') }}</span>
