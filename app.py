@@ -5034,12 +5034,17 @@ def google_play_app_card_meta(app: dict) -> dict:
     preloaded = app.get("_google_play_card_meta")
     if isinstance(preloaded, dict):
         meta.update({key: value for key, value in preloaded.items() if value not in (None, "")})
-        return meta
+        # A failed metadata probe attaches an empty dict to the notification.
+        # Treat it as a cache hint only when it contains the imagery needed by
+        # the card; otherwise make the normal Play-page request below.
+        if meta["icon_url"] and meta["screenshots"]:
+            return meta
 
     cache_key = ("google_play_card_meta", app_id.lower())
     cached = GOOGLE_PLAY_CARD_META_CACHE.get(cache_key)
     if cached is not CACHE_MISS:
-        return cached
+        if cached.get("icon_url") and cached.get("screenshots"):
+            return cached
 
     url = build_google_play_url(app_id, "US", "en")
     headers = {
@@ -5112,7 +5117,10 @@ def google_play_app_card_meta(app: dict) -> dict:
             break
     meta["screenshots"] = screenshots
 
-    GOOGLE_PLAY_CARD_META_CACHE.set(cache_key, meta)
+    # Do not poison subsequent alerts with a transient/incomplete Play page.
+    # Empty metadata should be retried the next time a card is generated.
+    if meta["icon_url"] or meta["screenshots"]:
+        GOOGLE_PLAY_CARD_META_CACHE.set(cache_key, meta)
     return meta
 
 

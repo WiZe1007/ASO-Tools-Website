@@ -111,6 +111,50 @@ class TelegramAppCardTests(unittest.TestCase):
         self.assertEqual(meta["icon_url"], "https://play-lh.googleusercontent.com/icon")
         self.assertEqual(len(meta["screenshots"]), 3)
 
+    @patch("app.session.get")
+    def test_empty_preloaded_meta_falls_back_to_google_play_page(self, get):
+        schema = {
+            "@context": "https://schema.org",
+            "@type": "SoftwareApplication",
+            "name": "Big Win : Mega Jackpot",
+            "applicationCategory": "GAME_CASINO",
+            "image": "https://play-lh.googleusercontent.com/icon",
+            "contentRating": "Teen",
+        }
+        response = Mock(status_code=200)
+        response.text = "".join([
+            '<html><head><script type="application/ld+json">',
+            json.dumps(schema),
+            '</script></head><body>',
+            '<img alt="Screenshot image" src="https://play-lh.googleusercontent.com/shot-1">',
+            '</body></html>',
+        ])
+        get.return_value = response
+
+        meta = app.google_play_app_card_meta({
+            "app_id": "com.big.win.mega.jackpot",
+            "app_name": "com.big.win.mega.jackpot",
+            "_google_play_card_meta": {},
+        })
+
+        get.assert_called_once()
+        self.assertEqual(meta["name"], "Big Win : Mega Jackpot")
+        self.assertEqual(meta["category"], "Game - Casino")
+        self.assertEqual(meta["content_rating"], "16+")
+        self.assertEqual(meta["icon_url"], "https://play-lh.googleusercontent.com/icon")
+        self.assertEqual(meta["screenshots"], ["https://play-lh.googleusercontent.com/shot-1"])
+
+    @patch("app.session.get")
+    def test_empty_google_play_response_is_not_cached(self, get):
+        response = Mock(status_code=200, text="<html></html>")
+        get.return_value = response
+        row = {"app_id": "com.example.empty", "_google_play_card_meta": {}}
+
+        app.google_play_app_card_meta(row)
+        app.google_play_app_card_meta(row)
+
+        self.assertEqual(get.call_count, 2)
+
     def test_content_rating_labels_are_normalized_for_card_badges(self):
         cases = {
             "Everyone": "3+",
