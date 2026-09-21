@@ -14,7 +14,7 @@ import requests
 # Background workers on Render Starter have 512 MB RAM. Set conservative
 # defaults before importing app.py, because app.py reads these env values at
 # import time.
-os.environ.setdefault("WWA_BOT_MAX_WORKERS_AVAILABILITY", "3")
+os.environ.setdefault("WWA_BOT_MAX_WORKERS_AVAILABILITY", "8")
 os.environ.setdefault("WWA_BOT_MAX_WORKERS_LIVE_STATUS", "6")
 os.environ.setdefault("WWA_CACHE_MAX_ITEMS", "240")
 
@@ -221,6 +221,7 @@ def summary_text(result: dict, title: str = "Availability check finished") -> st
         f"<b>{escape(title)}</b>",
         "",
         f"Checked apps: <b>{result.get('apps_checked', 0)}</b> / {result.get('apps_total', 0)}",
+        f"Duration: <b>{result.get('duration_seconds', 0)} s</b>",
         f"Notifications: <b>{len(notifications)}</b>",
         f"Errors: <b>{len(errors)}</b>",
         f"Skipped: <b>{len(skipped)}</b>",
@@ -1179,6 +1180,7 @@ def run_scheduled_live_status_check():
             "metadata_baselines": result.get("metadata_baselines", 0),
             "metadata_changes": result.get("metadata_changes", 0),
             "metadata_failures": result.get("metadata_failures", 0),
+            "duration_seconds": result.get("duration_seconds", 0),
         }, ensure_ascii=False))
     except Exception:
         print(json.dumps({

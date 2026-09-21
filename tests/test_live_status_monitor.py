@@ -75,6 +75,63 @@ def design_marker(fingerprint="design-v1", country="US"):
 
 
 class LiveStatusMonitorTests(unittest.TestCase):
+    @patch("app.fetch_google_play_availability")
+    def test_stable_open_geo_uses_one_request(self, fetch_availability):
+        fetch_availability.return_value = (True, "ARIA_INSTALL")
+
+        result = app.fetch_google_play_availability_confirmed(
+            "com.example.game",
+            "US",
+            previously_open=True,
+        )
+
+        self.assertEqual(result, (True, "ARIA_INSTALL"))
+        fetch_availability.assert_called_once_with(
+            "com.example.game",
+            "US",
+            hl="en",
+        )
+
+    @patch("app.fetch_google_play_availability")
+    def test_stable_closed_geo_skips_transition_only_retries(self, fetch_availability):
+        fetch_availability.side_effect = [
+            (False, "NO_INSTALL_SIGNALS"),
+            (False, "NO_INSTALL_SIGNALS"),
+        ]
+
+        result = app.fetch_google_play_availability_confirmed(
+            "com.example.game",
+            "US",
+            previously_open=False,
+        )
+
+        self.assertEqual(result, (False, "NO_INSTALL_SIGNALS"))
+        self.assertEqual(fetch_availability.call_count, 2)
+
+    @patch("app.fetch_google_play_availability")
+    def test_newly_closed_geo_keeps_all_confirmation_retries(self, fetch_availability):
+        fetch_availability.return_value = (False, "NO_INSTALL_SIGNALS")
+
+        result = app.fetch_google_play_availability_confirmed(
+            "com.example.game",
+            "US",
+            previously_open=True,
+        )
+
+        self.assertEqual(result, (False, "NO_INSTALL_SIGNALS"))
+        self.assertEqual(fetch_availability.call_count, 4)
+
+    def test_live_probe_prioritizes_a_known_open_country(self):
+        row = app_row(open_codes="UA,JP", closed_codes="US,GB")
+
+        codes = app.live_status_probe_codes(
+            row,
+            max_codes=len(app.BOT_LIVE_STATUS_PROBE_COUNTRIES),
+        )
+
+        self.assertEqual(codes[:2], ["JP", "UA"])
+        self.assertEqual(len(codes), len(set(codes)))
+
     def test_deleted_or_edited_app_during_check_is_not_written_or_announced(self):
         row = app_row(status="watch", open_codes="", closed_codes="")
         snapshot = {

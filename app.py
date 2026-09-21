@@ -84,7 +84,7 @@ MAX_WORKERS_APPMAGIC = env_int("WWA_MAX_WORKERS_APPMAGIC", 14, 6, 32)
 # Availability checks
 MAX_WORKERS_AVAIL_GOOGLE = env_int("WWA_MAX_WORKERS_AVAIL_GOOGLE", 12, 6, 28)
 MAX_WORKERS_AVAIL_APPLE = env_int("WWA_MAX_WORKERS_AVAIL_APPLE", 25, 8, 48)
-MAX_WORKERS_BOT_AVAILABILITY = env_int("WWA_BOT_MAX_WORKERS_AVAILABILITY", 3, 1, 8)
+MAX_WORKERS_BOT_AVAILABILITY = env_int("WWA_BOT_MAX_WORKERS_AVAILABILITY", 8, 1, 24)
 MAX_WORKERS_BOT_LIVE_STATUS = env_int("WWA_BOT_MAX_WORKERS_LIVE_STATUS", 6, 1, 12)
 OVERVIEW_AVAILABILITY_CACHE_TTL = 15 * 60
 CACHE_TTL_RATINGS = env_int("WWA_CACHE_TTL_RATINGS", 6 * 60 * 60, 60, 24 * 60 * 60)
@@ -3934,8 +3934,20 @@ def google_availability_is_closed_error(error: str | None) -> bool:
     return google_availability_error_code(error) in GOOGLE_AVAILABILITY_CLOSED_ERRORS
 
 
-def fetch_google_play_availability_confirmed(app_id: str, gl: str, primary_hl: str = "en"):
+def fetch_google_play_availability_confirmed(
+    app_id: str,
+    gl: str,
+    primary_hl: str = "en",
+    previously_open: bool | None = None,
+):
     first_available, first_error = fetch_google_play_availability(app_id, gl, hl=primary_hl)
+
+    # One clear install signal is already authoritative: the confirmation
+    # requests below can never override an Open result. Returning immediately
+    # removes a duplicate request for every stable open GEO.
+    if first_available is True:
+        return True, first_error
+
     should_confirm = (
         AVAILABILITY_CONFIRM_ALL_COUNTRIES
         or first_available is not True
@@ -3956,10 +3968,18 @@ def fetch_google_play_availability_confirmed(app_id: str, gl: str, primary_hl: s
     # Any clear open signal wins. Google Play can sometimes return incomplete
     # markup for a country. When a no-install signal appears, make two further
     # uncached requests before allowing it to change the country to Closed.
-    if first_available is True:
-        return True, first_error
     if second_available is True:
         return True, second_error
+
+    # A GEO that was already closed only needs the two normal page variants to
+    # stay closed. Keep the two additional retries for an actual Open -> Closed
+    # transition (or an initial scan), where a false alert would be harmful.
+    if (
+        previously_open is False
+        and google_availability_is_closed_error(first_error)
+        and google_availability_is_closed_error(second_error)
+    ):
+        return False, second_error or first_error
 
     if (
         google_availability_error_code(first_error) == "NO_INSTALL_SIGNALS"
@@ -4661,8 +4681,16 @@ def availability_error_is_transient(error: str | None) -> bool:
     return not google_availability_is_closed_error(error)
 
 
-def summarize_google_availability(app_id: str) -> dict:
+def summarize_google_availability(
+    app_id: str,
+    previous_open_codes: set[str] | list[str] | tuple[str, ...] | None = None,
+) -> dict:
     countries_en = get_geo_countries_en()
+    known_open_codes = (
+        None
+        if previous_open_codes is None
+        else {str(code).strip().upper() for code in previous_open_codes if str(code).strip()}
+    )
     open_codes: set[str] = set()
     closed_codes: set[str] = set()
     not_found_codes: set[str] = set()
@@ -4671,7 +4699,13 @@ def summarize_google_availability(app_id: str) -> dict:
     max_workers = max(1, min(MAX_WORKERS_BOT_AVAILABILITY, len(countries_en) or 1))
 
     def task(country_name: str, iso2: str):
-        available, error = fetch_google_play_availability_confirmed(app_id, iso2, primary_hl="en")
+        previously_open = None if known_open_codes is None else iso2 in known_open_codes
+        available, error = fetch_google_play_availability_confirmed(
+            app_id,
+            iso2,
+            primary_hl="en",
+            previously_open=previously_open,
+        )
         return iso2, available, error
 
     def consume_result(iso2: str, available: bool | None, error: str | None):
@@ -4749,13 +4783,17 @@ def live_status_probe_codes(app: dict, max_codes: int = 2) -> list[str]:
     app_id = str(app.get("app_id") or "").strip().lower()
     open_codes = split_country_codes(app.get("last_open_countries"))
     configured_codes = list(dict.fromkeys(BOT_LIVE_STATUS_PROBE_COUNTRIES))
-    ordered: list[str] = list(configured_codes)
-
     with LIVE_STATUS_PROBE_CACHE_LOCK:
         cached_code = LIVE_STATUS_PROBE_CACHE.get(app_id, "")
-    if cached_code in open_codes and cached_code not in configured_codes:
-        ordered.append(cached_code)
 
+    # Probe a country that was open on the previous pass first. Previously the
+    # configured list always won, so an app open only in UA could make eight
+    # unnecessary sequential requests before reaching UA every 20 minutes.
+    ordered: list[str] = []
+    if cached_code in open_codes:
+        ordered.append(cached_code)
+    ordered.extend(code for code in configured_codes if code in open_codes)
+    ordered.extend(configured_codes)
     ordered.extend(sorted(open_codes))
 
     unique: list[str] = []
@@ -6152,6 +6190,7 @@ def run_live_status_bot_check(
     write_changes: bool = True,
     store: GoogleSheetsAvailabilityStore | None = None,
 ) -> dict:
+    started_at = time.monotonic()
     store = store or GoogleSheetsAvailabilityStore()
     apps = store.load_apps()
     apps_to_check = apps[:limit]
@@ -6304,7 +6343,10 @@ def run_live_status_bot_check(
         app_id = str(app.get("app_id") or "").strip()
         result["full_confirmations"] += 1
         try:
-            snapshot = summarize_google_availability(app_id)
+            snapshot = summarize_google_availability(
+                app_id,
+                split_country_codes(app.get("last_open_countries")),
+            )
         except Exception as e:
             error = f"AVAILABILITY_CONFIRM_ERROR:{e}"
             updates.append((app, {"last_checked_at": now, "last_error": error}))
@@ -6444,6 +6486,7 @@ def run_live_status_bot_check(
                     f"source=20m_live_status{update_details}"
                 ),
             )
+    result["duration_seconds"] = round(time.monotonic() - started_at, 1)
     return result
 
 
@@ -6453,6 +6496,7 @@ def run_availability_bot_check(
     write_changes: bool = True,
     progress_callback=None,
 ) -> dict:
+    started_at = time.monotonic()
     store = GoogleSheetsAvailabilityStore()
     apps = store.load_apps()
     apps_to_check = apps[:limit]
@@ -6493,7 +6537,10 @@ def run_availability_bot_check(
             continue
 
         try:
-            snapshot = summarize_google_availability(app_id)
+            snapshot = summarize_google_availability(
+                app_id,
+                split_country_codes(app.get("last_open_countries")),
+            )
         except Exception as e:
             error = f"AVAILABILITY_CHECK_ERROR:{e}"
             updates.append((app, {"last_checked_at": now, "last_error": error}))
@@ -6596,6 +6643,7 @@ def run_availability_bot_check(
                     f"closed={len(snapshot.get('closed_codes') or [])}"
                 ),
             )
+    result["duration_seconds"] = round(time.monotonic() - started_at, 1)
     return result
 
 
