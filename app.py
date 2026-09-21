@@ -3942,12 +3942,6 @@ def fetch_google_play_availability_confirmed(
 ):
     first_available, first_error = fetch_google_play_availability(app_id, gl, hl=primary_hl)
 
-    # One clear install signal is already authoritative: the confirmation
-    # requests below can never override an Open result. Returning immediately
-    # removes a duplicate request for every stable open GEO.
-    if first_available is True:
-        return True, first_error
-
     should_confirm = (
         AVAILABILITY_CONFIRM_ALL_COUNTRIES
         or first_available is not True
@@ -3965,11 +3959,23 @@ def fetch_google_play_availability_confirmed(
         force_refresh=True,
     )
 
-    # Any clear open signal wins. Google Play can sometimes return incomplete
-    # markup for a country. When a no-install signal appears, make two further
-    # uncached requests before allowing it to change the country to Closed.
-    if second_available is True:
+    # Require two independent install signals before marking a GEO Open. A
+    # single Google Play response can occasionally contain stale or incomplete
+    # markup. When the first two requests disagree, use a third uncached request
+    # as a tie-breaker; without two positive signals the result stays unknown,
+    # so an existing state is not overwritten by an ambiguous response.
+    if first_available is True and second_available is True:
         return True, second_error
+    if first_available is True or second_available is True:
+        third_available, third_error = fetch_google_play_availability(
+            app_id,
+            gl,
+            hl=primary_hl,
+            force_refresh=True,
+        )
+        if third_available is True:
+            return True, third_error
+        return None, third_error or second_error or first_error
 
     # A GEO that was already closed only needs the two normal page variants to
     # stay closed. Keep the two additional retries for an actual Open -> Closed

@@ -76,7 +76,7 @@ def design_marker(fingerprint="design-v1", country="US"):
 
 class LiveStatusMonitorTests(unittest.TestCase):
     @patch("app.fetch_google_play_availability")
-    def test_stable_open_geo_uses_one_request(self, fetch_availability):
+    def test_stable_open_geo_requires_two_positive_requests(self, fetch_availability):
         fetch_availability.return_value = (True, "ARIA_INSTALL")
 
         result = app.fetch_google_play_availability_confirmed(
@@ -86,11 +86,41 @@ class LiveStatusMonitorTests(unittest.TestCase):
         )
 
         self.assertEqual(result, (True, "ARIA_INSTALL"))
-        fetch_availability.assert_called_once_with(
+        self.assertEqual(fetch_availability.call_count, 2)
+
+    @patch("app.fetch_google_play_availability")
+    def test_disputed_open_geo_uses_third_request_as_tie_breaker(self, fetch_availability):
+        fetch_availability.side_effect = [
+            (True, "ARIA_INSTALL"),
+            (False, "NO_INSTALL_SIGNALS"),
+            (True, "BUTTON_INSTALL"),
+        ]
+
+        result = app.fetch_google_play_availability_confirmed(
             "com.example.game",
             "US",
-            hl="en",
+            previously_open=False,
         )
+
+        self.assertEqual(result, (True, "BUTTON_INSTALL"))
+        self.assertEqual(fetch_availability.call_count, 3)
+
+    @patch("app.fetch_google_play_availability")
+    def test_single_open_signal_does_not_change_geo_state(self, fetch_availability):
+        fetch_availability.side_effect = [
+            (True, "ARIA_INSTALL"),
+            (False, "NO_INSTALL_SIGNALS"),
+            (False, "NO_INSTALL_SIGNALS"),
+        ]
+
+        result = app.fetch_google_play_availability_confirmed(
+            "com.example.game",
+            "US",
+            previously_open=False,
+        )
+
+        self.assertEqual(result[0], None)
+        self.assertEqual(fetch_availability.call_count, 3)
 
     @patch("app.fetch_google_play_availability")
     def test_stable_closed_geo_skips_transition_only_retries(self, fetch_availability):
