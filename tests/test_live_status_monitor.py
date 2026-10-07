@@ -75,6 +75,14 @@ def design_marker(fingerprint="design-v1", country="US"):
 
 
 class LiveStatusMonitorTests(unittest.TestCase):
+    def test_availability_geo_list_matches_current_google_play_console_count(self):
+        codes = [code for _name, code in app.COUNTRIES_GEO_EN]
+
+        self.assertEqual(len(codes), 177)
+        self.assertEqual(len(codes), len(set(codes)))
+        self.assertIn("ET", codes)
+        self.assertEqual(app.get_country_meta_by_iso2("ET"), ("Ethiopia", "en"))
+
     @patch("app.fetch_google_play_availability")
     def test_stable_open_geo_requires_two_positive_requests(self, fetch_availability):
         fetch_availability.return_value = (True, "ARIA_INSTALL")

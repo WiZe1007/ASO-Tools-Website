@@ -202,7 +202,7 @@ For already live apps, set `status=live` before the first bot run. Then the firs
 In addition to the full GEO checks at `BOT_CHECK_HOURS`, each bot performs a
 lightweight Live/ban/update check every `BOT_LIVE_STATUS_INTERVAL_MINUTES` minutes.
 Every `live`, `watch`, and `banned` app is checked against the countries from
-`BOT_LIVE_STATUS_PROBE_COUNTRIES`. For `watch`/`banned`, a full 176-country scan
+`BOT_LIVE_STATUS_PROBE_COUNTRIES`. For `watch`/`banned`, a full 177-country scan
 runs after one probe country becomes open. For `live`, a full scan runs when no
 probe country remains open so a possible global ban is confirmed before an
 alert. Live apps also store a baseline of the public Google Play version and

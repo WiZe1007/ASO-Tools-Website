@@ -502,6 +502,7 @@ COUNTRIES_GEO_EN: list[tuple[str, str]] = [
     ("El Salvador", "SV"),
     ("Eritrea", "ER"),
     ("Estonia", "EE"),
+    ("Ethiopia", "ET"),
     ("Fiji", "FJ"),
     ("Finland", "FI"),
     ("France", "FR"),
