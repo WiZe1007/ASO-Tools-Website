@@ -4,5 +4,5 @@ requests==2.34.2
 beautifulsoup4==4.15.0
 lxml==6.1.1
 google-auth==2.55.1
-Pillow==12.3.0
+Pillow==13.0.0
 google-play-scraper==1.2.7
