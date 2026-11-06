@@ -18,6 +18,7 @@ import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, parse_qs, quote, unquote
+from urllib.request import urlopen as urllib_urlopen
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 
@@ -53,8 +54,10 @@ except Exception:
 
 try:
     from google_play_scraper import app as scrape_google_play_app
+    from google_play_scraper.utils import request as google_play_request
 except Exception:
     scrape_google_play_app = None
+    google_play_request = None
 
 # ---------------- CONFIG ----------------
 
@@ -97,6 +100,18 @@ CACHE_TTL_INDEXING = env_int("WWA_CACHE_TTL_INDEXING", 30 * 60, 60, 6 * 60 * 60)
 CACHE_MAX_ITEMS = env_int("WWA_CACHE_MAX_ITEMS", 1200, 100, 10000)
 HTTP_POOL_SIZE = env_int("WWA_HTTP_POOL_SIZE", 64, 16, 256)
 HTTP_REQUEST_RETRIES = env_int("WWA_HTTP_REQUEST_RETRIES", 3, 1, 8)
+GOOGLE_PLAY_METADATA_TIMEOUT = env_int("WWA_GOOGLE_PLAY_METADATA_TIMEOUT", 20, 1, 120)
+
+
+def bounded_google_play_urlopen(request):
+    return urllib_urlopen(request, timeout=GOOGLE_PLAY_METADATA_TIMEOUT)
+
+
+# google-play-scraper 1.2.7 has no timeout argument and otherwise waits forever
+# for a stalled response. Bound only its transport, not global socket defaults:
+# one stuck metadata task holds the bot's check lock and blocks every later scan.
+if google_play_request is not None:
+    google_play_request.urlopen = bounded_google_play_urlopen
 MAX_WORKERS_INDEXING = env_int("WWA_MAX_WORKERS_INDEXING", 8, 2, 16)
 INDEXING_MAX_KEYWORDS = env_int("WWA_INDEXING_MAX_KEYWORDS", 40, 1, 200)
 INDEXING_MAX_COUNTRIES = env_int("WWA_INDEXING_MAX_COUNTRIES", 10, 1, 80)

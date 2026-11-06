@@ -2,6 +2,7 @@ import html
 import json
 import os
 import re
+import sys
 import threading
 import time
 import traceback
@@ -1488,4 +1489,7 @@ def polling_loop():
 
 
 if __name__ == "__main__":
+    # Render captures stdout through a pipe; report each check immediately.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
     polling_loop()
